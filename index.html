@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Design Basics — The Hub</title>
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--panel-2:#1d212a;--text:#e7e9ee;--muted:#9aa3b2;--accent:#5b9dff;--accent-2:#7ee0c0;--warn:#ffcf70;--danger:#ff8a8a;--border:#262b36;--code-bg:#12151b;--radius:14px;--maxw:860px;}
+  @media (prefers-color-scheme: light){:root{--bg:#f6f7f9;--panel:#ffffff;--panel-2:#f0f2f5;--text:#1a1d24;--muted:#5a6472;--accent:#2f6bd6;--accent-2:#16916f;--warn:#9a6b00;--danger:#b23b3b;--border:#e2e5ea;--code-bg:#f1f3f6;}}
+  *{box-sizing:border-box;} html{scroll-behavior:smooth;}
+  body{margin:0;background:var(--bg);color:var(--text);font:17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:32px 20px 80px;}
+  header.hero{padding:24px 0 20px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  .kicker{text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:var(--accent);font-weight:700;margin-bottom:10px;}
+  h1{font-size:2.3rem;line-height:1.12;margin:0 0 12px;letter-spacing:-.02em;}
+  .lede{color:var(--muted);font-size:1.15rem;margin:0;}
+  h2{font-size:1.5rem;margin:44px 0 14px;letter-spacing:-.01em;}
+  h3{font-size:1.1rem;margin:26px 0 6px;}
+  p{margin:12px 0;} a{color:var(--accent);text-decoration:none;} a:hover{text-decoration:underline;}
+  code{background:var(--code-bg);border:1px solid var(--border);padding:1px 6px;border-radius:6px;font-size:.86em;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
+  .note{border-left:3px solid var(--accent-2);background:var(--panel);border-radius:0 10px 10px 0;padding:14px 16px;margin:18px 0;}
+  .note.warn{border-left-color:var(--warn);}
+  .note .label{font-weight:700;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:block;margin-bottom:4px;}
+  /* request journey */
+  .journey{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:22px 0;}
+  .hop{flex:1 1 130px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 14px;position:relative;}
+  .hop .n{font-size:.72rem;color:var(--accent);font-weight:700;}
+  .hop h4{margin:2px 0 4px;font-size:.95rem;} .hop p{margin:0;font-size:.82rem;color:var(--muted);}
+  .hop .ref{display:block;margin-top:6px;font-size:.72rem;color:var(--accent-2);font-weight:600;}
+  /* guide cards */
+  .guides{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:20px 0;}
+  @media (max-width:600px){.guides{grid-template-columns:1fr;}}
+  .g{display:block;background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;transition:border-color .15s,transform .15s;color:inherit;}
+  .g:hover{border-color:var(--accent);transform:translateY(-2px);text-decoration:none;}
+  .g .num{font-size:.72rem;font-weight:700;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;}
+  .g h3{margin:6px 0 6px;font-size:1.18rem;}
+  .g p{margin:0 0 10px;font-size:.92rem;color:var(--muted);}
+  .g .tags{font-size:.76rem;color:var(--accent-2);}
+  .g .meta{font-size:.74rem;color:var(--muted);margin-top:8px;}
+  .g .status{float:right;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(126,224,192,.16);color:var(--accent-2);}
+  .g .status.s2{background:rgba(91,157,255,.16);color:var(--accent);}
+  .g .status.s3{background:rgba(255,207,112,.18);color:var(--warn);}
+  .g .status.s4{background:rgba(255,138,138,.16);color:var(--danger);}
+  .g.wide{grid-column:1 / -1;border-color:var(--accent);}
+  .pillar{display:inline-block;font-size:.72rem;font-weight:600;padding:1px 8px;border-radius:999px;background:var(--panel-2);color:var(--muted);margin-right:6px;}
+  hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
+  .footer{color:var(--muted);font-size:.85rem;}
+  .savehint{background:var(--panel-2);border:1px dashed var(--border);border-radius:10px;padding:10px 14px;font-size:.85rem;color:var(--muted);margin:18px 0;}
+  .table-scroll{overflow-x:auto;margin:18px 0;border:1px solid var(--border);border-radius:12px;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:520px;}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:top;}
+  th{background:var(--panel-2);font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);}
+  tr:last-child td{border-bottom:none;} td strong{color:var(--text);}
+  .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
+  .paths{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0;}
+  @media (max-width:600px){.paths{grid-template-columns:1fr;}}
+  .path{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;}
+  .path h4{margin:0 0 4px;font-size:1rem;} .path p{margin:0;font-size:.86rem;color:var(--muted);}
+  .path .seq{display:block;margin-top:8px;font-size:.8rem;color:var(--accent);font-weight:600;}
+  dl.gloss{margin:14px 0;} dl.gloss dt{font-weight:700;font-size:.95rem;margin-top:12px;}
+  dl.gloss dd{margin:2px 0 0;color:var(--muted);font-size:.92rem;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="kicker">A Seven-Part Field Guide</div>
+    <h1>System Design Basics</h1>
+    <p class="lede">Seven guides on how real systems get fast, hold their data, distribute work, stay up, and stay correct — each opening with a disaster, each ending with questions that make you prove you understood it, and the last one putting all of it into a single working design.</p>
+  </header>
+
+  <div class="note">
+    <span class="label">What this is, and what it isn't</span>
+    This is a working engineer's field guide, not a reference and not exam prep. It covers the six ideas that decide whether an ordinary web system survives its own growth, plus a capstone that assembles them. Every concept is attached to a failure it prevents, every guide ends with a cheat sheet and self-test questions, and the recurring argument throughout is <em>restraint</em> — climb only as high as your load forces you to. What it deliberately leaves out: distributed consensus algorithms in detail, storage engine internals, networking below the load balancer, machine learning infrastructure, and anything specific to a single cloud vendor's product catalogue. Assumed background: you've written a web application and deployed it somewhere.
+  </div>
+
+  <h2>The through-line: follow one request</h2>
+  <p>These topics aren't a random pile — they're the stops a single request makes on its way through a well-built system. Trace one click and the whole series falls into place. Note that the <em>stops</em> are in request order, which is not the order the guides are numbered in; the guides are ordered by what you'll need first in a real job, and caching is almost always the first thing anyone reaches for.</p>
+
+  <div class="journey">
+    <div class="hop"><div class="n">stop 1</div><h4>Load balancer</h4><p>Picks a healthy server from the herd.</p><span class="ref">→ Guide 3</span></div>
+    <div class="hop"><div class="n">stop 2</div><h4>Cache</h4><p>Answers instantly if it can, sparing everything downstream.</p><span class="ref">→ Guide 1</span></div>
+    <div class="hop"><div class="n">stop 3</div><h4>Database</h4><p>The source of truth — replicated and sharded to keep up.</p><span class="ref">→ Guide 2</span></div>
+    <div class="hop"><div class="n">stop 4</div><h4>Queue</h4><p>The slow, non-urgent work is handed off to run later.</p><span class="ref">→ Guide 4</span></div>
+    <div class="hop"><div class="n">stop 5</div><h4>Guardrails</h4><p>Timeouts &amp; breakers keep one failure from spreading.</p><span class="ref">→ Guide 5</span></div>
+  </div>
+  <p>And humming underneath all five is one recurring question — <strong>how fresh does this data really need to be?</strong> — the consistency trade-off that ties caching, replication, and CAP into a single idea, and the subject of Guide 6. Guide 7 then walks a real checkout through every stop with the numbers attached, which is the only way to find out whether any of it stuck.</p>
+
+  <h2>The guides</h2>
+  <p>Read in order for a story, or jump to whatever's on fire today. Each stands alone, and each now ends with a 60-second recap and six questions to test yourself against.</p>
+
+  <div class="guides">
+    <a class="g" href="understanding-caching.html">
+      <span class="status">start here</span>
+      <div class="num">Guide 1 · Speed</div>
+      <h3>Understanding Caching</h3>
+      <p>Keep copies of expensive work close by. Strategies, HTTP caching, eviction, and the two hard problems: invalidation and the stampede.</p>
+      <div class="tags">DNS · Netflix · Facebook · Twitter</div>
+      <div class="meta">~30 min · cache-aside in code with four bugs in it</div>
+    </a>
+    <a class="g" href="database-scaling.html">
+      <span class="status s2">longest</span>
+      <div class="num">Guide 2 · State</div>
+      <h3>Scaling Databases</h3>
+      <p>The ladder from one box to a sharded fleet: indexing, replicas, partitioning, sharding — and knowing when to stop.</p>
+      <div class="tags">Figma · Discord · Instagram</div>
+      <div class="meta">~40 min · picking a shard key, done as arithmetic</div>
+    </a>
+    <a class="g" href="load-balancing.html">
+      <span class="status s2">most visual</span>
+      <div class="num">Guide 3 · Distribution</div>
+      <h3>Load Balancing</h3>
+      <p>Turn one fragile server into a resilient herd. L4 vs L7, the algorithms, health checks, and why statelessness unlocks it all.</p>
+      <div class="tags">Google Maglev · anycast</div>
+      <div class="meta">~28 min · a cascade traced from 03:14 to 03:19</div>
+    </a>
+    <a class="g" href="message-queues.html">
+      <span class="status">shortest</span>
+      <div class="num">Guide 4 · Async</div>
+      <h3>Message Queues</h3>
+      <p>The art of saying "I'll get to that." Decoupling, delivery guarantees, idempotency, the outbox, and the retry storm.</p>
+      <div class="tags">Kafka · Uber · every checkout</div>
+      <div class="meta">~24 min · the idempotency race, traced line by line</div>
+    </a>
+    <a class="g" href="reliability-toolkit.html">
+      <span class="status s3">most practical</span>
+      <div class="num">Guide 5 · Resilience</div>
+      <h3>The Reliability Toolkit</h3>
+      <p>Everything fails. Timeouts, backoff, retry budgets, breakers, bulkheads and shedding stop one crack from sinking the ship.</p>
+      <div class="tags">Knight Capital · AWS S3 · Netflix</div>
+      <div class="meta">~29 min · which wall stops which flood</div>
+    </a>
+    <a class="g" href="consistency-cap.html">
+      <span class="status s4">hardest</span>
+      <div class="num">Guide 6 · Correctness</div>
+      <h3>Consistency &amp; CAP</h3>
+      <p>When data lives in many places, "the current value" gets slippery. CAP, PACELC, quorums, fencing tokens and sagas.</p>
+      <div class="tags">GitHub · Amazon · Spanner</div>
+      <div class="meta">~29 min · a quorum under partition, step by step</div>
+    </a>
+    <a class="g wide" href="design-the-checkout.html">
+      <span class="status s3">capstone</span>
+      <div class="num">Guide 7 · Synthesis</div>
+      <h3>Design the Checkout</h3>
+      <p>Everything above, assembled into one system and then deliberately broken. Start from the traffic numbers, make each move only when a number forces it, decide staleness field by field, trace one request end to end — then watch the payment provider go slow and see which guardrail saves you.</p>
+      <div class="tags">the whole series, working together</div>
+      <div class="meta">~35 min · read this last, or read it first and use it as a map</div>
+    </a>
+  </div>
+
+  <h2>Three ways through</h2>
+  <p>Twelve hours of reading is a lot to start with no plan. Pick the path that matches why you're here.</p>
+
+  <div class="paths">
+    <div class="path">
+      <h4>The interview in two weeks</h4>
+      <p>You need to be able to design something out loud and defend it. Start at the end and work backwards — the capstone shows you the shape of an answer, then fill in whichever guide you fumbled.</p>
+      <span class="seq">7 → 2 → 1 → 4 → 6</span>
+    </div>
+    <div class="path">
+      <h4>Something is on fire</h4>
+      <p>You're not studying, you're diagnosing. Reliability gives you the vocabulary for what you're watching, load balancing explains the cascade, and caching covers the cold-start problem you're about to have.</p>
+      <span class="seq">5 → 3 → 1</span>
+    </div>
+    <div class="path">
+      <h4>The product is growing and you're nervous</h4>
+      <p>Nothing is broken yet and you want to keep it that way. This is the order the problems actually arrive in for a maturing web app.</p>
+      <span class="seq">1 → 2 → 3 → 4 → 5 → 6 → 7</span>
+    </div>
+    <div class="path">
+      <h4>You want the theory</h4>
+      <p>You can already build it and want to know why it works. Consistency is the deep end, the capstone shows the trade-offs being priced, and databases is where the theory meets a bill.</p>
+      <span class="seq">6 → 7 → 2</span>
+    </div>
+  </div>
+
+  <h2>Numbers to argue with</h2>
+  <p>Most design arguments are settled by an order of magnitude, not a benchmark. These are the figures worth carrying in your head — every one is approximate, hardware-dependent and a starting point for a conversation rather than a measurement of your system.</p>
+
+  <div class="table-scroll">
+  <table class="num-table">
+    <thead><tr><th>Roughly</th><th>What it is</th><th>Why it settles arguments</th></tr></thead>
+    <tbody>
+      <tr><td>~100 ns</td><td>Read from local process memory</td><td>The thing a remote cache is 1,000× slower than. In-process caching is not the same tool.</td></tr>
+      <tr><td>~0.5–2 ms</td><td>Redis/Memcached round trip, same AZ</td><td>Fast enough to be free, slow enough that ten of them in a loop is a bug.</td></tr>
+      <tr><td>~1–10 ms</td><td>Indexed single-row database query</td><td>If yours isn't in this range, the problem is the query, not the database.</td></tr>
+      <tr><td>~0.5 ms</td><td>Round trip within an availability zone</td><td>Why "put it in the same AZ" is the cheapest latency win there is.</td></tr>
+      <tr><td>~1–2 ms</td><td>Round trip between AZs in one region</td><td>A synchronous cross-AZ quorum costs you this on every write. Usually worth it.</td></tr>
+      <tr><td>~60–150 ms</td><td>Round trip between distant regions</td><td>Set by the speed of light in fibre. No engineering gets under it — which is why synchronous cross-region consistency is expensive by physics, not by implementation.</td></tr>
+      <tr><td>99.9%</td><td>= 8.8 hours of downtime a year</td><td>Sounds impressive, is roughly one bad afternoon a quarter.</td></tr>
+      <tr><td>99.99%</td><td>= 53 minutes a year</td><td>Less than one incident's worth of debugging. This number is a staffing decision.</td></tr>
+      <tr><td>0.999<sup>10</sup> ≈ 99.0%</td><td>Ten hard dependencies, each at three nines</td><td>Availability multiplies. You cannot be more available than the product of the things you can't work without.</td></tr>
+      <tr><td>~1k–10k/s</td><td>Single-row writes a well-tuned single database instance sustains</td><td>Most products never reach this. Sharding conversations that start below it are usually premature.</td></tr>
+      <tr><td>≈ throughput × latency</td><td>Little's Law — the concurrency you need</td><td>Turns "the site is slow" into a number. A timeout is a concurrency budget.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>The five pillars, in one breath</h2>
+  <p>If you remember nothing else, remember the shape of the problem each guide solves:</p>
+  <p>
+    <span class="pillar">Speed</span> don't redo expensive work — <em>cache it</em>.<br>
+    <span class="pillar">State</span> one database has a ceiling — <em>replicate and shard past it</em>.<br>
+    <span class="pillar">Distribution</span> one server is fragile — <em>spread load across a stateless herd</em>.<br>
+    <span class="pillar">Async</span> don't make users wait for work they don't care about — <em>queue it</em>.<br>
+    <span class="pillar">Resilience</span> failure is constant — <em>contain it so it can't cascade</em>.
+  </p>
+  <p>…and the question threaded through every one: <strong>consistency</strong> — how much staleness can this particular piece of data safely tolerate? Answer that per feature, and most design decisions answer themselves.</p>
+
+  <h2>The words everyone uses and nobody defines</h2>
+  <dl class="gloss">
+    <dt>Latency vs. throughput</dt>
+    <dd>Latency is how long one request takes; throughput is how many you finish per second. They trade against each other, and improving one often degrades the other — batching is the classic example.</dd>
+    <dt>p50, p99, p99.9</dt>
+    <dd>Percentiles of response time. p99 = 1% of requests are slower than this. Averages hide outages; percentiles don't. At scale, p99 is somebody's whole experience.</dd>
+    <dt>Horizontal vs. vertical scaling</dt>
+    <dd>Vertical is a bigger box — simple, instant, and it runs out. Horizontal is more boxes — unlimited in principle, and it makes everything else in this series necessary.</dd>
+    <dt>Stateless</dt>
+    <dd>A server that keeps nothing between requests that it couldn't reconstruct. It's what makes servers interchangeable, which is what makes load balancing, autoscaling and rolling deploys possible.</dd>
+    <dt>Idempotent</dt>
+    <dd>Doing it twice has the same effect as doing it once. The property that makes retries safe, and therefore the property that makes distributed systems tolerable.</dd>
+    <dt>Backpressure</dt>
+    <dd>A system under strain telling its callers to slow down, rather than silently queueing until it dies. The opposite of an unbounded buffer.</dd>
+    <dt>Hot key / hot shard</dt>
+    <dd>One key or one partition receiving wildly more traffic than its peers. Adding capacity doesn't help, because the routing sends it all to the same place regardless.</dd>
+    <dt>Eventual consistency</dt>
+    <dd>If writes stop, all replicas converge on the same value — eventually. It says nothing about how long that takes, which is the part that bites.</dd>
+  </dl>
+
+  <div class="savehint">🌐 Every card above opens a full guide, each guide links back here, and there's a <a href="system-design-basics-complete.html">single-file version of the entire series</a> if you'd rather have all seven in one page you can save, print, or read offline.</div>
+
+  <div class="note">
+    <span class="label">The meta-lesson across all seven</span>
+    Every guide ends up in the same place: <em>climb only as high as your load forces, and add complexity only when the metrics demand it.</em> The best system is the simplest one that meets its targets. Restraint isn't the boring option — across Figma, Discord, Netflix, and the rest, restraint <em>is</em> the strategy.
+  </div>
+
+  <div class="note warn">
+    <span class="label">How to actually retain this</span>
+    Reading all seven guides straight through will feel productive and won't work. Do this instead: read one guide, close it, and answer its "Check yourself" questions from memory before opening the answers. Getting one wrong is the point — that's the moment the idea actually lands. Then come back a week later and answer them again. Twelve hours of reading retained badly is worth less than four hours read this way.
+  </div>
+
+  <hr>
+  <p class="footer">System Design Basics — a seven-part series. Each guide is self-contained, mobile-friendly, and adapts to light or dark. Sources are listed at the foot of every guide.</p>
+</div>
+</body>
+</html>

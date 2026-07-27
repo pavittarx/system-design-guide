@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Understanding Caching — A Practical Guide</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1d212a;
+    --text: #e7e9ee;
+    --muted: #9aa3b2;
+    --accent: #5b9dff;
+    --accent-2: #7ee0c0;
+    --warn: #ffcf70;
+    --danger: #ff8a8a;
+    --border: #262b36;
+    --code-bg: #12151b;
+    --radius: 14px;
+    --maxw: 820px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --panel-2: #f0f2f5;
+      --text: #1a1d24;
+      --muted: #5a6472;
+      --accent: #2f6bd6;
+      --accent-2: #16916f;
+      --warn: #9a6b00;
+      --danger: #b23b3b;
+      --border: #e2e5ea;
+      --code-bg: #f1f3f6;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 32px 20px 80px; }
+  header.hero {
+    padding: 20px 0 8px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 28px;
+  }
+  .kicker {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  h1 { font-size: 2.05rem; line-height: 1.15; margin: 0 0 12px; letter-spacing: -0.02em; }
+  .lede { color: var(--muted); font-size: 1.12rem; margin: 0; }
+  h2 {
+    font-size: 1.5rem; margin: 44px 0 14px; letter-spacing: -0.01em;
+    padding-top: 8px; scroll-margin-top: 20px;
+  }
+  h3 { font-size: 1.16rem; margin: 26px 0 8px; }
+  p { margin: 12px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    background: var(--code-bg); border: 1px solid var(--border);
+    padding: 1px 6px; border-radius: 6px; font-size: 0.86em;
+    font-family: "SF Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-size: 0.85rem;
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; line-height: 1.5;
+  }
+  pre code { background: none; border: none; padding: 0; }
+
+  /* TOC */
+  nav.toc {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 20px; margin-bottom: 8px;
+  }
+  nav.toc strong { display:block; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 10px; }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 28px; }
+  nav.toc li { margin: 5px 0; break-inside: avoid; }
+  @media (max-width: 560px){ nav.toc ol { columns: 1; } h1 { font-size: 1.7rem; } }
+
+  /* callouts */
+  .note {
+    border-left: 3px solid var(--accent); background: var(--panel);
+    border-radius: 0 10px 10px 0; padding: 12px 16px; margin: 18px 0;
+  }
+  .note.warn { border-left-color: var(--warn); }
+  .note.key { border-left-color: var(--accent-2); }
+  .note .label { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); display:block; margin-bottom: 4px; }
+
+  /* layered diagram */
+  .stack { margin: 20px 0; }
+  .layer {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px; margin: 8px 0; position: relative;
+  }
+  .layer .idx {
+    flex: 0 0 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+    font-weight: 700; background: var(--panel-2); color: var(--accent); font-size: 0.95rem;
+  }
+  .layer .body h4 { margin: 0 0 2px; font-size: 1rem; }
+  .layer .body p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+  .layer .speed { margin-left: auto; font-size: 0.78rem; color: var(--accent-2); font-weight: 600; white-space: nowrap; }
+  .arrow { text-align: center; color: var(--muted); font-size: 0.8rem; margin: -2px 0; }
+
+  /* tables */
+  .table-scroll { overflow-x: auto; margin: 18px 0; border: 1px solid var(--border); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 560px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--panel-2); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  tr:last-child td { border-bottom: none; }
+  td strong { color: var(--text); }
+
+  .pill { display:inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+  .pill.good { background: rgba(126,224,192,0.16); color: var(--accent-2); }
+  .pill.bad { background: rgba(255,138,138,0.16); color: var(--danger); }
+  .pill.mid { background: rgba(255,207,112,0.16); color: var(--warn); }
+
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
+  @media (max-width: 560px){ .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .card h4 { margin: 0 0 6px; font-size: 1rem; }
+  .card p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .footer { color: var(--muted); font-size: 0.85rem; }
+  .footer a { color: var(--muted); text-decoration: underline; }
+  ul.tight li, ol.tight li { margin: 6px 0; }
+
+  .series{font-size:.8rem;color:var(--muted);margin-top:6px;}
+  .coldopen{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--danger);border-radius:12px;padding:16px 18px;margin:22px 0;}
+  .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
+  .coldopen p{margin:8px 0 0;}
+  .note.war{border-left-color:var(--danger);}
+
+  /* --- retention + worked-example layer --- */
+  details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
+  details.q summary{cursor:pointer;font-weight:600;list-style:none;}
+  details.q summary::-webkit-details-marker{display:none;}
+  details.q summary::before{content:"▸ ";color:var(--accent);}
+  details.q[open] summary::before{content:"▾ ";}
+  details.q .a{margin:10px 0 0;color:var(--muted);font-size:.95rem;}
+  .recap{background:var(--panel-2);border:1px solid var(--border);border-radius:12px;padding:6px 18px 14px;margin:18px 0;}
+  .recap ul{padding-left:18px;margin:10px 0;} .recap li{margin:7px 0;font-size:.95rem;}
+  .trace{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:18px 0;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;line-height:1.75;overflow-x:auto;white-space:pre;}
+  .trace b{color:var(--accent);font-weight:600;} .trace .bad{color:var(--danger);} .trace .good{color:var(--accent-2);}
+  pre{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.6;margin:18px 0;}
+  pre code{background:none;border:none;padding:0;font-size:1em;}
+  .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
+  <header class="hero">
+    <div class="kicker">System Design Basics · 1 of 6</div>
+    <h1>Understanding Caching</h1>
+    <p class="lede">What a cache really is, where caches live, the read/write patterns worth knowing, and the parts that quietly break in production — explained for developers.</p>
+    <p class="series">The opener to <em>Scaling Databases</em>, <em>Load Balancing</em>, <em>Message Queues</em>, <em>Reliability</em>, and <em>Consistency &amp; CAP</em>.</p>
+  </header>
+
+  <div class="coldopen">
+    <span class="tag">◇ the ninety seconds after the key expired</span>
+    <p>19:42 on a Tuesday, the busiest hour of the week. One key — the homepage feed, cached for an hour, requested about 8,000 times a second — reaches the end of its TTL. Every one of those 8,000 requests looks in the cache, finds nothing, and does the obvious thing: asks the database. The query takes 40 ms when the database is idle. It is not idle; it is now running 8,000 of them at once, so it takes four seconds, then twelve. Clients time out at two seconds and retry, which adds a second wave on top of the first. Nobody deployed anything. Nobody's disk failed. A timer ran out, and by 19:44 the site is down.</p>
+  </div>
+
+  <nav class="toc">
+    <strong>Contents</strong>
+    <ol>
+      <li><a href="#what">What a cache is</a></li>
+      <li><a href="#layers">The layers</a></li>
+      <li><a href="#strategies">Read/write strategies</a></li>
+      <li><a href="#worked">Cache-aside in code</a></li>
+      <li><a href="#http">HTTP caching</a></li>
+      <li><a href="#eviction">Eviction &amp; TTL</a></li>
+      <li><a href="#hard">The hard parts</a></li>
+      <li><a href="#ops">Operational reality</a></li>
+      <li><a href="#examples">Real-world examples</a></li>
+      <li><a href="#dont">When not to cache</a></li>
+      <li><a href="#metrics">Metrics that matter</a></li>
+      <li><a href="#start">Where to start</a></li>
+      <li><a href="#recap">Recap in 60 seconds</a></li>
+      <li><a href="#check">Check yourself</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="what">1. What a cache actually is</h2>
+  <p>A <strong>cache</strong> is a small, fast store that keeps copies of data close to where it's needed, so you don't have to redo expensive work — a database query, an API call, a heavy computation, a network round-trip. You spend a little memory and some added complexity to buy a lot of speed and a much lighter load on the systems behind it.</p>
+  <p>The reason it matters is a gap in speed. Reading from an in-memory cache is measured in microseconds (local) to well under a millisecond (a Redis hop); the same request that falls through to a database and back can take <strong>tens of milliseconds</strong> — often orders of magnitude slower. When most requests are answered by the cache, average latency collapses and the origin barely notices the traffic.</p>
+  <div class="note key">
+    <span class="label">The whole tension in one line</span>
+    <em>"There are only two hard things in Computer Science: cache invalidation and naming things."</em> — attributed to Phil Karlton. Caching is easy to add and hard to keep <em>correct</em>. That's the real subject of this guide.
+  </div>
+
+  <h2 id="layers">2. The layers: where caches live</h2>
+  <p>Caching isn't one thing — it's a series of layers between the user and the source of truth. A request can be satisfied at any of them, and the earlier it's answered, the cheaper it is. Walk a request from the browser inward:</p>
+
+  <div class="stack">
+    <div class="layer">
+      <div class="idx">1</div>
+      <div class="body"><h4>Browser / client cache</h4><p>The user's own device stores assets and responses. Nothing beats not making a request at all. Governed by HTTP headers.</p></div>
+      <div class="speed">fastest</div>
+    </div>
+    <div class="arrow">↓ on miss</div>
+    <div class="layer">
+      <div class="idx">2</div>
+      <div class="body"><h4>CDN / edge cache</h4><p>A global network (Cloudflare, Fastly, CloudFront) caches content near users. Cuts latency <em>and</em> origin load.</p></div>
+      <div class="speed">very fast</div>
+    </div>
+    <div class="arrow">↓ on miss</div>
+    <div class="layer">
+      <div class="idx">3</div>
+      <div class="body"><h4>Reverse-proxy / gateway</h4><p>Varnish or Nginx in front of your app, caching whole responses before they reach application code.</p></div>
+      <div class="speed">fast</div>
+    </div>
+    <div class="arrow">↓ on miss</div>
+    <div class="layer">
+      <div class="idx">4</div>
+      <div class="body"><h4>Application cache</h4><p>Inside your service — an in-process map (Caffeine, Guava) or a shared store (Redis, Memcached). Where "caching strategies" live.</p></div>
+      <div class="speed">fast</div>
+    </div>
+    <div class="arrow">↓ on miss</div>
+    <div class="layer">
+      <div class="idx">5</div>
+      <div class="body"><h4>Database cache</h4><p>The DB's own buffer pool / query cache and materialized views. The source of truth, with its own caching inside.</p></div>
+      <div class="speed">the origin</div>
+    </div>
+  </div>
+
+  <p>These layers <strong>compound</strong>: one page load might be served partly from the browser, partly from the CDN, and partly computed fresh. Each layer needs its own story for staying correct.</p>
+
+  <div class="note">
+    <span class="label">Local vs. distributed</span>
+    An <strong>in-process</strong> cache is fastest (no network hop) but every server has its own copy — they can disagree, and you multiply memory use. A <strong>distributed</strong> cache (Redis/Memcached) adds a network hop but gives every instance one shared, consistent view. Once you have more than one server, distributed is usually the answer.
+  </div>
+
+  <h2 id="strategies">3. Read/write strategies</h2>
+  <p>Each pattern answers two questions: <em>who talks to the cache</em>, and <em>when does the cache get written</em>. The read patterns decide how misses get filled; the write patterns decide how the cache stays in step with the source of truth.</p>
+
+  <h3>Cache-aside (lazy loading) — the default</h3>
+  <p>The application manages the cache. On a read: check cache → hit returns it → miss reads the DB, writes the value into the cache, then returns it. On a write: update the DB and invalidate the cached entry.</p>
+  <ul class="tight">
+    <li><span class="pill good">+</span> Only requested data is cached (lean, cheap). If the cache disappears, reads still <em>return</em> — they fall through to the database instead of erroring.</li>
+    <li><span class="pill bad">−</span> The first request for any key always misses (cold start). The app carries the caching logic. A small window exists where DB and cache can disagree.</li>
+  </ul>
+
+  <div class="note warn">
+    <span class="label">"Resilient to cache failure" has an asterisk on it</span>
+    You will read that cache-aside means "if the cache dies, the app still works." What it actually means is that the app <em>degrades</em> rather than throwing errors — which is not the same thing as surviving. If your cache was absorbing 95% of reads, then the moment it goes away cold your database receives <strong>twenty times</strong> its normal read load, all at once, with no ramp. Databases do not politely queue; they fall over. Losing a cache cold is one of the best-documented ways to take a service down, and it is why cache warmup, request coalescing and load shedding exist at all. Cache-aside buys you a failure mode you can survive <em>if you built for it</em> — see <a href="reliability-toolkit.html">the Reliability guide</a> for the machinery.
+  </div>
+
+  <h3>Read-through</h3>
+  <p>Like cache-aside, but the <em>cache</em> knows how to load from the DB on a miss (via a library/provider), so the app only ever talks to the cache. Cleaner app code; loading logic moves into the caching layer.</p>
+
+  <h3>Write-through</h3>
+  <p>Every write updates the cache and the DB synchronously, together.</p>
+  <ul class="tight">
+    <li><span class="pill good">+</span> Cache and DB stay consistent; any key that's been written is served warm (unwritten or evicted keys still miss).</li>
+    <li><span class="pill bad">−</span> Every write pays to write both; you cache data that may never be read (bloat). Often paired with cache-aside reads.</li>
+  </ul>
+
+  <h3>Write-back (write-behind)</h3>
+  <p>Write to the cache immediately and return; flush to the DB asynchronously later, in batches.</p>
+  <ul class="tight">
+    <li><span class="pill good">+</span> Very fast writes; absorbs bursts; fewer DB writes.</li>
+    <li><span class="pill bad">−</span> Data loss risk if the cache node dies before the flush. More complex.</li>
+  </ul>
+
+  <h3>Write-around</h3>
+  <p>Writes go straight to the DB, bypassing the cache; the cache fills later on a read miss.</p>
+  <ul class="tight">
+    <li><span class="pill good">+</span> Avoids flooding the cache with write-heavy data that isn't read soon.</li>
+    <li><span class="pill bad">−</span> Recently written data is a guaranteed miss on first read.</li>
+  </ul>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Strategy</th><th>Consistency</th><th>Write cost</th><th>Best for</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Cache-aside</strong></td><td><span class="pill mid">eventual</span></td><td>low</td><td>Read-heavy, general purpose. The safe default.</td></tr>
+      <tr><td><strong>Read-through</strong></td><td><span class="pill mid">eventual</span></td><td>low</td><td>Same as above, but you want cleaner app code.</td></tr>
+      <tr><td><strong>Write-through</strong></td><td><span class="pill good">strong-ish</span></td><td>high</td><td>Reads must be fresh; you can pay on writes.</td></tr>
+      <tr><td><strong>Write-back</strong></td><td><span class="pill bad">weak</span></td><td>very low</td><td>Write-heavy, burst-tolerant, some loss acceptable.</td></tr>
+      <tr><td><strong>Write-around</strong></td><td><span class="pill mid">eventual</span></td><td>low</td><td>Data written but rarely re-read immediately.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Real systems mix these. AWS, for instance, recommends combining <strong>write-through</strong> (to keep the cache fresh) with <strong>cache-aside</strong> reads (as the miss fallback), plus TTLs to keep it lean.</p>
+  <p>Worth saying out loud: caching is not the only way to take read load off a database. Read replicas move the same reads to a different machine without introducing a second copy of the truth with its own lifetime — see <a href="database-scaling.html">the Database Scaling guide</a>. Caching wins when the work is expensive to <em>compute</em>, not merely expensive to <em>fetch</em>.</p>
+
+  <h2 id="worked">4. Cache-aside in code — and four bugs in it</h2>
+  <p>Everything above is vocabulary. Here is what cache-aside looks like when you actually write it, and it is worth staring at, because this exact function is in production somewhere near you right now.</p>
+
+<pre><code>def get_user(user_id):
+    key = f"user:{user_id}"
+    cached = redis.get(key)
+    if cached:
+        return json.loads(cached)
+
+    user = db.query_one("SELECT * FROM users WHERE id = %s", user_id)
+    redis.setex(key, 3600, json.dumps(user))
+    return user
+
+def update_user(user_id, fields):
+    db.update("users", user_id, fields)
+    redis.delete(f"user:{user_id}")</code></pre>
+
+  <p>Thirteen lines, textbook-correct in shape, and wrong in at least four ways.</p>
+
+  <h3>1. Nothing coalesces the misses</h3>
+  <p>Ten thousand concurrent requests for the same missing key run this function ten thousand times. Each one sees an empty cache, and each one issues its own <code>SELECT</code>. The cache does not queue them; it does not know they are related. You have built a mechanism that converts a single expiry event into ten thousand simultaneous database queries — the cold open of this guide, in thirteen lines. The fix is <strong>single-flight</strong>: the first caller to miss takes a short lock and does the load, and everyone else waits for its answer.</p>
+
+  <h3>2. The TTL is a constant</h3>
+  <p><code>3600</code>, exactly, for every key. If you warm the cache after a deploy, or a batch job populates ten thousand keys in one loop, all of those keys were written within the same second and will therefore expire within the same second — an hour later, at a time nobody chose. Constant TTLs manufacture synchronised expiry. Randomise it.</p>
+
+  <h3>3. The stale-forever race</h3>
+  <p>This one is subtle and it is the reason people lose faith in their cache. Follow two threads:</p>
+
+  <div class="trace"><b>reader</b>   GET  user:42          → miss
+<b>reader</b>   SELECT ... id = 42     → returns name = "Ada"
+<b>reader</b>   ...descheduled. GC pause, slow network, whatever.
+<b>writer</b>   UPDATE users SET name = "Grace" WHERE id = 42
+<b>writer</b>   DEL  user:42           → key isn't there; no-op
+<b>reader</b>   ...wakes up
+<b>reader</b>   SETEX user:42 3600 <span class="bad">{"name": "Ada"}</span>
+
+<span class="bad">cache = "Ada"   db = "Grace"   for the next 60 minutes</span></div>
+
+  <p>The invalidation happened <em>before</em> the poisoning write, so it invalidated nothing. No subsequent write will fix this either — the next <code>update_user</code> deletes a key that now holds the stale value, sure, but until someone writes again the cache confidently serves "Ada". Nothing in the system knows it is wrong.</p>
+  <p>This is why <strong>invalidation-on-write alone is not sufficient</strong>, no matter how carefully you find every call site. The window is small, but "small" times "a million writes a day" is a support ticket. Narrowing it is possible — Facebook's <em>leases</em> hand the missing reader a token that the writer's delete invalidates, so the late fill is simply rejected; a "delayed double delete" removes the key again a second after the write. Eliminating it needs versioned compare-and-set on the fill.</p>
+  <p>And it is why a <strong>bounded TTL is a safety net rather than a nicety</strong>. The TTL is the only thing in the buggy version above that ever repairs this. Every key you cache without an expiry is a key that can be silently wrong forever. If you find yourself writing <code>SET</code> with no TTL, you are betting that your invalidation logic is perfect. It is not.</p>
+
+  <h3>4. Misses and empty results are the same thing</h3>
+  <p><code>db.query_one</code> returns <code>None</code> for a user that doesn't exist. <code>json.dumps(None)</code> is the string <code>"null"</code>, which gets cached for a full hour and is indistinguishable from a real value. So a user created one second after somebody looked them up stays invisible for an hour. Flip the code the other way — only cache when <code>user is not None</code> — and you get the opposite failure, <strong>cache penetration</strong>: every request for a non-existent ID misses the cache and hits the database, forever, which is a free denial-of-service for anyone who can guess URLs.</p>
+  <p>The answer is to cache negatives <em>deliberately</em>, with their own short TTL and a sentinel you can tell apart from real data. (While you are in there: <code>if cached:</code> is also wrong — an empty cached value is falsy, so a legitimately-empty entry is treated as a miss on every read. Test <code>is not None</code>.)</p>
+
+  <h3>The version that survives contact</h3>
+
+<pre><code>MISS = b"\x00none"                  # sentinel: cached "does not exist"
+
+def jitter(ttl):
+    return ttl + random.randint(0, ttl // 10)
+
+def get_user(user_id):
+    key = f"v3:user:{user_id}"      # v3 = serialisation version
+    hit = redis.get(key)
+    if hit is not None:
+        return None if hit == MISS else json.loads(hit)
+
+    with single_flight(key):        # only one loader per key
+        hit = redis.get(key)        # someone may have filled it while we waited
+        if hit is not None:
+            return None if hit == MISS else json.loads(hit)
+
+        user = db.query_one("SELECT * FROM users WHERE id = %s", user_id)
+        if user is None:
+            redis.set(key, MISS, ex=jitter(60), nx=True)
+        else:
+            redis.set(key, json.dumps(user), ex=jitter(3600), nx=True)
+        return user
+
+def update_user(user_id, fields):
+    db.update("users", user_id, fields)
+    redis.delete(f"v3:user:{user_id}")   # delete, don't write the new value in</code></pre>
+
+  <p>What changed: misses collapse to one query, TTLs no longer synchronise, non-existent users get a short negative entry instead of either an hour of invisibility or an open channel to the database, and the key carries a schema version. <code>nx=True</code> means a slow reader can never clobber a value someone else has already refreshed — it does <em>not</em> close the stale-forever race, because after the writer's <code>DEL</code> the slot is empty and the stale <code>SET</code> succeeds. Only the bounded TTL saves you there, which is the whole point.</p>
+  <p>Note also the last line: the writer <em>deletes</em> rather than writing the new value. Two concurrent writers who both write their value into the cache can land in the opposite order they landed in the database. Delete-on-write has one outcome — the next reader goes and finds out — and one outcome is much easier to reason about than two.</p>
+
+  <h2 id="http">5. HTTP caching (the web layer)</h2>
+  <p>If you work on anything web-facing, this layer is standardized and immediately actionable. It's controlled by response headers.</p>
+
+  <h3>Cache-Control — the main lever</h3>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Directive</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>max-age=SECONDS</code></td><td>How long the response is fresh in the browser.</td></tr>
+      <tr><td><code>s-maxage=SECONDS</code></td><td>Same, but for shared caches (CDNs); overrides <code>max-age</code> there.</td></tr>
+      <tr><td><code>public</code> / <code>private</code></td><td>Any cache may store it / only the end user's browser may.</td></tr>
+      <tr><td><code>no-cache</code></td><td>May be stored, but must revalidate before reuse.</td></tr>
+      <tr><td><code>no-store</code></td><td>Never store at all — for sensitive data.</td></tr>
+      <tr><td><code>immutable</code></td><td>This URL's bytes never change; don't even revalidate.</td></tr>
+      <tr><td><code>stale-while-revalidate=S</code></td><td>Serve slightly stale content instantly while refreshing in the background.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Validation &amp; 304s</h3>
+  <p>Instead of re-sending a whole resource, the client revalidates cheaply. The server sends an <strong>ETag</strong> (a content fingerprint); the browser later sends <code>If-None-Match</code>. If nothing changed, the server replies <code>304 Not Modified</code> with no body. (<code>Last-Modified</code> + <code>If-Modified-Since</code> is the timestamp-based equivalent.) Big bandwidth savings, still fresh.</p>
+
+  <div class="cards">
+    <div class="card">
+      <h4>Fingerprinted assets</h4>
+      <p><code>app.a1b2c3.js</code> — cache forever, because a new deploy changes the filename:</p>
+      <pre><code>Cache-Control: public,
+  max-age=31536000, immutable</code></pre>
+    </div>
+    <div class="card">
+      <h4>Frequently-updated HTML</h4>
+      <p>Serve recent copies fast, revalidate quietly, pair with an ETag:</p>
+      <pre><code>Cache-Control: public,
+  max-age=300,
+  stale-while-revalidate=30</code></pre>
+    </div>
+  </div>
+  <p>CDNs apply these same rules at the edge — which is exactly why the <code>s-maxage</code> (edge lifetime) vs <code>max-age</code> (browser lifetime) split is so useful.</p>
+
+  <h3>Vary — the header that leaks other people's data</h3>
+  <p>A shared cache keys entries on the URL. That is the whole model. If two different responses can come back from the same URL, the cache needs to be told which request headers made them different, and that is what <code>Vary</code> is for: <code>Vary: Accept-Encoding</code> means "store gzip and brotli separately," <code>Vary: Accept-Language</code> means "store per language."</p>
+  <p>Now consider <code>GET /dashboard</code>, which renders the logged-in user's name, and which your framework marks <code>Cache-Control: public, max-age=60</code> because someone was tuning performance. The response varies by the session cookie. The header does not say so. The CDN stores Alice's dashboard under the URL alone and serves it to Bob for the next sixty seconds. This is not a hypothetical class of bug; it has shipped, repeatedly, at companies you have heard of, and it usually surfaces as a support ticket that reads "I'm logged in as someone else."</p>
+  <div class="note warn">
+    <span class="label">The blunt instrument, and why you want it</span>
+    <code>Cache-Control: private</code> tells shared caches not to store the response at all — only the end user's own browser may. For anything personalised, reach for <code>private</code> (or <code>no-store</code> if it's sensitive) rather than trying to get <code>Vary</code> exactly right. <code>Vary: Cookie</code> is technically correct and practically useless: if your site sets any cookie at all, every visitor has a unique key and your hit rate goes to roughly zero. The real fix for a page that is <em>mostly</em> public is to cache the public shell and fetch the personalised fragment separately.
+  </div>
+
+  <h2 id="eviction">6. Eviction &amp; TTL: keeping the cache lean</h2>
+  <p>A cache has finite memory, so it must decide what to drop.</p>
+  <p><strong>Expiration (TTL)</strong> gives every entry a time-to-live; after it lapses, the entry is refetched. TTL is the simplest correctness tool — it bounds how stale data can get without any explicit invalidation. Short TTL = fresher but more misses; long TTL = faster but staler.</p>
+  <p><strong>Eviction policies</strong> decide what to drop when memory is full:</p>
+  <ul class="tight">
+    <li><strong>LRU (Least Recently Used)</strong> — drop what's gone unused longest. The default sweet spot for most workloads.</li>
+    <li><strong>LFU (Least Frequently Used)</strong> — drop the least-often accessed; better when popularity is stable.</li>
+    <li><strong>FIFO</strong> — drop the oldest inserted, regardless of use.</li>
+    <li><strong>Random / TTL-based</strong> — simpler, occasionally the right call.</li>
+  </ul>
+  <div class="note">
+    <span class="label">Eviction ≠ invalidation</span>
+    Eviction is the cache freeing space <em>on its own terms</em>. Invalidation is <em>you</em> deciding a value is now wrong. Conflating the two is a common source of confusion.
+  </div>
+
+  <h2 id="hard">7. The hard parts</h2>
+  <p>This is what separates "I added a cache" from "I run a cache in production."</p>
+
+  <h3>Cache invalidation</h3>
+  <p>The cache holds a <em>copy</em>. The moment the source of truth changes, that copy might be wrong. Three broad approaches:</p>
+  <ul class="tight">
+    <li><strong>TTL / expiry</strong> — let entries lapse. Simple, eventually consistent, but stale within the window.</li>
+    <li><strong>Write-time invalidation</strong> — when you update the DB, delete/update the cache entry in the same flow. Fresher, but you must find <em>every</em> place a value is cached, and the DB-write + cache-delete pair isn't atomic (a failure between them leaves you inconsistent).</li>
+    <li><strong>Event-driven invalidation</strong> — publish change events (pub/sub, a CDC stream, Redis Pub/Sub) that fan out and purge keys. Scales well, more moving parts, and you inherit every delivery guarantee question the transport has — see <a href="message-queues.html">the Message Queues guide</a>, because "at-least-once purge" and "at-most-once purge" are very different promises about your cache.</li>
+  </ul>
+
+  <div class="note warn">
+    <span class="label">Ask this before caching anything</span>
+    <em>How stale can this specific data safely be?</em> A product catalog tolerates minutes. An account balance tolerates nothing. The answer picks your strategy. Most caches give <strong>eventual consistency</strong> — for a window, readers may see old data. If that phrase is doing more work than you're comfortable with, <a href="consistency-cap.html">the Consistency &amp; CAP guide</a> unpacks exactly what you are and aren't promised.
+  </div>
+
+  <h3>Cache key versioning</h3>
+  <p>Prefix every key with a schema version: <code>v3:user:123</code>. You will not appreciate why until the deploy where you add a field to the serialised shape, and every instance running the old code starts reading objects that have it while every instance running the new code reads objects that don't. Without a version prefix your options are (a) flush the cache, which is the cold-start outage described below, or (b) write defensive deserialisation forever. With one, you bump <code>v3</code> to <code>v4</code>, the new code writes and reads new keys, the old keys are read by nobody and quietly age out under their own TTL or get evicted by LRU. It costs six characters per key.</p>
+
+  <h3>Cache stampede — two different problems that people merge into one</h3>
+  <p>These get taught together and they have different fixes. Getting them confused is why people add jitter to a hot-key problem and are baffled when nothing improves.</p>
+
+  <p><strong>Synchronised mass expiry.</strong> Many <em>different</em> keys were written at roughly the same moment — a deploy warmed them, a batch job populated them, the cache restarted and refilled in a burst — and because they all got the same fixed TTL, they all expire at roughly the same moment too. One second you're at a 95% hit rate; the next you're at nothing, and the database gets the whole read load.</p>
+  <ul class="tight">
+    <li><strong>The fix is TTL jitter.</strong> Randomise expiry per key — 3600 seconds plus 0–360 random — so the cliff becomes a slope. This is the entire fix, it's three lines, and there's no reason not to do it by default.</li>
+  </ul>
+
+  <p><strong>A single hot key expiring.</strong> One key, requested thousands of times a second. Whenever its TTL lands, every in-flight request misses simultaneously and every one of them queries the database. Note what jitter does here: <em>nothing</em>. There is only one key. It has one expiry time. Randomising <em>when</em> the cliff happens does not stop it happening, and it does not reduce the height of the drop by one request.</p>
+  <ul class="tight">
+    <li><strong>Request coalescing / single-flight</strong> — the first request to miss takes a lock and recomputes; the rest wait for its result. N misses become one query. This is the actual fix.</li>
+    <li><strong>Probabilistic early expiration (XFetch)</strong> — see below.</li>
+    <li><strong>Serve-stale-while-revalidate</strong> — keep the old value past its nominal freshness and hand it back instantly while one background task refreshes it. Nobody waits, nobody misses.</li>
+  </ul>
+
+  <h3>Probabilistic early expiration (XFetch)</h3>
+  <p>The elegant answer to the hot-key case, and it needs no locks. On every read, alongside the value you store how long the last recompute took (<em>delta</em>) and when the key expires. Then each reader independently rolls a die: recompute early if</p>
+<pre><code>now - delta * beta * ln(random())  &gt;=  expiry_time</code></pre>
+  <p>Because <code>ln(random())</code> is negative, that left-hand side sits ahead of <code>now</code>, and the further ahead the closer you are to expiry — so the probability of any given reader deciding to refresh climbs smoothly as the deadline approaches. In practice one request somewhere in the last few seconds volunteers, refreshes the value in the background, and every other request keeps getting hits. The key never actually expires under load. <em>beta</em> (default 1) tunes eagerness; the <em>delta</em> term makes expensive values start refreshing earlier, which is exactly what you want.</p>
+
+  <h3>Metastable failure — why the outage outlives its cause</h3>
+  <p>This is the failure mode that surprises people, because the trigger is gone and the system is still down.</p>
+  <p>Start from the cold open. The cache empties, the database saturates, requests take longer than the client timeout, clients retry. Now count the load: every user request has become two or three database queries, so the offered load has <em>tripled</em> at the exact moment capacity collapsed. And the cache cannot refill, because filling it requires successful database reads and the database is not completing any. The system has entered a state where the load it is generating is sufficient to keep itself in that state. Restore the cache node, fix the config, undo whatever you did — none of it matters. It is now self-sustaining.</p>
+  <p>The only exit is to <strong>remove load</strong>. Shed traffic at the edge, drop the retry budget to zero, disable the expensive endpoint, take a fraction of users offline deliberately. Give the database enough headroom to answer some queries, let those answers populate the cache, watch the hit rate climb, and only then ramp traffic back. Engineers hate this because it means choosing to fail requests during an outage, which feels like making it worse. Waiting feels like the safe option and is the one that keeps you down for an hour. <a href="reliability-toolkit.html">The Reliability guide</a> covers load shedding, retry budgets and circuit breakers in detail — a cache is one of the systems that most needs them.</p>
+
+  <h3>Hot keys don't get fixed by more cache nodes</h3>
+  <p>Worth being explicit, because it's the first thing everyone tries. A cache cluster distributes keys by hashing them — consistent hashing, usually — which means <code>user:celebrity</code> maps to exactly one node. Adding nodes changes which node. It does not change how many. You can triple your cluster and that one node is still absorbing 100% of the traffic for that key while the other nodes idle. The fixes are different in kind:</p>
+  <ul class="tight">
+    <li><strong>Key splitting</strong> — write the same value under <code>user:celebrity#0</code> … <code>#7</code>, and have readers pick a suffix at random. Eight keys hash to (probably) eight nodes and the load divides. You pay for it in invalidation: a write now has to clear all eight.</li>
+    <li><strong>A client-local tier</strong> — a small in-process cache in front of the shared one, holding the top few hundred keys for a second or two. A one-second local TTL on a key read 8,000 times a second turns 8,000 remote reads into one. The cost is a second of extra staleness and the fact that every instance can now disagree.</li>
+  </ul>
+
+  <h3>Other failure modes to know by name</h3>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Problem</th><th>What happens</th><th>Fix</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Cache penetration</strong></td><td>Requests for keys that don't exist miss the cache <em>and</em> the DB every time.</td><td>Cache the "not found" (negative cache) with a short TTL, or a Bloom filter.</td></tr>
+      <tr><td><strong>Hot key</strong></td><td>One key so popular it saturates the single node it hashes to.</td><td>Split the key across suffixes, or add a client-local tier. Not more nodes.</td></tr>
+      <tr><td><strong>Cold start</strong></td><td>A freshly deployed/scaled instance has an empty cache and briefly overloads the origin.</td><td>Pre-warm on boot; ramp traffic gradually.</td></tr>
+      <tr><td><strong>Metastable failure</strong></td><td>Retry amplification keeps the system down after the trigger is gone.</td><td>Shed load, then ramp. Waiting doesn't work.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2 id="ops">8. Operational reality: Redis and Memcached</h2>
+  <p>The patterns above are portable. These are the specific ways the two boxes you'll actually run will embarrass you.</p>
+
+  <h3>Redis: <code>maxmemory-policy</code> defaults to <code>noeviction</code></h3>
+  <p>This one catches almost everybody. Redis is a database that people use as a cache, and its defaults are a database's defaults. Set <code>maxmemory</code>, leave <code>maxmemory-policy</code> alone, and when the cache fills up Redis does not evict anything — it starts returning <code>OOM command not allowed when used memory &gt; 'maxmemory'</code> on every write. Your cache stops accepting new entries, which means every miss stays a miss, which means the database takes the full load. A full cache has become a total cache outage, quietly, without a single alarm firing.</p>
+  <ul class="tight">
+    <li>For a pure cache you want <code>allkeys-lru</code> or <code>allkeys-lfu</code>. Then a full cache does what you expect: makes room.</li>
+    <li><code>volatile-lru</code> and friends only consider keys that <em>have</em> a TTL set. Forget the TTL on one code path and those keys become permanently un-evictable — and if enough of them accumulate, Redis runs out of eviction candidates and falls back to erroring anyway.</li>
+    <li>Don't leave <code>maxmemory</code> at its default of 0 (unlimited) either. That just moves the failure from Redis to the kernel's OOM killer, which is a worse place for it.</li>
+    <li>Redis's LRU is <em>approximate</em> — it samples a handful of keys (<code>maxmemory-samples</code>, default 5) and evicts the best candidate among them, rather than tracking a true global ordering. Close enough for caching, but don't reason as if it's exact.</li>
+  </ul>
+
+  <h3>Memcached: slab calcification</h3>
+  <p>Memcached carves memory into pages and assigns each page to a <em>slab class</em> — a bucket for items of a particular size range. Once a page belongs to the 1 KB class, it stays there. So if your workload shifts — you start storing bigger serialised objects, or a new feature caches small counters — the new size class runs out of pages and starts evicting aggressively while another class sits half-empty holding memory it no longer needs. Your hit rate drops and your memory graph shows plenty free. That's calcification. Modern versions can rebalance (<code>slab_reassign</code> / <code>slab_automove</code>), but it is not something to discover during an incident: watch per-slab eviction counts, not just the total.</p>
+
+  <h3>The numbers may not mean what you think</h3>
+  <p>Redis reports <code>mem_fragmentation_ratio</code> in <code>INFO memory</code> — resident memory divided by the memory Redis thinks it's using. Meaningfully above 1 (say 1.5) means the allocator is holding memory it isn't handing back, so your 8 GB instance is really using 12 and your capacity planning is fiction. Below 1 is worse: it means part of your in-memory cache has been swapped to disk, and a cache that reads from disk is just a slow database with extra steps. Check it before you conclude anything from a memory graph. Likewise, <code>keyspace_hits</code> and <code>keyspace_misses</code> are server-wide counters since boot — if three services share the instance, that ratio is nobody's hit rate. Instrument hit rate in your own client, per cache.</p>
+
+  <h2 id="examples">9. Real-world examples</h2>
+  <p>Every concept above is running, right now, in systems you use daily. Here's where each one shows up in the wild.</p>
+
+  <h3>DNS — TTL and eventual consistency, everywhere</h3>
+  <p>Every domain name lookup is cached with a TTL, from your browser down through your OS and ISP resolvers. It's why changing a website's DNS record "takes a while to propagate" — old answers sit in caches until their TTL expires. DNS is the world's largest example of <strong>expiration-based invalidation</strong>: nobody actively purges those caches, they just lapse. It's also the everyday illustration of <em>eventual consistency</em> — for a window, different people genuinely get different answers.</p>
+
+  <h3>Your frontend build — immutable caching via content hashing</h3>
+  <p>When Webpack, Vite, or Next.js builds your site, it names files by a hash of their contents: <code>app.9f2a1c.js</code>. Because the filename changes whenever the content changes, the server can safely send <code>Cache-Control: public, max-age=31536000, immutable</code> — cache it for a year. A deploy produces new filenames, so browsers fetch the new files and never serve a stale bundle. This is the <em>fingerprinted asset</em> recipe from section 5, and it's why modern web apps load so fast on repeat visits.</p>
+
+  <h3>Netflix Open Connect — a CDN with pre-warming</h3>
+  <p>Netflix places its own caching appliances (Open Connect) <em>inside</em> ISP networks, as close to viewers as possible. The clever part is <strong>proactive prepositioning</strong>: during off-peak hours they push the shows likely to be watched tomorrow onto those edge caches, so the popular content is already there before anyone presses play. That's edge caching plus proactive cache warming at continental scale.</p>
+
+  <h3>Facebook &amp; Memcached — taming the stampede at scale</h3>
+  <p>Facebook runs one of the largest Memcached deployments in the world (cache-aside in front of their databases). Their well-known <a href="https://read.engineerscodex.com/p/how-facebook-scaled-memcached">"Scaling Memcache at Facebook"</a> work describes a mechanism called <strong>leases</strong> to tackle exactly the <em>thundering herd</em> problem from section 7: when a hot key misses, only the first request gets a "lease" to recompute it, while others are told to wait briefly and retry (and may be served a slightly stale value) — a coalescing-style throttle, in production, at enormous scale.</p>
+
+  <h3>Twitter/X timelines — precompute and cache the answer</h3>
+  <p>Rather than assemble your home timeline from scratch on every load, Twitter historically <em>precomputes</em> it: when someone you follow tweets, that tweet is fanned out and written into your cached timeline in Redis ahead of time — a <strong>fan-out-on-write</strong> approach that materializes each timeline in advance. Reads are then just "fetch the ready-made list." It also shows off the <strong>hot key</strong> problem — a celebrity with 100M followers can't be fanned out to everyone cheaply, so those accounts are handled differently (merged in at read time). One product, two strategies, chosen by the shape of the data.</p>
+
+  <h3>E-commerce product pages — different data, different rules</h3>
+  <p>On a large store, the product <em>description and images</em> barely change, so they're cached aggressively at the CDN. But the <em>price and stock count</em> must be near-real-time — you can't sell something you don't have — so those are cached for only seconds, or written through on every change, or fetched live. It's the clearest illustration of the section 7 question: <em>how stale can this specific data safely be?</em> — answered differently for two things on the same page.</p>
+
+  <div class="note key">
+    <span class="label">The takeaway</span>
+    Notice the pattern: nobody picks one strategy. Netflix pre-warms, Facebook coalesces, Twitter precomputes, a shop mixes long and near-zero TTLs on the same page. Real systems layer these techniques and choose per-data-type based on how fresh it must be.
+  </div>
+
+  <h2 id="dont">10. When <em>not</em> to cache</h2>
+  <p>Caching isn't free — it adds a whole new class of bugs (stale reads, invalidation races). Skip or minimize it when:</p>
+  <ul class="tight">
+    <li>Data changes constantly and must be exact — financial ledgers, inventory at checkout.</li>
+    <li>Data is user-specific and rarely re-read — a low hit rate is pure overhead.</li>
+    <li>Correctness beats latency and you can't tolerate <em>any</em> staleness.</li>
+    <li>The added complexity outweighs a modest speedup.</li>
+  </ul>
+  <p>A cache you can't reason about is a liability, not an optimization. <strong>Measure the hit rate</strong> — a cache with a low hit rate is often worse than none.</p>
+
+  <h2 id="metrics">11. Metrics that matter</h2>
+  <div class="cards">
+    <div class="card"><h4>Hit / miss rate</h4><p>The headline number. A low hit rate means the cache isn't earning its keep.</p></div>
+    <div class="card"><h4>Latency (p50 / p99)</h4><p>The actual user-facing win — watch the tail, not just the average.</p></div>
+    <div class="card"><h4>Eviction rate</h4><p>High evictions suggest the cache is too small for the working set.</p></div>
+    <div class="card"><h4>Origin load reduction</h4><p>How much traffic the cache absorbs before it reaches the DB/API.</p></div>
+  </div>
+
+  <h2 id="start">12. Where to start</h2>
+  <p>If you're adding caching to something real, resist the urge to reach for the fanciest pattern. A reliable progression:</p>
+  <ol class="tight">
+    <li><strong>Start with cache-aside + a TTL.</strong> It's simple, resilient, and covers most read-heavy workloads.</li>
+    <li><strong>Measure the hit rate.</strong> If it's low, you're caching the wrong things — fix that before adding machinery.</li>
+    <li><strong>Add TTL jitter from the start</strong> — it is three lines and it prevents keys written together from expiring together. Note that it does nothing for a single hot key; that one needs single-flight.</li>
+    <li><strong>Reach for write-through, event-driven invalidation, or coalescing</strong> only when the numbers actually ask for them.</li>
+  </ol>
+  <p>Add complexity in response to evidence, not anticipation. The best caching setup is the simplest one that hits your latency and freshness targets.</p>
+
+  <h2 id="recap">13. Recap in 60 seconds</h2>
+  <div class="recap">
+    <ul>
+      <li>A cache trades memory and a new class of bugs for latency and origin load. The bugs are the price, not a defect.</li>
+      <li><strong>Cache-aside</strong> is the default: read cache, miss, read DB, fill, return; on write, update DB and <em>delete</em> the key. Deleting beats writing the new value, because two concurrent writers can land in either order.</li>
+      <li>"The app still works without the cache" means it degrades rather than errors. A cache absorbing 95% of reads leaves the database facing 20× its normal load the instant it goes cold.</li>
+      <li>Always set a TTL. It is the only mechanism that repairs an invalidation you got wrong, and you will get one wrong.</li>
+      <li><strong>Jitter fixes synchronised mass expiry</strong> (many keys written together). <strong>Single-flight fixes a hot key expiring</strong> (one key, many concurrent misses). They are different problems; jitter does nothing for the second.</li>
+      <li>The <strong>stale-forever race</strong>: a slow reader writes its pre-update value into a slot the writer just cleared. Invalidation-on-write alone can't prevent it; the TTL is what eventually cleans it up.</li>
+      <li>Cache negative results deliberately, with a short TTL and a distinguishable sentinel. Not caching them at all is an open channel to your database.</li>
+      <li>A hot key is not fixed by more cache nodes — consistent hashing sends it all to one node anyway. Split the key, or add a client-local tier with a one-second TTL.</li>
+      <li>Personalised responses need <code>Cache-Control: private</code>. A shared cache keys on URL; getting <code>Vary</code> subtly wrong serves one user's page to another.</li>
+      <li>Version your keys (<code>v3:user:123</code>) so a serialisation change never forces you to choose between a flush and reading garbage.</li>
+      <li>Redis's <code>maxmemory-policy</code> defaults to <code>noeviction</code>: a full cache returns write errors instead of making room. Set <code>allkeys-lru</code>.</li>
+      <li>Once retries are amplifying, the outage is <strong>self-sustaining</strong>. Recovery is shedding load, not waiting.</li>
+    </ul>
+  </div>
+
+  <h3>Numbers worth having in your head</h3>
+  <p>These are <strong>order-of-magnitude figures, not benchmarks</strong>. They exist so you can sanity-check a design in your head before you measure. Your hardware, payload sizes and network will move any of them by a factor of a few.</p>
+  <div class="table-scroll">
+  <table class="num-table">
+    <thead><tr><th>Rough figure</th><th>What</th><th>Why it matters</th></tr></thead>
+    <tbody>
+      <tr><td>~100 ns</td><td>In-process hash lookup (Caffeine, a plain map)</td><td>Effectively free. No network, no serialisation.</td></tr>
+      <tr><td>~0.2–1 ms</td><td>Redis/Memcached round trip, same AZ</td><td>~1,000–5,000× slower than local, still ~10× faster than a DB query.</td></tr>
+      <tr><td>~1–10 ms</td><td>Indexed database query, warm buffer pool</td><td>The thing you're avoiding. Add a lot if it goes to disk or joins.</td></tr>
+      <tr><td>~10–30 ms</td><td>CDN edge hit from a nearby POP</td><td>Dominated by the user's last-mile latency, not the cache.</td></tr>
+      <tr><td>~60–150 ms</td><td>Cross-region round trip (US coast-to-coast → transatlantic)</td><td>Speed of light. No cache tuning fixes this; move the data closer.</td></tr>
+      <tr><td>90–99%</td><td>CDN hit rate, fingerprinted static assets</td><td>If it's below this, something is defeating the cache key.</td></tr>
+      <tr><td>80–95%</td><td>Healthy object-cache hit rate, read-heavy workload</td><td>The normal target for cache-aside in front of a database.</td></tr>
+      <tr><td>&lt; 70%</td><td>Time to ask whether this cache earns its keep</td><td>Every miss now pays cache latency <em>plus</em> DB latency.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2 id="check">14. Check yourself</h2>
+  <p>Six situations. Think before you open them — the answers are where the guide stops being vocabulary.</p>
+
+  <details class="q">
+    <summary>Your hit rate is 94% and p99 latency got <em>worse</em> after you added the cache. What's the likely cause?</summary>
+    <div class="a">p99 is made of the 6% that miss, and a miss now costs a cache round trip <em>plus</em> the database query it always cost — you added latency to exactly the requests that were already slowest. Averages improved, the tail didn't. Look also for serialisation cost on large objects, connection-pool contention against the cache, and one slow node in the cache cluster dragging a slice of traffic. Instrument hit latency and miss latency as separate metrics; a single blended number will hide this forever.</div>
+  </details>
+
+  <details class="q">
+    <summary>You invalidate on every write, you've checked every call site, and users still report stale data — for almost exactly your TTL duration. What happened?</summary>
+    <div class="a">The stale-forever race. A reader missed, read the old value from the database, got descheduled; your writer updated the row and deleted a key that wasn't there; the reader woke up and wrote its stale value into the empty slot. Your invalidation ran before the poisoning write, so it invalidated nothing. The giveaway is the duration: it's the TTL, because the TTL is the only thing that ever clears it. Narrow the window with leases or a delayed second delete, and never remove the TTL.</div>
+  </details>
+
+  <details class="q">
+    <summary>Which of these must never be cached in a shared CDN, and why: (a) the logged-in dashboard HTML, (b) <code>app.9f2a1c.js</code>, (c) <code>/api/me</code>, (d) a public product image?</summary>
+    <div class="a">(a) and (c). A shared cache keys on the URL plus whatever <code>Vary</code> declares, and both of those return different bytes to different people at the same URL — so the first response gets stored and handed to the next visitor. Mark them <code>Cache-Control: private</code>, or <code>no-store</code> if they carry anything sensitive. Don't rely on <code>Vary: Cookie</code> to save you: it's correct in theory and gives you a ~0% hit rate in practice, so someone will eventually "optimise" it away.</div>
+  </details>
+
+  <details class="q">
+    <summary>You flush the cache during a 3am deploy every week and it's fine. You do it at peak and the site is down for 40 minutes, even though you reverted the change within seconds. Why didn't reverting help?</summary>
+    <div class="a">At 3am the database has enough headroom to serve 100% of reads while the cache refills. At peak it doesn't, so it saturates, requests exceed the client timeout, clients retry, and offered load doubles or triples at the worst possible moment. That's a metastable failure: the load keeping you down is now being generated by the outage itself, so removing the original trigger changes nothing. You have to shed traffic until the database can answer enough queries to repopulate the cache, then ramp back. Also: version your keys instead of flushing.</div>
+  </details>
+
+  <details class="q">
+    <summary>You added jitter to every TTL and your hot-key stampede is exactly as bad as before. What did you misunderstand?</summary>
+    <div class="a">Jitter desynchronises <em>different keys</em> that were written at the same moment. A hot key is one key with one expiry time — randomising when that moment arrives doesn't reduce the number of requests that miss when it does. You need single-flight so only one request rebuilds the value, or probabilistic early expiration so one request refreshes it slightly early and nobody ever sees the miss, or stale-while-revalidate so the old value is served during the rebuild.</div>
+  </details>
+
+  <details class="q">
+    <summary>Your Redis is at its memory limit. Instead of evicting anything, it started returning errors on <code>SET</code> — and your database load quietly tripled. What's the setting?</summary>
+    <div class="a"><code>maxmemory-policy</code>, which defaults to <code>noeviction</code> because Redis is a database first and a cache second. A full cache that refuses writes can never fill a miss, so every miss stays a miss and the whole read load lands on the origin. Set <code>allkeys-lru</code> or <code>allkeys-lfu</code> for a pure cache. Avoid <code>volatile-*</code> unless you're certain every key has a TTL — those policies only consider keys that have one, and can run out of candidates and start erroring anyway.</div>
+  </details>
+
+  <div class="note key">
+    <span class="label">The one-liner to remember</span>
+    A cache is a second copy of the truth with its own lifetime, and every hard problem in caching is a consequence of that sentence. Give every entry a TTL, delete on write rather than overwriting, collapse concurrent misses into one query, and remember that the cache is now load-bearing — losing it is an outage you have to design for, not a graceful fallback you get for free.
+  </div>
+
+  <hr>
+  <p class="footer">
+    Part of <em>System Design Basics</em>. Sources:
+    <a href="https://docs.aws.amazon.com/whitepapers/latest/database-caching-strategies-using-redis/caching-patterns.html">AWS — Database Caching Strategies Using Redis</a> ·
+    <a href="https://redis.io/blog/how-to-tame-the-thundering-herd-problem/">Redis — Taming the Thundering Herd</a> ·
+    <a href="https://accreditly.io/articles/the-practical-guide-to-http-caching-headers-cache-control-etag-and-304s">Accreditly — HTTP Caching Headers</a> ·
+    <a href="https://blog.bytebytego.com/p/a-crash-course-in-caching-final-part">ByteByteGo — A Crash Course in Caching</a> ·
+    <a href="https://read.engineerscodex.com/p/how-facebook-scaled-memcached">Scaling Memcache at Facebook</a> ·
+    <a href="https://openconnect.netflix.com/">Netflix Open Connect</a> ·
+    <a href="https://www.prisma.io/dataguide/managing-databases/introduction-database-caching">Prisma — Database Caching</a>
+  </p>
+</div>
+</body>
+</html>

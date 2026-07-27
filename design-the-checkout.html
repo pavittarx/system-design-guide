@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design the Checkout — System Design Basics</title>
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--panel-2:#1d212a;--text:#e7e9ee;--muted:#9aa3b2;--accent:#5b9dff;--accent-2:#7ee0c0;--warn:#ffcf70;--danger:#ff8a8a;--border:#262b36;--code-bg:#12151b;--radius:14px;--maxw:820px;}
+  @media (prefers-color-scheme: light){:root{--bg:#f6f7f9;--panel:#ffffff;--panel-2:#f0f2f5;--text:#1a1d24;--muted:#5a6472;--accent:#2f6bd6;--accent-2:#16916f;--warn:#9a6b00;--danger:#b23b3b;--border:#e2e5ea;--code-bg:#f1f3f6;}}
+  *{box-sizing:border-box;} html{scroll-behavior:smooth;}
+  body{margin:0;background:var(--bg);color:var(--text);font:17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:32px 20px 80px;}
+  header.hero{padding:20px 0 8px;border-bottom:1px solid var(--border);margin-bottom:24px;}
+  .kicker{text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:var(--accent);font-weight:700;margin-bottom:10px;}
+  h1{font-size:2.05rem;line-height:1.15;margin:0 0 12px;letter-spacing:-.02em;}
+  .lede{color:var(--muted);font-size:1.12rem;margin:0;}
+  h2{font-size:1.5rem;margin:44px 0 14px;letter-spacing:-.01em;padding-top:8px;scroll-margin-top:20px;}
+  h3{font-size:1.16rem;margin:26px 0 8px;}
+  p{margin:12px 0;} a{color:var(--accent);text-decoration:none;} a:hover{text-decoration:underline;}
+  code{background:var(--code-bg);border:1px solid var(--border);padding:1px 6px;border-radius:6px;font-size:.86em;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
+  nav.toc{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:8px;}
+  nav.toc strong{display:block;font-size:.8rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:10px;}
+  nav.toc ol{margin:0;padding-left:20px;columns:2;column-gap:28px;} nav.toc li{margin:5px 0;break-inside:avoid;}
+  @media (max-width:560px){nav.toc ol{columns:1;} h1{font-size:1.7rem;}}
+  .note{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;padding:12px 16px;margin:18px 0;}
+  .note.warn{border-left-color:var(--warn);} .note.key{border-left-color:var(--accent-2);} .note.war{border-left-color:var(--danger);}
+  .note .label{font-weight:700;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:block;margin-bottom:4px;}
+  .coldopen{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--danger);border-radius:12px;padding:16px 18px;margin:22px 0;}
+  .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
+  .coldopen p{margin:8px 0 0;}
+  .stack{margin:20px 0;}
+  .layer{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:8px 0;}
+  .layer .idx{flex:0 0 34px;height:34px;border-radius:9px;display:grid;place-items:center;font-weight:700;background:var(--panel-2);color:var(--accent);font-size:.95rem;}
+  .layer .body h4{margin:0 0 2px;font-size:1rem;} .layer .body p{margin:0;font-size:.9rem;color:var(--muted);}
+  .layer .speed{margin-left:auto;font-size:.78rem;color:var(--accent-2);font-weight:600;white-space:nowrap;}
+  .arrow{text-align:center;color:var(--muted);font-size:.8rem;margin:-2px 0;}
+  .table-scroll{overflow-x:auto;margin:18px 0;border:1px solid var(--border);border-radius:12px;}
+  table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:560px;}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:top;}
+  th{background:var(--panel-2);font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);}
+  tr:last-child td{border-bottom:none;} td strong{color:var(--text);}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0;}
+  @media (max-width:560px){.cards{grid-template-columns:1fr;}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;}
+  .card h4{margin:0 0 6px;font-size:1rem;} .card p{margin:0;font-size:.9rem;color:var(--muted);}
+  hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
+  .footer{color:var(--muted);font-size:.85rem;} .footer a{color:var(--muted);text-decoration:underline;}
+  ul.tight li,ol.tight li{margin:6px 0;}
+  .series{font-size:.8rem;color:var(--muted);margin-top:6px;}
+  /* --- retention + worked-example layer --- */
+  details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
+  details.q summary{cursor:pointer;font-weight:600;list-style:none;}
+  details.q summary::-webkit-details-marker{display:none;}
+  details.q summary::before{content:"▸ ";color:var(--accent);}
+  details.q[open] summary::before{content:"▾ ";}
+  details.q .a{margin:10px 0 0;color:var(--muted);font-size:.95rem;}
+  .recap{background:var(--panel-2);border:1px solid var(--border);border-radius:12px;padding:6px 18px 14px;margin:18px 0;}
+  .recap ul{padding-left:18px;margin:10px 0;} .recap li{margin:7px 0;font-size:.95rem;}
+  .trace{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:18px 0;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;line-height:1.75;overflow-x:auto;white-space:pre;}
+  .trace b{color:var(--accent);font-weight:600;} .trace .bad{color:var(--danger);} .trace .good{color:var(--accent-2);}
+  pre{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.6;margin:18px 0;}
+  pre code{background:none;border:none;padding:0;font-size:1em;}
+  .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
+  <header class="hero">
+    <div class="kicker">System Design Basics · 7 of 7</div>
+    <h1>Design the Checkout</h1>
+    <p class="lede">Six guides taught you six tools. This one puts them in a room together, gives them a traffic number, and refuses to let you add anything a number hasn't forced.</p>
+    <p class="series">The capstone to <a href="understanding-caching.html">Caching</a>, <a href="database-scaling.html">Scaling Databases</a>, <a href="load-balancing.html">Load Balancing</a>, <a href="message-queues.html">Message Queues</a>, <a href="reliability-toolkit.html">Reliability</a> and <a href="consistency-cap.html">Consistency &amp; CAP</a>.</p>
+  </header>
+
+  <div class="coldopen">
+    <span class="tag">◇ the order that was never placed</span>
+    <p>The card was charged. The customer has the bank notification on their phone, timestamped 14:02. Support has their order history open on the same screen and it is empty. Somewhere between "payment succeeded" and "order saved" the process died, and because those were two separate writes with nothing tying them together, the system ended up in the one state nobody designed for: money taken, nothing owed. There is no clever recovery here. There is only the design decision, made months earlier, about whether those two facts could ever disagree.</p>
+  </div>
+
+  <nav class="toc">
+    <strong>Contents</strong>
+    <ol>
+      <li><a href="#brief">The brief, in numbers</a></li>
+      <li><a href="#requirements">Requirements — and what we're not building</a></li>
+      <li><a href="#naive">The naive version, and exactly where it breaks</a></li>
+      <li><a href="#moves">The forced moves</a></li>
+      <li><a href="#notshard">The move we are not making</a></li>
+      <li><a href="#inseparable">Making the order and its event inseparable</a></li>
+      <li><a href="#guardrails">Guardrails around every dependency</a></li>
+      <li><a href="#staleness">Staleness, decided field by field</a></li>
+      <li><a href="#trace">One request, end to end</a></li>
+      <li><a href="#break">Now break it</a></li>
+      <li><a href="#only-if">What you'd build only if you had to</a></li>
+      <li><a href="#recap">Recap in 60 seconds</a></li>
+      <li><a href="#check">Check yourself</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="brief">1. The brief, in numbers</h2>
+  <p>"Design the checkout for an e-commerce site." That's the whole brief, and it is useless until you turn it into arithmetic. The single most common failure in system design — in interviews and in real projects — is arguing about Kafka before anyone has worked out how many orders a second we're actually talking about.</p>
+  <p>So ask, or assume out loud. Here is the shape we'll design against, and every number below is load-bearing:</p>
+
+  <div class="table-scroll">
+  <table class="num-table">
+    <thead><tr><th>Number</th><th>What it is</th><th>Where it came from</th></tr></thead>
+    <tbody>
+      <tr><td>1M</td><td>Orders on an ordinary day</td><td>Given. A large but not planetary retailer.</td></tr>
+      <tr><td>5M</td><td>Orders on the worst day of the year</td><td>Black Friday runs 5× a normal day.</td></tr>
+      <tr><td>~12/s</td><td>Average order rate</td><td>1M ÷ 86,400.</td></tr>
+      <tr><td>~170/s</td><td>Peak order rate</td><td>Peak hour holds ~12% of the peak day: 600k ÷ 3,600.</td></tr>
+      <tr><td>200/s</td><td>What we'll actually design for</td><td>170 plus headroom, because the number you design for should not be the number you predicted.</td></tr>
+      <tr><td>~120:1</td><td>Browse-to-buy ratio</td><td>People look far more than they buy. This is the number that decides the read architecture.</td></tr>
+      <tr><td>~25,000/s</td><td>Peak read requests</td><td>200 × 120. Two orders of magnitude above the write path.</td></tr>
+      <tr><td>~2.5 KB</td><td>One order plus its line items</td><td>~1.5 KB order row, ~3 items at ~300 B.</td></tr>
+      <tr><td>~900 GB/yr</td><td>Raw order data</td><td>365M orders × 2.5 KB.</td></tr>
+      <tr><td>~2 TB/yr</td><td>Order data with indexes</td><td>Indexes routinely double a transactional table. Budget for them.</td></tr>
+      <tr><td>7 years</td><td>Retention</td><td>Tax law, not product. Hot for 18 months, archived after.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note key">
+    <span class="label">Read this line twice</span>
+    <strong>200 writes per second is not a lot.</strong> A single well-tuned Postgres or MySQL instance on decent hardware handles 1,000–10,000 single-row writes per second. We are an order of magnitude below the ceiling of one box. Everything difficult about this design is on the <em>read</em> path and the <em>failure</em> path — and if you skip the arithmetic, you will spend three months sharding a database that was never the problem.
+  </div>
+
+  <p>The other number nobody asks for and everyone needs: <strong>the latency budget.</strong> How long may "Place order" take? Pick a target and defend it — say p99 under 800 ms, p50 under 300 ms. That single figure is what makes the rest of this guide decidable, because from here on, "can we do this synchronously?" has an arithmetic answer instead of an opinion.</p>
+
+  <h2 id="requirements">2. Requirements — and what we're not building</h2>
+  <p>Split these apart deliberately. Functional requirements are what it does; non-functional requirements are what makes the design hard. Interviewers care about the second list, and so should you.</p>
+
+  <div class="cards">
+    <div class="card"><h4>Functional</h4><p>View a cart. Place an order. Take payment. Confirm to the customer. Reserve inventory so we don't sell the same item twice. Show order status and history. Let the customer cancel while it's still cancellable.</p></div>
+    <div class="card"><h4>Non-functional</h4><p>p99 under 800 ms on checkout. Never charge without an order. Never lose an order we confirmed. Survive a payment provider being slow. Survive the loss of one availability zone. Absorb 5× traffic on a known date.</p></div>
+    <div class="card"><h4>Explicitly out of scope</h4><p>Search and recommendations. Pricing and promotions engines. Returns and refunds beyond the compensating action. Fraud scoring beyond "there is a service and we call it." Multi-currency and tax calculation. Anything to do with the warehouse past handing it a message.</p></div>
+    <div class="card"><h4>Assumptions stated out loud</h4><p>One region to start. Payment is an external provider, not something we build. Catalogue and pricing come from an existing service. Traffic peaks are known in advance, not surprises.</p></div>
+  </div>
+
+  <p>Scoping out loud is not throat-clearing — it's the difference between a design you can defend and a design that grows a new requirement every time someone asks a question. The out-of-scope list is the most useful list on the page.</p>
+
+  <h2 id="naive">3. The naive version, and exactly where it breaks</h2>
+  <p>Start with the thing you'd actually build on day one, because it's correct and it's fast to ship: one application server, one database, everything synchronous.</p>
+
+  <pre><code>POST /checkout
+  1. validate cart
+  2. check inventory
+  3. charge the card          (external, ~250 ms)
+  4. write the order
+  5. decrement inventory
+  6. generate invoice PDF     (~400 ms)
+  7. send receipt email       (~600 ms, sometimes 6 s)
+  8. notify the warehouse     (~200 ms)
+  9. update analytics         (~100 ms)
+ 10. return 200 OK</code></pre>
+
+  <p>Now apply the numbers. Steps 1–5 are the parts a customer is actually waiting for; steps 6–9 are roughly 1.3 seconds of work the customer does not care about and cannot see. Our budget was 800 ms. We are over it before anything goes wrong.</p>
+  <p>And here is what breaks first, which is not what most people guess. It isn't the database — 200 writes a second is comfortable. It's <strong>concurrency</strong>. Little's Law says the number of requests in flight is throughput multiplied by latency:</p>
+
+  <div class="trace"><b>normal day</b>
+  12 orders/s × 1.9 s  =   23 in flight
+  thread pool of 200   =   fine
+
+<b>black friday</b>
+  200 orders/s × 1.9 s =  380 in flight
+  thread pool of 200   =   <span class="bad">queueing, then timeouts</span>
+
+<b>black friday, slow email</b>
+  200 orders/s × 6.5 s = 1300 in flight
+  thread pool of 200   =   <span class="bad">total collapse in ~1 s</span></div>
+
+  <p>Read that last block again, because it contains the whole argument for everything that follows. The site does not go down because buying is hard. It goes down because <em>the email server had a slow afternoon</em> and we made every customer wait for it. Every request in the process is holding a thread while it waits, and threads are the resource that runs out. The <a href="reliability-toolkit.html">Reliability guide</a> covers this arithmetic in detail; here it is deciding our architecture on the first page.</p>
+
+  <h2 id="moves">4. The forced moves</h2>
+  <p>Now we build it up. The rule for this section — and for your own designs — is that <strong>every move must be forced by a number or a failure.</strong> Not by fashion, not by what the last place you worked used, and definitely not by what sounds impressive. If you can't name the figure that made a component necessary, the component is decoration.</p>
+
+  <h3>Move 1 — split the request in two</h3>
+  <p>Steps 6–9 are not part of the transaction the customer is waiting on. Push them onto a queue and return as soon as the money is taken and the order is recorded. This is the single highest-leverage change in the entire design and it costs one component.</p>
+
+  <div class="trace"><b>synchronous, must finish now</b>
+  validate → reserve → charge → save
+  ≈ 260 ms
+
+<b>asynchronous, must finish soon</b>
+  invoice · receipt · warehouse
+  analytics · loyalty · recommendations
+  ≈ 1.3 s, nobody watching</div>
+
+  <p>Concurrency drops from 380 in flight to about 52 at peak, and the slow-email scenario stops existing: the email is now a message in a queue, and a queue getting longer is a metric, not an outage. See the <a href="message-queues.html">Queues guide</a> for why the queue must be bounded — an unbounded buffer just relocates the failure.</p>
+
+  <h3>Move 2 — make the app tier stateless, then multiply it</h3>
+  <p>200 orders/s and 25,000 reads/s is more than one box, and one box is a single point of failure regardless. Put a load balancer in front and run many identical instances. The prerequisite is <strong>statelessness</strong>: no session in local memory, no cart on the local disk, nothing an instance knows that another instance couldn't reconstruct. Sessions go in a shared cache; carts go in the database with a cache in front.</p>
+  <p>This move is what buys you rolling deploys, autoscaling, and surviving an instance death. It's also the move that makes every later move possible — the <a href="database-scaling.html">Databases guide</a> assumes a stateless app tier the moment it starts talking about replicas. Read the <a href="load-balancing.html">Load Balancing guide</a> for the settings that make this safe: connection draining so deploys don't produce error spikes, readiness distinct from liveness so a warming instance doesn't get traffic, and a health check that fails <em>before</em> the box is unusable rather than after.</p>
+
+  <h3>Move 3 — cache the read path, because that's where the traffic is</h3>
+  <p>25,000 reads/s against a database that is comfortably handling 200 writes/s is the actual scaling problem, and it barely involves the checkout at all. It's people looking at products.</p>
+  <p>The catalogue is nearly static, read enormously, and tolerant of being a few seconds stale — which is the exact profile of something that should be cached. A cache in front of the product and pricing reads takes the overwhelming majority of that 25,000 rps and never troubles the database with it. The <a href="understanding-caching.html">Caching guide</a> covers the two traps waiting here: jittered TTLs so a batch of keys written together doesn't expire together, and single-flight so a popular key expiring doesn't send a thousand simultaneous misses at the database.</p>
+
+  <div class="note warn">
+    <span class="label">The thing you must not cache</span>
+    Inventory counts on the checkout path. Everywhere else, staleness costs you a slightly wrong number on a page. Here it costs you an oversell, a cancelled order and an angry customer. We'll handle inventory explicitly in <a href="#staleness">section 8</a> — the rule for now is that the number you <em>display</em> and the number you <em>decrement</em> are two different values with two different consistency requirements, and conflating them is one of the most common bugs in commerce systems.
+  </div>
+
+  <h3>Move 4 — indexes first, then replicas</h3>
+  <p>Before adding any database machinery, check the queries. The <a href="database-scaling.html">Databases guide</a>'s rule zero applies: an unindexed lookup on a 400-million-row orders table will destroy you long before your write rate does, and adding replicas to a system with a missing index just gives you more machines running the same terrible query.</p>
+  <p>Once the queries are honest, add read replicas for the things that genuinely only read: order history, admin reporting, the analytics extracts. Keep the checkout path on the primary. And note the trap now, because it will bite in <a href="#break">section 10</a> — a customer who places an order and is immediately shown a history page served by a lagging replica will not see their own order. That's a read-your-writes violation, and it appears only under load, which means only in production.</p>
+
+  <div class="stack">
+    <div class="layer"><div class="idx">1</div><div class="body"><h4>Load balancer</h4><p>L7, terminates TLS, routes by path, drains on deploy.</p></div><div class="speed">~1 ms</div></div>
+    <div class="arrow">↓</div>
+    <div class="layer"><div class="idx">2</div><div class="body"><h4>Stateless app instances</h4><p>Identical, disposable, autoscaled. No local state worth keeping.</p></div><div class="speed">n boxes</div></div>
+    <div class="arrow">↓</div>
+    <div class="layer"><div class="idx">3</div><div class="body"><h4>Cache</h4><p>Sessions, carts, catalogue, prices. Absorbs ~96% of read traffic.</p></div><div class="speed">~1 ms</div></div>
+    <div class="arrow">↓</div>
+    <div class="layer"><div class="idx">4</div><div class="body"><h4>Primary database</h4><p>Orders, inventory, payments. All writes, plus checkout reads.</p></div><div class="speed">~5 ms</div></div>
+    <div class="arrow">↓</div>
+    <div class="layer"><div class="idx">5</div><div class="body"><h4>Read replicas</h4><p>History, reporting, extracts. Never the checkout path.</p></div><div class="speed">lag: ms→s</div></div>
+    <div class="arrow">↓</div>
+    <div class="layer"><div class="idx">6</div><div class="body"><h4>Queue + consumers</h4><p>Receipts, invoices, warehouse, analytics, loyalty.</p></div><div class="speed">async</div></div>
+  </div>
+
+  <h2 id="notshard">5. The move we are not making</h2>
+  <p>Here is where most designs go wrong, including in interviews, where candidates shard because they think sharding is the answer the interviewer wants. Let's price it honestly.</p>
+  <p>We write 200 orders/s at peak and roughly 12/s the rest of the year. We accumulate about 2 TB of order data per year including indexes, and 18 months of that is hot — call it 3 TB of working set, with the rest archived. A single modern database instance handles both of those figures without breathing hard. <strong>Sharding is not indicated.</strong></p>
+  <p>And the bill for doing it anyway, from the <a href="database-scaling.html">Databases guide</a>: every schema migration becomes N migrations. Every backup becomes N backups plus a coordinated restore procedure you have to actually test. Cross-shard queries become scatter-gather or become unavailable. Cross-shard transactions become a saga, which means compensating actions, which means the intermediate state was visible to somebody. Resharding stops being a task and becomes a quarter.</p>
+  <p>What you do instead, in this order, and only when a metric demands it: archive cold orders out of the hot table; partition the orders table by month so old data can be dropped and queries can prune; add replicas for anything that only reads; and move genuinely separate workloads — analytics, reporting — off the transactional database entirely.</p>
+
+  <div class="note key">
+    <span class="label">The signal that would change our mind</span>
+    Not "we're big now." Specifically: sustained write throughput within ~2× of what the instance can do, <em>or</em> a hot dataset that no longer fits in memory and won't after the next hardware tier, <em>or</em> a restore time that has grown past what the business will tolerate. Any of those is a real reason. None of them is currently true, so the correct architecture diagram has one database on it, and being able to say why is worth more than being able to draw sixteen.
+  </div>
+
+  <h2 id="inseparable">6. Making the order and its event inseparable</h2>
+  <p>Back to the cold open. We charge the card, we save the order, and we publish an "order placed" event so the receipt gets sent and the warehouse gets told. Three side effects, at least two systems, and no transaction spanning them. Every ordering of those operations has a crash window that produces a state nobody wants.</p>
+
+  <div class="trace"><b>save, then publish</b>
+  save order        ✓
+  <span class="bad">crash</span>
+  publish event     ✗
+  → order exists, nobody told.
+    no receipt, nothing ships.
+
+<b>publish, then save</b>
+  publish event     ✓
+  <span class="bad">crash</span>
+  save order        ✗
+  → warehouse ships an order
+    that does not exist.</div>
+
+  <p>You cannot fix this by reordering the two writes, and you cannot fix it with a try/catch, because the process can die between any two instructions. The fix is to stop having two writes. The <strong>transactional outbox</strong> puts the event in a table in the <em>same database transaction</em> as the order:</p>
+
+  <pre><code>BEGIN;
+  INSERT INTO orders (...)  VALUES (...);
+  INSERT INTO outbox (topic, payload)
+       VALUES ('order.placed', :json);
+COMMIT;
+-- a separate relay reads outbox,
+-- publishes, marks rows sent.</code></pre>
+
+  <p>Now the order and the intent to announce it commit or fail together. The relay may still publish a message twice — it can crash after publishing and before marking the row sent — so this gives at-least-once, not exactly-once, which is exactly why every consumer must be idempotent. The <a href="message-queues.html">Queues guide</a> has the full treatment, including the race in the naive idempotency check that quietly charges people twice.</p>
+
+  <h3>And the money</h3>
+  <p>The payment provider is outside our transaction and always will be. What makes that safe is an <strong>idempotency key</strong> — a unique identifier we generate for this checkout attempt and pass to the provider. If our request times out and we retry, the provider recognises the key and returns the original result instead of charging again. This is why payment APIs have that field, and it is not optional at any real volume.</p>
+  <p>Order of operations matters here. Write the order in a <code>pending_payment</code> state first, then authorise with the key, then confirm. If we die after authorising, a reconciliation job finds orders stuck in <code>pending_payment</code>, asks the provider what happened to that idempotency key, and settles them — completing the ones that succeeded and voiding the ones that didn't. Money and orders can then never disagree for longer than the reconciliation interval, which is a bound you can state out loud and hold yourself to.</p>
+
+  <h2 id="guardrails">7. Guardrails around every dependency</h2>
+  <p>Every arrow leaving our service is a way for someone else's bad day to become ours. The <a href="reliability-toolkit.html">Reliability guide</a> supplies the toolkit; here is where each tool actually goes, and what it costs us if we get it wrong.</p>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Dependency</th><th>Timeout</th><th>Retry</th><th>Guardrail</th><th>When it fails</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Payment provider</strong></td><td>3 s connect+read</td><td>Once, with the same idempotency key</td><td>Bulkhead: max 300 concurrent. Breaker on error rate.</td><td>Fail the checkout with a clear message. Do not fake success — you cannot ship what you weren't paid for.</td></tr>
+      <tr><td><strong>Primary database</strong></td><td>2 s statement</td><td>No</td><td>Bounded pool, sized by Little's Law</td><td>Hard down. Nothing to degrade to. This is what replicas and failover are for.</td></tr>
+      <tr><td><strong>Cache</strong></td><td>50 ms</td><td>No</td><td>Fail open to the database</td><td>Degrades, doesn't error — but see the warning below.</td></tr>
+      <tr><td><strong>Queue broker</strong></td><td>1 s publish</td><td>No — the outbox is the retry</td><td>Outbox relay backs off</td><td>Nothing user-visible. Messages accumulate in the outbox table and drain later.</td></tr>
+      <tr><td><strong>Fraud service</strong></td><td>400 ms</td><td>No</td><td>Fail open, score offline</td><td>Take the order, score it asynchronously, cancel later if needed. A business decision, made in advance.</td></tr>
+      <tr><td><strong>Recommendations</strong></td><td>150 ms</td><td>No</td><td>Fail open to a static list</td><td>Nobody notices. This is what graceful degradation looks like when it's done right.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note warn">
+    <span class="label">"Fail open to the database" is not free</span>
+    The cache is absorbing roughly 96% of 25,000 reads/s. If it dies cold, the database instantly receives about 25× its normal read load. "The app still works" is technically true for about four seconds. This is why the cache tier needs its own redundancy, why the fallback path needs request coalescing, and why load shedding exists — a design that treats the cache as optional has not thought about what happens when it goes away.
+  </div>
+
+  <p>Two settings that people consistently miss, and that this design depends on. First, <strong>deadline propagation</strong>: if the customer's request has 800 ms of budget and 500 ms are already spent, the payment call must know it has 300 ms left, not its own independent 3-second timeout. Otherwise we burn capacity computing answers nobody is waiting for. Second, <strong>retry budgets</strong>: retry at exactly one layer, and cap total retries at a small fraction of live traffic. Three layers each retrying three times turns one user action into twenty-seven requests, arriving precisely when the system can least afford them.</p>
+
+  <h2 id="staleness">8. Staleness, decided field by field</h2>
+  <p>This is the section that separates a design from a shopping list. "Is the system consistent?" is the wrong question — the <a href="consistency-cap.html">Consistency guide</a>'s central point is that consistency is a per-field decision with a per-field price. So go field by field and say what you're buying.</p>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Data</th><th>Staleness allowed</th><th>What you buy</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Payment record</strong></td><td>None</td><td>Nothing. This is the money. Strong consistency on the primary, no exceptions, no cache.</td></tr>
+      <tr><td><strong>Order exists / order status</strong></td><td>None for the owner; seconds for everyone else</td><td>The customer reads their own order from the primary for a short window after writing. Everyone else can read a replica.</td></tr>
+      <tr><td><strong>Inventory — the number we decrement</strong></td><td>None</td><td>Correctness at checkout. A conditional update on the primary, described below.</td></tr>
+      <tr><td><strong>Inventory — the number we display</strong></td><td>~30 s</td><td>25,000 reads/s served from cache instead of the database. "Only 3 left" being briefly wrong is a UX cost; being right costs you the read architecture.</td></tr>
+      <tr><td><strong>Order history</strong></td><td>~1 s</td><td>Replica reads, with a read-your-writes window for the customer who just ordered.</td></tr>
+      <tr><td><strong>Recommendations, "recently viewed"</strong></td><td>Minutes to hours</td><td>Everything. Precompute it, cache it hard, and let it be wrong. Nobody has ever filed a bug about a stale recommendation.</td></tr>
+      <tr><td><strong>Analytics and reporting</strong></td><td>Minutes</td><td>Keeps a heavy, unpredictable workload entirely off the transactional database.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>The genuinely hard one: overselling</h3>
+  <p>Two customers, one remaining item, requests arriving 8 ms apart. Both see stock, both proceed, one of them is going to be disappointed and it's your job to decide how.</p>
+  <p><strong>Optimistic decrement</strong> is the simple version: make the decrement conditional in a single statement, so the database arbitrates rather than your application.</p>
+
+  <pre><code>UPDATE inventory
+   SET available = available - :qty
+ WHERE sku = :sku
+   AND available >= :qty;
+-- 0 rows updated → someone beat you.
+-- Sold out. Tell the customer now,
+-- before you charge the card.</code></pre>
+
+  <p>That is atomic and correct, and it has one flaw: it decrements before the payment succeeds. If the card is declined thirty seconds later, you've held stock hostage. <strong>Reserve-then-confirm</strong> fixes it — the same conditional update creates a reservation with a short expiry, the payment runs, success converts the reservation to a sale, and failure or expiry returns the stock. That's a small state machine and a sweeper job, and it is the design most real commerce systems land on.</p>
+
+  <div class="note">
+    <span class="label">The uncomfortable industry truth</span>
+    Many large retailers accept a small oversell rate on purpose. Perfectly serialised global inventory across every channel — web, app, stores, marketplaces — costs enormous latency on every read and a coordination protocol that becomes the bottleneck on your busiest day. Occasionally apologising, refunding and offering a voucher is cheaper. That is a <em>commercial</em> resolution to a <em>distributed systems</em> problem, and recognising when one is available is a genuine engineering skill. It is also, precisely, the <a href="consistency-cap.html">AP branch</a> being chosen deliberately: stay available, reconcile the conflict afterwards.
+  </div>
+
+  <h2 id="trace">9. One request, end to end</h2>
+  <p>The hub page promises you can follow a single request through the whole series. Here it is, on a normal Tuesday, with plausible latencies that sum to a stated total. Every hop is something one of the six guides taught you.</p>
+
+  <div class="trace"><b>POST /checkout</b>
+
+  <b>+0 ms</b>   TLS + L7 load balancer
+           picks a healthy instance
+           <span class="good">→ Load Balancing</span>
+
+  <b>+1 ms</b>   session lookup, cache hit
+           <span class="good">→ Caching</span>
+
+  <b>+2 ms</b>   cart read, cache hit
+           <span class="good">→ Caching</span>
+
+  <b>+3 ms</b>   price + stock check
+           primary, indexed, 4 ms
+           <span class="good">→ Databases</span>
+
+  <b>+7 ms</b>   reserve stock, conditional
+           UPDATE, 1 row, 6 ms
+           <span class="good">→ Consistency</span>
+
+  <b>+13 ms</b>  authorise payment
+           idempotency key attached
+           deadline: 787 ms remaining
+           <span class="good">→ Reliability</span>
+           ................ 240 ms
+
+  <b>+253 ms</b> BEGIN
+             INSERT order (confirmed)
+             INSERT outbox (placed)
+             confirm reservation
+           COMMIT                8 ms
+           <span class="good">→ Queues</span>
+
+  <b>+261 ms</b> <span class="good">201 Created</span>
+           "Order #4417291 confirmed"
+
+  ── customer is gone ──────────
+
+  <b>+300 ms</b> relay publishes from outbox
+  <b>+340 ms</b> 6 consumers pick it up:
+           receipt · invoice · warehouse
+           analytics · loyalty · recs
+  <b>+2.1 s</b>  receipt email delivered</div>
+
+  <p>261 milliseconds of customer-visible work; roughly 1.8 seconds of work that happens after they've closed the tab. That ratio is the entire argument of this series in one number. The naive version in <a href="#naive">section 3</a> did all of it inline and took 1.9 seconds on a good day — and fell over completely on a bad one.</p>
+
+  <h2 id="break">10. Now break it</h2>
+  <p>A design you haven't tried to break is a diagram. Four failures, each one traced, each one saved by something a guide taught.</p>
+
+  <h3>Failure 1 — the payment provider gets slow, but not dead</h3>
+  <p>This is the worst kind of failure because nothing is <em>down</em>. Their p99 goes from 200 ms to 8 s. No error, no alert from them, just treacle.</p>
+
+  <div class="trace"><b>the arithmetic</b>
+  200 orders/s × 8 s
+    = 1,600 concurrent slots needed
+  thread pool = 400
+    <span class="bad">→ exhausted in ~2 s</span>
+    <span class="bad">→ every endpoint dies,</span>
+    <span class="bad">   including ones that never</span>
+    <span class="bad">   touch payments</span>
+
+<b>with a bulkhead of 300</b>
+  300 in flight ÷ 8 s
+    = 37 checkouts/s served
+  the other 163/s <span class="good">fail fast</span>
+  browsing, cart, history: <span class="good">unaffected</span>
+
+<b>then the breaker opens</b>
+  error rate crosses threshold
+  → stop calling for 30 s
+  → half-open: a trickle, jittered
+  <span class="good">→ recovery without a stampede</span></div>
+
+  <p>Note what the bulkhead actually bought: not a working checkout — 163 customers a second still can't buy — but a working <em>site</em>, and a failure confined to the one feature that genuinely depends on the broken thing. That is the whole point of a bulkhead, and it's why a circuit breaker alone wouldn't have saved us: the breaker only opens after enough failures, and by then the pool is already gone.</p>
+
+  <h3>Failure 2 — a replica falls behind at peak</h3>
+  <p>Replication lag is near zero until it isn't, and it spikes exactly when you're busiest. At 14:00 on Black Friday the replica is 4 seconds behind. A customer places an order, gets their 201, taps "My orders" — and the page, served from the replica, is empty. They have just been told their order doesn't exist. Some of them will order again.</p>
+  <p>The fix is <strong>read-your-writes</strong>: after a customer writes, route their reads to the primary for a short window, or carry a version token (an LSN or GTID) with the session and have the replica wait until it has caught up to that point. The first is cruder and simpler; the second is precise and needs support from your database. Either is better than the third option, which is discovering this from a support ticket. And alert on replication lag in bytes as well as seconds — a lightly-loaded replica can report a small time lag while being far behind in work.</p>
+
+  <h3>Failure 3 — the consumer fleet dies for twenty minutes</h3>
+  <p>A bad deploy takes out every queue consumer. Nobody notices immediately, because checkout is unaffected — orders are being taken and committed and the outbox is publishing happily. What's failing is invisible: no receipts, nothing reaching the warehouse.</p>
+
+  <div class="trace"><b>the backlog</b>
+  200 msg/s × 1,200 s
+    = 240,000 messages waiting
+
+<b>the drain</b>
+  each consumer: 50 msg/s
+  arrivals still: 200 msg/s
+  N consumers drain at
+    (N × 50) − 200 per second
+
+  N = 4  →   0/s  <span class="bad">never drains</span>
+  N = 6  → 100/s  40 min
+  N = 12 → 400/s  <span class="good">10 min</span></div>
+
+  <p>Two lessons. First, <strong>a queue with no headroom above its arrival rate never recovers from a spike</strong> — four consumers is exactly break-even and will sit at 240,000 messages forever, looking stable and being catastrophic. Second, the metric that would have caught this in ninety seconds is <strong>consumer lag</strong>, not queue depth. Depth tells you how much is waiting; lag tells you whether you're falling behind. Alert on lag and its rate of change.</p>
+
+  <h3>Failure 4 — a config push marks every instance unhealthy</h3>
+  <p>Someone tightens the readiness check so it also verifies the recommendations service. Recommendations has a blip. Every instance in the fleet reports unready simultaneously, and the load balancer, doing exactly what it was told, has nowhere to send traffic. The site is down because an optional feature hiccuped.</p>
+  <p>Two defences, both from the <a href="load-balancing.html">Load Balancing guide</a>. A readiness check should only test dependencies the instance genuinely cannot serve without — recommendations is not one of them, which is why it fails open in <a href="#guardrails">section 7</a>. And the load balancer needs a <strong>panic threshold</strong>: when the fraction of healthy backends drops below some level, ignore health status entirely and spray traffic across everything, on the reasoning that a degraded backend beats no backend. Health checks that can take down a whole fleet at once are not a safety feature.</p>
+
+  <div class="note war">
+    <span class="label">The pattern across all four</span>
+    Not one of these is a component <em>breaking</em>. A slow provider, a lagging replica, a stopped consumer, an over-eager health check — every single one is a system doing exactly what it was configured to do, in a situation nobody pictured while configuring it. This is what real incidents look like, and it's why the settings in <a href="#guardrails">section 7</a> deserve more design attention than the boxes in the diagram.
+  </div>
+
+  <h2 id="only-if">11. What you'd build only if you had to</h2>
+  <p>The last discipline is knowing what you left out and why. Here is everything a reader will be tempted to add to this design, and the specific signal that would justify each one. Absent the signal, adding it makes the system worse — more moving parts, more failure modes, more onboarding, and no benefit.</p>
+
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Tempting addition</th><th>The signal that would justify it</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Sharding the database</strong></td><td>Sustained writes within ~2× of the instance ceiling, or a hot dataset that won't fit the next hardware tier, or a restore time the business won't accept. Not "we're big now."</td></tr>
+      <tr><td><strong>CQRS</strong> (separate read and write models)</td><td>Read and write shapes that have genuinely diverged — the read side needs joins and aggregates the write side shouldn't be optimised for. Replicas solve the easy 90% of this first.</td></tr>
+      <tr><td><strong>Event sourcing</strong></td><td>A hard audit requirement for every state change, or a real need to reconstruct historical state. It is a serious commitment: replay, versioning and snapshots become permanent concerns.</td></tr>
+      <tr><td><strong>Multi-region active-active</strong></td><td>A regulatory data-residency requirement, or users far enough away that RTT is a product problem, or an availability target a single region provably can't meet. Then accept that you've bought a conflict-resolution problem for every writable field.</td></tr>
+      <tr><td><strong>Service mesh</strong></td><td>Enough services that per-service retry, timeout and mTLS configuration has become unmanageable by hand. With six services, the mesh is more operationally complex than the thing it manages.</td></tr>
+      <tr><td><strong>Microservices, generally</strong></td><td>Teams blocking each other on deploys. It's an organisational fix with a technical cost — you trade in-process calls for network calls, and every one of those is a new failure mode.</td></tr>
+      <tr><td><strong>Kafka instead of a simple queue</strong></td><td>You need replay, multiple independent consumer groups over the same stream, or retention as a feature. If you need a work queue, use a work queue.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Notice that every justification is a <em>measurement</em> or a <em>constraint</em>, never an aspiration. That's the test. If the argument for a component is "we'll need it eventually," you are paying today's complexity for tomorrow's maybe — and the version of this system that gets built with restraint is also the version that's still comprehensible when the real problem arrives.</p>
+
+  <h2 id="recap">12. Recap in 60 seconds</h2>
+  <div class="recap">
+    <ul>
+      <li><strong>Numbers first.</strong> Requests per second, read/write ratio, payload size, storage growth, latency budget. A design defended without them is a guess.</li>
+      <li><strong>Separate must-finish-now from must-finish-soon.</strong> Take the money, record the order, return. Everything else is a message.</li>
+      <li><strong>Statelessness is the enabling move</strong> — it's what makes load balancing, autoscaling and rolling deploys possible.</li>
+      <li><strong>The read path is usually the scaling problem.</strong> 120:1 browse-to-buy means caching matters two orders of magnitude more than sharding.</li>
+      <li><strong>Indexes before replicas, replicas before sharding, and sharding probably never.</strong> Name the metric that forces each rung.</li>
+      <li><strong>Two writes with no transaction between them is a bug waiting for a crash.</strong> Outbox for your own events; idempotency keys for someone else's API.</li>
+      <li><strong>Consistency is a per-field decision.</strong> The inventory you display and the inventory you decrement are different values with different rules.</li>
+      <li><strong>A timeout is a concurrency budget.</strong> Bulkheads cap what any one dependency can consume; breakers stop you calling the dead; shedding is for too much load, not slow dependencies.</li>
+      <li><strong>Propagate deadlines, budget retries, retry at one layer only.</strong></li>
+      <li><strong>A queue with no headroom above its arrival rate never recovers.</strong> Alert on consumer lag, not depth.</li>
+      <li><strong>Real incidents are components behaving as configured</strong> in situations nobody pictured. The settings deserve more attention than the diagram.</li>
+      <li><strong>Every addition needs a signal.</strong> No signal, no component.</li>
+    </ul>
+  </div>
+
+  <div class="table-scroll">
+  <table class="num-table">
+    <thead><tr><th>Number</th><th>In this design</th></tr></thead>
+    <tbody>
+      <tr><td>200/s</td><td>Peak orders — the write rate the whole design is sized for</td></tr>
+      <tr><td>25,000/s</td><td>Peak reads — 120× the writes, and the actual scaling problem</td></tr>
+      <tr><td>800 ms</td><td>p99 latency budget for checkout</td></tr>
+      <tr><td>261 ms</td><td>What the traced request actually costs</td></tr>
+      <tr><td>240 ms</td><td>Of which the external payment call is 92%</td></tr>
+      <tr><td>~2 TB/yr</td><td>Order data with indexes — comfortably one machine</td></tr>
+      <tr><td>1,600</td><td>Concurrent slots a slow payment provider would demand, unguarded</td></tr>
+      <tr><td>300</td><td>Bulkhead cap that keeps the rest of the site alive instead</td></tr>
+      <tr><td>240,000</td><td>Messages after a 20-minute consumer outage</td></tr>
+      <tr><td>N × 50 − 200</td><td>Drain rate with N consumers. Below N=4, it never drains.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2 id="check">13. Check yourself</h2>
+  <p>These are harder than the per-guide questions on purpose — each one needs at least two guides to answer properly. Try them before opening the answers; getting one wrong is the moment the idea actually lands.</p>
+
+  <details class="q"><summary>The payment provider's p99 goes from 200 ms to 8 s. Walk through what happens to your checkout endpoint, in order.</summary><div class="a">Requests start piling up in flight: Little's Law says 200/s × 8 s demands 1,600 concurrent slots against a pool of 400, so the pool exhausts in roughly two seconds. Without a bulkhead, that pool is shared, so <em>every</em> endpoint fails — including browsing, which never touches payments. With a bulkhead of 300, checkout throughput drops to about 37/s and the rest of the site is untouched. The circuit breaker opens once the error rate crosses its threshold and stops you calling a dead dependency at all, then half-opens with a jittered trickle so recovery doesn't stampede. The breaker alone would not have saved you — it trips after failures, and the pool dies first.</div></details>
+
+  <details class="q"><summary>Where in this design can a customer be charged without an order existing, and what prevents it?</summary><div class="a">Between authorising the payment and committing the order transaction. The process can die in that window and the money is gone with nothing recorded. Three things together close it: the order is written in <code>pending_payment</code> <em>before</em> the charge, so there's always a record to reconcile against; the charge carries an idempotency key, so retrying can't double-charge; and a reconciliation job sweeps stuck <code>pending_payment</code> orders, asks the provider what happened to that key, and either completes or voids. You can't make it impossible — the provider is outside your transaction — but you can bound how long the disagreement lasts.</div></details>
+
+  <details class="q"><summary>You add a second region. Name the three decisions that just got harder.</summary><div class="a">First, inventory: a globally serialised count now needs cross-region coordination on every checkout, and cross-region round trips are 60–150 ms set by the speed of light. Second, the database: one writable primary means one region pays a latency penalty on every write, while two writable primaries means conflict resolution for every field — and last-write-wins on an inventory count silently loses data. Third, failover: "the region is down" is a judgement call made by a timeout you configured, and getting it wrong in either direction is expensive. Most teams start with one write region and read replicas elsewhere, precisely to avoid the second problem.</div></details>
+
+  <details class="q"><summary>Your cache dies completely at peak. Trace what happens, and say why "the app still works" is not a good answer.</summary><div class="a">The cache absorbs about 96% of 25,000 reads/s, so the database instantly sees roughly 25× its normal read load. It saturates, query latency climbs, connections back up, and because the pool is shared, checkout starts timing out too — a read-path failure has become a write-path outage. Then clients retry, adding load, and the system can stay collapsed even after the cache comes back, because the retry traffic and cold cache are now self-sustaining. That's metastable failure: you can't wait it out, you have to shed load and reintroduce it gradually. "It degrades instead of erroring" is true for about four seconds.</div></details>
+
+  <details class="q"><summary>A customer says they were charged twice. The logs show one request. What are the two most likely explanations?</summary><div class="a">First, the visibility timeout: if the payment consumer's work takes longer than the queue's invisibility window, the broker assumes it died and redelivers to a second consumer while the first is still running — genuine concurrent duplicate processing, with no retry in the logs to show for it. Second, the check-then-act idempotency race: if the code checks "already processed?" and then does the work, two concurrent duplicates both read false before either writes, and both charge. The fix for the second is claiming the ID atomically before doing the work; the fix for the first is a timeout above your real p99 plus heartbeating. Note that "one request in the logs" is what makes both of these so nasty to diagnose.</div></details>
+
+  <details class="q"><summary>Your interviewer says "now make it handle 10× the traffic." What do you change, and what do you deliberately not change?</summary><div class="a">10× is 2,000 orders/s and 250,000 reads/s. The read path scales by adding cache capacity and replicas — that's more of the same, not a redesign. The app tier is stateless, so it scales horizontally by definition. The write path at 2,000/s is now within range of a single instance's ceiling rather than an order of magnitude below it, so <em>this</em> is where sharding finally earns its place — and you'd shard by customer or order ID, accept scatter-gather on cross-customer reporting, and move reporting off the transactional store entirely. What you don't change: the outbox, the idempotency keys, the guardrails, and the per-field consistency decisions. Those were correct at 200/s and they're correct at 2,000/s — which is a decent sign they were the right calls.</div></details>
+
+  <div class="note key">
+    <span class="label">The one-liner to remember</span>
+    A system design is not a diagram, it's a sequence of decisions — and each one is only defensible if you can name the number that forced it and the failure it prevents. Everything else on the whiteboard is decoration, and decoration is the part that pages you at three in the morning.
+  </div>
+
+  <hr>
+  <p class="footer">
+    Part of <em>System Design Basics</em> — the capstone. Sources:
+    <a href="https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/">AWS Builders' Library — Timeouts, Retries and Backoff with Jitter</a> ·
+    <a href="https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/">AWS Builders' Library — Using Load Shedding to Avoid Overload</a> ·
+    <a href="https://microservices.io/patterns/data/transactional-outbox.html">Microservices.io — Transactional Outbox</a> ·
+    <a href="https://stripe.com/docs/api/idempotent_requests">Stripe — Idempotent Requests</a>
+  </p>
+
+</div>
+</body>
+</html>
