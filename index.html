@@ -319,6 +319,45 @@
 
   </div>
 </details>
+<details class="sec-collapse" open id="projects">
+  <summary><h2>Hands-On Portfolio Projects (Build & Benchmark)</h2></summary>
+  <div class="sec-content">
+    <p>Reading about system design is passive; benchmarking it is active. Here are five hands-on projects designed to be built in a weekend, load-tested locally, and uploaded to your GitHub portfolio to show you understand real operational limits.</p>
+    <div class="paths">
+      <div class="path">
+        <h4>Project 1: Cache Stampede & Coalescer Lab</h4>
+        <p><strong>The concept:</strong> Request coalescing (single-flight) under heavy concurrency.</p>
+        <p><strong>The build:</strong> Write an HTTP server with a slow endpoint (simulating a 500ms database read). Under load, cache-misses will trigger a "stampede" hammering the DB. Implement a coalescer (e.g. Go's <code>singleflight</code> or Node's promise sharing) to group concurrent identical reads into a single database query.</p>
+        <span class="seq">Stack: k6 · Docker · Redis · Go/Node/Python</span>
+      </div>
+      <div class="path">
+        <h4>Project 2: Database Connection Pooler Benchmark</h4>
+        <p><strong>The concept:</strong> Little's Law, process overhead, and connection multiplexing.</p>
+        <p><strong>The build:</strong> Spin up Postgres in Docker. Write a script that attempts to run queries across 300 concurrent threads. Watch Postgres exhaust its connection limit and slow down due to process context-switching. Insert PgBouncer in front, route traffic through it with a pool size of 16, and measure the latency and memory difference.</p>
+        <span class="seq">Stack: Postgres · PgBouncer · Docker Compose · python/go</span>
+      </div>
+      <div class="path">
+        <h4>Project 3: Consistent Hashing Router from Scratch</h4>
+        <p><strong>The concept:</strong> Key-space partitioning and replication ring distribution.</p>
+        <p><strong>The build:</strong> Write a library that implements a consistent hashing ring. Add virtual nodes to distribute keys evenly. Write tests to measure key migration: hash 10,000 keys across 3 nodes, add a 4th node, and verify that only ~25% of keys migrate (compared to ~75% with modulo routing <code>hash % N</code>).</p>
+        <span class="seq">Stack: Go / TypeScript / Python (zero libraries)</span>
+      </div>
+      <div class="path">
+        <h4>Project 4: The Transactional Outbox Worker</h4>
+        <p><strong>The concept:</strong> Event delivery guarantees without distributed transactions.</p>
+        <p><strong>The build:</strong> Build a mock checkout api. In one DB transaction, insert an Order and a pending Event record in an <code>outbox</code> table. Run a background daemon that polls the outbox table, publishes events to RabbitMQ/Kafka, and marks them processed upon broker ACK. Simulate broker failure to verify zero data loss.</p>
+        <span class="seq">Stack: Postgres · RabbitMQ/Kafka · Python/Node/Go</span>
+      </div>
+      <div class="path" style="grid-column: 1 / -1;">
+        <h4>Project 5: Load Shedding & Concurrency Limiter</h4>
+        <p><strong>The concept:</strong> Server stability under load, tail latency control, and HTTP 429/503.</p>
+        <p><strong>The build:</strong> Build a server with a CPU-bound endpoint. Load test it past capacity with k6. p99 will grow infinitely as queries queue. Implement an active request limiter (concurrency gate). If in-flight requests exceed limit, reject instantly with <code>429 Too Many Requests</code>. Show that accepted requests stay fast and the server survives.</p>
+        <span class="seq">Stack: Go / Rust / Node.js · k6 load generator</span>
+      </div>
+    </div>
+  </div>
+</details>
+
 <details class="sec-collapse" open id="paths">
   <summary><h2>Three ways through</h2></summary>
   <div class="sec-content">
