@@ -1183,6 +1183,19 @@ def update_user(user_id, fields):
   </table>
   </div>
 
+  <div class="note key">
+    <span class="label">🛠️ Hands-On Lab: Build a Cache Stampede Coalescer</span>
+    <p>Build this mini-project to see the difference between a naive cache and a production-grade coalesced cache under load:</p>
+    <ul class="tight" style="margin-top: 8px; font-size: 0.95rem;">
+      <li><strong>1. The Mock DB:</strong> Write a simple HTTP server (in Go, Node.js, or Python) with an endpoint <code>/data</code>. If the key is not in Redis, simulate a slow database lookup by sleeping for <strong>500ms</strong>, then returning a random string.</li>
+      <li><strong>2. The Naive Cache:</strong> Cache the result in Redis with a <strong>5-second TTL</strong>. Under a cache miss, read from the DB and write to Redis.</li>
+      <li><strong>3. Run the Stampede:</strong> Use a load-testing tool like <code>k6</code> or <code>ab</code> (Apache Benchmark) to hit the endpoint with <strong>200 concurrent users</strong>. You will witness a <strong>cache stampede</strong>: since 200 requests arrive within the 500ms window, the mock DB is hammered 200 times for the same key.</li>
+      <li><strong>4. Build the Coalescer (Single-Flight):</strong> Implement request coalescing. Ensure that if a DB read is in progress for key <code>X</code>, subsequent identical requests wait for the active read to finish and share the result, rather than sending a new query. (Use Go's <code>golang.org/x/sync/singleflight</code> or design a promise-sharing map in JS/Python).</li>
+      <li><strong>5. Verify the Fix:</strong> Run the 200 VU load test again. Observe that the mock DB is now hit <strong>exactly once</strong> on a cache miss, and p99 latency stays flat!</li>
+    </ul>
+    <p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Put this project on your GitHub portfolio as a demonstrated benchmark of request coalescing and load protection.</p>
+  </div>
+
   <details class="q">
     <summary>Check yourself: You added jitter to every TTL and your hot-key stampede is exactly as bad as before. What did you misunderstand?</summary>
     <div class="a">Jitter desynchronises <em>different keys</em> that were written at the same moment. A hot key is one key with one expiry time — randomising when that moment arrives doesn't reduce the number of requests that miss when it does. You need single-flight so only one request rebuilds the value, or probabilistic early expiration so one request refreshes it slightly early and nobody ever sees the miss, or stale-while-revalidate so the old value is served during the rebuild.</div>
