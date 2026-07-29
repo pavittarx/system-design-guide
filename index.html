@@ -14,8 +14,8 @@
   .kicker{text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:var(--accent);font-weight:700;margin-bottom:10px;}
   h1{font-size:2.3rem;line-height:1.12;margin:0 0 12px;letter-spacing:-.02em;}
   .lede{color:var(--muted);font-size:1.15rem;margin:0;}
-  h2{font-size:1.5rem;margin:44px 0 14px;letter-spacing:-.01em;}
-  h3{font-size:1.1rem;margin:26px 0 6px;}
+  h2 { font-size: 1.5rem; margin: 48px 0 16px; letter-spacing: -0.015em; padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 65px; width: 100%; }
+  h3 { font-size: 1.18rem; margin: 32px 0 10px; font-weight: 600; }
   p{margin:12px 0;} a{color:var(--accent);text-decoration:none;} a:hover{text-decoration:underline;}
   code{background:var(--code-bg);border:1px solid var(--border);padding:1px 6px;border-radius:6px;font-size:.86em;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
   .note{border-left:3px solid var(--accent-2);background:var(--panel);border-radius:0 10px 10px 0;padding:14px 16px;margin:18px 0;}
@@ -59,9 +59,123 @@
   .path .seq{display:block;margin-top:8px;font-size:.8rem;color:var(--accent);font-weight:600;}
   dl.gloss{margin:14px 0;} dl.gloss dt{font-weight:700;font-size:.95rem;margin-top:12px;}
   dl.gloss dd{margin:2px 0 0;color:var(--muted);font-size:.92rem;}
+
+  /* Sticky Top Header */
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+  .header-inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+  }
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+  }
+  .breadcrumbs a {
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .breadcrumbs a:hover {
+    color: var(--accent);
+  }
+  .breadcrumbs .sep {
+    color: var(--border);
+    font-weight: 300;
+  }
+  .breadcrumbs .curr {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .toc-jump a {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Scroll Progress Indicator */
+  @keyframes scroll-progress {
+    from { width: 0%; }
+    to { width: 100%; }
+  }
+  .progress-bar {
+    height: 3px;
+    background: var(--accent);
+    animation: scroll-progress auto linear;
+    animation-timeline: scroll();
+    width: 0%;
+  }
+
+  /* Collapsible Sections */
+  details.sec-collapse {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  details.sec-collapse summary {
+    cursor: pointer;
+    list-style: none;
+    outline: none;
+    padding: 18px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  details.sec-collapse summary::-webkit-details-marker {
+    display: none;
+  }
+  details.sec-collapse summary h2 {
+    margin: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+    font-size: 1.45rem;
+    flex-grow: 1;
+  }
+  details.sec-collapse summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+    transition: transform 0.2s ease;
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+  details.sec-collapse[open] summary::after {
+    transform: rotate(-135deg);
+  }
+  .sec-content {
+    padding: 8px 0 28px 0;
+  }
+
 </style>
 </head>
 <body>
+<div class="sticky-header">
+  <div class="header-inner">
+    <div class="breadcrumbs">
+      <span class="curr">System Design Guide Hub</span>
+    </div>
+    <div class="toc-jump">
+      <a href="#journey">Start Tour</a>
+    </div>
+  </div>
+  <div class="progress-bar"></div>
+</div>
 <div class="wrap">
 
   <header class="hero">
@@ -75,7 +189,9 @@
     This is a working engineer's field guide, not a reference and not exam prep. It covers the six ideas that decide whether an ordinary web system survives its own growth, five further guides on running that system once it's real — observability, APIs &amp; gateways, the edge, coordination, and real-time — and a capstone that assembles them. Every concept is attached to a failure it prevents, every guide ends with a cheat sheet and self-test questions, and the recurring argument throughout is <em>restraint</em> — climb only as high as your load forces you to. What it deliberately leaves out: storage engine internals, networking below the packet, machine learning infrastructure, and anything specific to a single cloud vendor's product catalogue. Assumed background: you've written a web application and deployed it somewhere.
   </div>
 
-  <h2>The through-line: follow one request</h2>
+<details class="sec-collapse" open id="journey">
+  <summary><h2>The through-line: follow one request</h2></summary>
+  <div class="sec-content">
   <p>These topics aren't a random pile — they're the stops a single request makes on its way through a well-built system. Trace one click and the whole series falls into place. Note that the <em>stops</em> are in request order, which is not the order the guides are numbered in; the guides are ordered by what you'll need first in a real job, and caching is almost always the first thing anyone reaches for.</p>
 
   <div class="journey">
@@ -89,7 +205,11 @@
   </div>
   <p>Humming underneath every stop is one recurring question — <strong>how fresh does this data really need to be?</strong> — the consistency trade-off that ties caching, replication and CAP into a single idea (Guide 6). Watching the whole thing from the outside is <strong>observability</strong> (Guide 7); underneath it, machines have to <strong>agree</strong> on who's in charge (Guide 10); and when the server has to push data back instead of waiting to be asked, the model <strong>inverts</strong> entirely (Guide 11). Guide 12 then walks a real checkout through every stop with the numbers attached — the only way to find out whether any of it stuck.</p>
 
-  <h2>The guides</h2>
+  </div>
+</details>
+<details class="sec-collapse" open id="guides">
+  <summary><h2>The guides</h2></summary>
+  <div class="sec-content">
   <p>Read in order for a story, or jump to whatever's on fire today. Each stands alone, and each now ends with a 60-second recap and a set of questions to test yourself against. The first six build and scale a system; the next five keep it alive once it's real; the last one assembles everything.</p>
 
   <div class="guides">
@@ -197,7 +317,11 @@
     </a>
   </div>
 
-  <h2>Three ways through</h2>
+  </div>
+</details>
+<details class="sec-collapse" open id="paths">
+  <summary><h2>Three ways through</h2></summary>
+  <div class="sec-content">
   <p>A dozen guides is a lot to start with no plan. Pick the path that matches why you're here.</p>
 
   <div class="paths">
@@ -228,7 +352,11 @@
     </div>
   </div>
 
-  <h2>Numbers to argue with</h2>
+  </div>
+</details>
+<details class="sec-collapse" open id="numbers">
+  <summary><h2>Numbers to argue with</h2></summary>
+  <div class="sec-content">
   <p>Most design arguments are settled by an order of magnitude, not a benchmark. These are the figures worth carrying in your head — every one is approximate, hardware-dependent and a starting point for a conversation rather than a measurement of your system.</p>
 
   <div class="table-scroll">
@@ -250,7 +378,11 @@
   </table>
   </div>
 
-  <h2>The pillars, in one breath</h2>
+  </div>
+</details>
+<details class="sec-collapse" open id="pillars">
+  <summary><h2>The pillars, in one breath</h2></summary>
+  <div class="sec-content">
   <p>If you remember nothing else, remember the shape of the problem each guide solves. First the five that get you built and scaled:</p>
   <p>
     <span class="pillar">Speed</span> don't redo expensive work — <em>cache it</em>.<br>
@@ -269,7 +401,11 @@
     <span class="pillar">Push</span> a live connection makes the server stateful — <em>plan for the reconnect</em>.
   </p>
 
-  <h2>The words everyone uses and nobody defines</h2>
+  </div>
+</details>
+<details class="sec-collapse" open id="glossary">
+  <summary><h2>The words everyone uses and nobody defines</h2></summary>
+  <div class="sec-content">
   <dl class="gloss">
     <dt>Latency vs. throughput</dt>
     <dd>Latency is how long one request takes; throughput is how many you finish per second. They trade against each other, and improving one often degrades the other — batching is the classic example.</dd>
@@ -289,6 +425,8 @@
     <dd>If writes stop, all replicas converge on the same value — eventually. It says nothing about how long that takes, which is the part that bites.</dd>
   </dl>
 
+  </div>
+</details>
   <div class="savehint">🌐 Every card above opens a full guide, each guide links back here, and there's a <a href="system-design-basics-complete.html">single-file version of the seven core guides</a> if you'd rather have them in one page you can save, print, or read offline (the five newer guides above are standalone pages).</div>
 
   <div class="note">
@@ -304,5 +442,62 @@
   <hr>
   <p class="footer">System Design Basics — a twelve-part series. Each guide is self-contained, mobile-friendly, and adapts to light or dark. Sources are listed at the foot of every guide.</p>
 </div>
+
+<script>
+  // Restore open states from localStorage
+  document.querySelectorAll('details.sec-collapse').forEach(details => {
+    const id = details.id;
+    const storedState = localStorage.getItem(`sec-open-${id}`);
+    if (storedState !== null) {
+      details.open = storedState === 'true';
+    } else {
+      // Open by default for the Hub home page
+      details.open = true;
+    }
+    
+    // Listen for toggle events to save state
+    details.addEventListener('toggle', () => {
+      localStorage.setItem(`sec-open-${id}`, details.open);
+    });
+  });
+
+  // Restore scroll position
+  const storedScroll = localStorage.getItem('sec-scroll-pos');
+  if (storedScroll !== null && !window.location.hash) {
+    setTimeout(() => {
+      window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
+    }, 100);
+  }
+
+  // Save scroll position on scroll (debounced)
+  let scrollTimeout;
+  window.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      localStorage.setItem('sec-scroll-pos', window.scrollY);
+    }, 150);
+  });
+
+  // Auto-expand details elements when targeted by a hash link
+  function handleHashChange() {
+    const hash = window.location.hash;
+    if (hash) {
+      const target = document.querySelector(hash);
+      if (target) {
+        let parent = target.closest('details');
+        while (parent) {
+          parent.open = true;
+          parent = parent.parentElement.closest('details');
+        }
+        setTimeout(() => {
+          target.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+    }
+  }
+  window.addEventListener('hashchange', handleHashChange);
+  window.addEventListener('DOMContentLoaded', handleHashChange);
+</script>
+
 </body>
 </html>
