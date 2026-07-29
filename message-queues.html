@@ -24,6 +24,8 @@
   @media (max-width:560px){nav.toc ol{columns:1;} h1{font-size:1.7rem;}}
   .note{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;padding:12px 16px;margin:18px 0;}
   .note.warn{border-left-color:var(--warn);} .note.key{border-left-color:var(--accent-2);} .note.war{border-left-color:var(--danger);}
+.note.wild{border-left-color:var(--accent-2);}
+.note.wild .label{color:var(--accent-2);}
   .note .label{font-weight:700;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:block;margin-bottom:4px;}
   .coldopen{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--danger);border-radius:12px;padding:16px 18px;margin:22px 0;}
   .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
@@ -118,6 +120,11 @@
     Absorbing a spike by <em>buffering</em> it (letting the queue grow) is <strong>load-leveling</strong>: the database sips at its own pace instead of getting knocked over. This is the cheapest thing you can put in front of a write-bound database — writes are the hard half to scale, as <a href="database-scaling.html">the Database Scaling guide</a> gets into, and a queue lets you cap the write rate without dropping the writes. True <strong>backpressure</strong> is the next step — a <em>bounded</em> queue that, when full, pushes back on or sheds producers, so an unbounded backlog can't itself become the outage (runaway memory, ever-staler messages). Buffer for smoothness; bound the queue so the buffer can't sink you.
   </div>
 
+  <div class="note wild">
+    <span class="label">◈ In the wild · LinkedIn &amp; Kafka</span>
+    Kafka was built at LinkedIn around 2010 for exactly this reason. Dozens of services each needing data from dozens of others had become an explosion of point-to-point wiring — <em>N</em> systems to <em>M</em> systems is <em>N&times;M</em> brittle pipelines. Kafka replaced that web with one <strong>durable, append-only log</strong> every system publishes to and reads from at its own pace: the shock absorber turned into a company-wide backbone. It decoupled producers from consumers so cleanly that they open-sourced it in 2011, and much of the industry now runs its event backbone on it.
+  </div>
+
   <h2 id="parts">3. Producers, consumers, and two shapes of delivery</h2>
   <p>Beyond the basic queue, there are two classic patterns, and knowing which you want saves a lot of confusion:</p>
   <div class="cards">
@@ -141,6 +148,11 @@
   <div class="note warn">
     <span class="label">The dirty secret</span>
     <em>End-to-end</em> "exactly-once delivery" — across systems with real side effects — is famously close to impossible. The obstacle is the same one <a href="consistency-cap.html">the CAP &amp; Consistency guide</a> circles: two independent systems can't agree on "this happened" in one indivisible step over an unreliable network, so somebody always has to choose between retrying (maybe twice) and giving up (maybe never). What people actually build is <strong>at-least-once delivery + idempotent processing</strong>: deliver possibly twice, but make processing a duplicate a harmless no-op. The result <em>looks</em> exactly-once from the outside, which is all anyone wanted. (Kafka's exactly-once <em>processing</em> within its own ecosystem — idempotent producer + transactions — is the real exception, but it doesn't extend to arbitrary external side effects.)
+  </div>
+
+  <div class="note wild">
+    <span class="label">◈ In the wild · WhatsApp</span>
+    This is exactly how WhatsApp delivers to a phone that's switched off: the server doesn't fail and doesn't wait — it holds the message in an in-memory queue and keeps retrying until the device reconnects and <em>acks</em> receipt, then deletes it. Those two grey ticks (✓✓) are literally that ack. In early 2014 the design moved roughly <strong>50 billion messages a day</strong> for 450 million users on around 550 servers, run by a team of <strong>32 engineers</strong> — on Erlang and a sharded in-memory <a href="https://newsletter.systemdesign.one/p/whatsapp-engineering">Mnesia store that tracked every in-flight message</a>. At-least-once-until-acked, at planetary scale.
   </div>
 
   <h2 id="idem">5. Idempotency: the survival skill</h2>
@@ -295,8 +307,6 @@ COMMIT;
     At-least-once retries have a dark side. When a downstream service slows down, naive consumers retry immediately — piling <em>more</em> load onto the thing that's already struggling, guaranteeing it never recovers. This is a <em>retry storm</em>, and it has caused real outages at companies you've heard of. The fix (from <a href="reliability-toolkit.html">the Reliability guide</a>): exponential backoff + jitter, so retries spread out instead of stampeding. Retries are a fire; backoff is not throwing gasoline.
   </div>
 
-  <p><strong>WhatsApp — a store-and-forward queue with 450 million users</strong> — the messaging app is, at its core, one enormous <em>store-and-forward</em> queue. Send a message to someone whose phone is off and the server neither fails nor waits: it holds the message in an in-memory queue and keeps trying until their device reconnects and acknowledges receipt — then deletes it. Those two grey ticks (✓✓) are literally the <em>ack</em> from <a href="#delivery">section 4</a>. In early 2014 this design moved roughly <strong>50 billion messages a day</strong> (about 18 billion in, 40 billion out) for 450 million users on around 550 servers — run by a team of <strong>32 engineers</strong>, only about ten of whom ever touched the server code. It ran on Erlang and a sharded, in-memory <a href="https://newsletter.systemdesign.one/p/whatsapp-engineering">Mnesia cluster that tracked the state of every in-flight message</a>. The lesson isn't "use Erlang" — it's that when the queue-until-acked model genuinely fits the problem, a tiny team can run a planetary system, because the queue absorbs everything the network throws at it.</p>
-  <p><strong>LinkedIn &amp; the birth of Kafka</strong> — Kafka was built at LinkedIn around 2010 to solve a specific mess: dozens of services each needing data from dozens of others meant an explosion of point-to-point integrations — <em>N</em> systems wired to <em>M</em> systems is <em>N&times;M</em> brittle pipelines. Kafka replaced that web with a single <em>append-only log</em> every system could publish to and consume from at its own pace, moving billions of events a day (clicks, profile views, messages). It decoupled producers from consumers so cleanly that they open-sourced it in 2011 — and now a large share of the industry, including several of the other companies on this page, runs its event backbone on it.</p>
   <p><strong>Uber's dispatch &amp; every food-delivery app</strong> — "your driver is 3 minutes away" is a river of location events flowing through streaming queues. The order you place, the restaurant's ticket, the courier assignment, the push notification — each is a message handed between services asynchronously so no single slow step freezes the app.</p>
   <p><strong>Your last online order</strong> — the instant "Order confirmed!" you saw was almost certainly a lie of omission: the receipt, the warehouse pick, the fraud check, and the loyalty points were all still sitting in queues, being handled by background workers while you closed the tab. And that's exactly how it should be.</p>
 
