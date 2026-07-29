@@ -65,30 +65,32 @@
 <div class="wrap">
 
   <header class="hero">
-    <div class="kicker">A Seven-Part Field Guide</div>
+    <div class="kicker">A Twelve-Part Field Guide</div>
     <h1>System Design Basics</h1>
-    <p class="lede">Seven guides on how real systems get fast, hold their data, distribute work, stay up, and stay correct — each opening with a disaster, each ending with questions that make you prove you understood it, and the last one putting all of it into a single working design.</p>
+    <p class="lede">Twelve guides on how real systems get fast, hold their data, distribute work, stay up and stay correct — then how you see inside them, guard their front door, beat distance, get machines to agree, and push data live. Each opens with a disaster, each ends with questions that make you prove you understood it, and the last one puts all of it into a single working design.</p>
   </header>
 
   <div class="note">
     <span class="label">What this is, and what it isn't</span>
-    This is a working engineer's field guide, not a reference and not exam prep. It covers the six ideas that decide whether an ordinary web system survives its own growth, plus a capstone that assembles them. Every concept is attached to a failure it prevents, every guide ends with a cheat sheet and self-test questions, and the recurring argument throughout is <em>restraint</em> — climb only as high as your load forces you to. What it deliberately leaves out: distributed consensus algorithms in detail, storage engine internals, networking below the load balancer, machine learning infrastructure, and anything specific to a single cloud vendor's product catalogue. Assumed background: you've written a web application and deployed it somewhere.
+    This is a working engineer's field guide, not a reference and not exam prep. It covers the six ideas that decide whether an ordinary web system survives its own growth, five further guides on running that system once it's real — observability, APIs &amp; gateways, the edge, coordination, and real-time — and a capstone that assembles them. Every concept is attached to a failure it prevents, every guide ends with a cheat sheet and self-test questions, and the recurring argument throughout is <em>restraint</em> — climb only as high as your load forces you to. What it deliberately leaves out: storage engine internals, networking below the packet, machine learning infrastructure, and anything specific to a single cloud vendor's product catalogue. Assumed background: you've written a web application and deployed it somewhere.
   </div>
 
   <h2>The through-line: follow one request</h2>
   <p>These topics aren't a random pile — they're the stops a single request makes on its way through a well-built system. Trace one click and the whole series falls into place. Note that the <em>stops</em> are in request order, which is not the order the guides are numbered in; the guides are ordered by what you'll need first in a real job, and caching is almost always the first thing anyone reaches for.</p>
 
   <div class="journey">
-    <div class="hop"><div class="n">stop 1</div><h4>Load balancer</h4><p>Picks a healthy server from the herd.</p><span class="ref">→ Guide 3</span></div>
-    <div class="hop"><div class="n">stop 2</div><h4>Cache</h4><p>Answers instantly if it can, sparing everything downstream.</p><span class="ref">→ Guide 1</span></div>
-    <div class="hop"><div class="n">stop 3</div><h4>Database</h4><p>The source of truth — replicated and sharded to keep up.</p><span class="ref">→ Guide 2</span></div>
-    <div class="hop"><div class="n">stop 4</div><h4>Queue</h4><p>The slow, non-urgent work is handed off to run later.</p><span class="ref">→ Guide 4</span></div>
-    <div class="hop"><div class="n">stop 5</div><h4>Guardrails</h4><p>Timeouts &amp; breakers keep one failure from spreading.</p><span class="ref">→ Guide 5</span></div>
+    <div class="hop"><div class="n">stop 1</div><h4>Edge / CDN</h4><p>A copy near the user answers before the request ever crosses an ocean.</p><span class="ref">→ Guide 9</span></div>
+    <div class="hop"><div class="n">stop 2</div><h4>Load balancer</h4><p>Picks a healthy server from the herd.</p><span class="ref">→ Guide 3</span></div>
+    <div class="hop"><div class="n">stop 3</div><h4>API gateway</h4><p>The front door: authenticates, rate-limits, and routes.</p><span class="ref">→ Guide 8</span></div>
+    <div class="hop"><div class="n">stop 4</div><h4>Cache</h4><p>Answers instantly if it can, sparing everything downstream.</p><span class="ref">→ Guide 1</span></div>
+    <div class="hop"><div class="n">stop 5</div><h4>Database</h4><p>The source of truth — replicated and sharded to keep up.</p><span class="ref">→ Guide 2</span></div>
+    <div class="hop"><div class="n">stop 6</div><h4>Queue</h4><p>The slow, non-urgent work is handed off to run later.</p><span class="ref">→ Guide 4</span></div>
+    <div class="hop"><div class="n">stop 7</div><h4>Guardrails</h4><p>Timeouts &amp; breakers keep one failure from spreading.</p><span class="ref">→ Guide 5</span></div>
   </div>
-  <p>And humming underneath all five is one recurring question — <strong>how fresh does this data really need to be?</strong> — the consistency trade-off that ties caching, replication, and CAP into a single idea, and the subject of Guide 6. Guide 7 then walks a real checkout through every stop with the numbers attached, which is the only way to find out whether any of it stuck.</p>
+  <p>Humming underneath every stop is one recurring question — <strong>how fresh does this data really need to be?</strong> — the consistency trade-off that ties caching, replication and CAP into a single idea (Guide 6). Watching the whole thing from the outside is <strong>observability</strong> (Guide 7); underneath it, machines have to <strong>agree</strong> on who's in charge (Guide 10); and when the server has to push data back instead of waiting to be asked, the model <strong>inverts</strong> entirely (Guide 11). Guide 12 then walks a real checkout through every stop with the numbers attached — the only way to find out whether any of it stuck.</p>
 
   <h2>The guides</h2>
-  <p>Read in order for a story, or jump to whatever's on fire today. Each stands alone, and each now ends with a 60-second recap and six questions to test yourself against.</p>
+  <p>Read in order for a story, or jump to whatever's on fire today. Each stands alone, and each now ends with a 60-second recap and a set of questions to test yourself against. The first six build and scale a system; the next five keep it alive once it's real; the last one assembles everything.</p>
 
   <div class="guides">
     <a class="g" href="understanding-caching.html">
@@ -139,9 +141,55 @@
       <div class="tags">GitHub · Amazon · Spanner</div>
       <div class="meta">~29 min · a quorum under partition, step by step</div>
     </a>
+  </div>
+
+  <h3 style="margin-top:38px;">Going deeper — running it once it's real</h3>
+  <p>The first six get a system built and scaled. These five are the problems that arrive once it's actually live and serving people: knowing what it's doing, guarding its front door, beating distance, getting machines to agree, and pushing data out in real time.</p>
+
+  <div class="guides">
+    <a class="g" href="observability.html">
+      <span class="status s2">cross-cutting</span>
+      <div class="num">Guide 7 · Visibility</div>
+      <h3>Seeing Inside the Machine</h3>
+      <p>You can't fix what you can't see. Metrics, logs and traces; why the average lies; SLOs, error budgets, and alerting on symptoms rather than causes.</p>
+      <div class="tags">green dashboards · p99 · RED/USE</div>
+      <div class="meta">~30 min · one incident, solved with three signals</div>
+    </a>
+    <a class="g" href="api-gateways.html">
+      <span class="status">the contract</span>
+      <div class="num">Guide 8 · Interface</div>
+      <h3>APIs, Gateways &amp; Rate Limiting</h3>
+      <p>Your API is a public promise you can't quietly refactor. REST vs RPC vs GraphQL, versioning, what a gateway is for, and five ways to count requests.</p>
+      <div class="tags">Stripe · GitHub · GraphQL</div>
+      <div class="meta">~30 min · the boundary burst that doubles your limit</div>
+    </a>
+    <a class="g" href="cdn-edge.html">
+      <span class="status s2">physics</span>
+      <div class="num">Guide 9 · Distance</div>
+      <h3>CDNs &amp; the Edge</h3>
+      <p>You can't out-code the speed of light — only stop asking it for permission. PoPs, cache keys, origin shielding, serving stale on purpose, and edge compute.</p>
+      <div class="tags">Fastly · Cloudflare · Netflix</div>
+      <div class="meta">~30 min · why a 10-second TTL is nearly free</div>
+    </a>
+    <a class="g" href="coordination-consensus.html">
+      <span class="status s4">deep end</span>
+      <div class="num">Guide 10 · Agreement</div>
+      <h3>Getting Machines to Agree</h3>
+      <p>Two machines can disagree, and can't tell slow from dead. Leader election, Raft, quorums, the odd-number rule, fencing tokens, and locks that actually hold.</p>
+      <div class="tags">GitHub · Raft · etcd</div>
+      <div class="meta">~30 min · a GC pause that corrupts the database</div>
+    </a>
+    <a class="g" href="real-time-systems.html">
+      <span class="status s3">stateful</span>
+      <div class="num">Guide 11 · Push</div>
+      <h3>Systems That Push Back</h3>
+      <p>When the server sends what you never asked for, it has to remember you. WebSockets vs SSE, fan-out, presence, backpressure, and the reconnect storm.</p>
+      <div class="tags">Slack · Discord · WhatsApp</div>
+      <div class="meta">~30 min · the reconnect is the load test</div>
+    </a>
     <a class="g wide" href="design-the-checkout.html">
       <span class="status s3">capstone</span>
-      <div class="num">Guide 7 · Synthesis</div>
+      <div class="num">Guide 12 · Synthesis</div>
       <h3>Design the Checkout</h3>
       <p>Everything above, assembled into one system and then deliberately broken. Start from the traffic numbers, make each move only when a number forces it, decide staleness field by field, trace one request end to end — then watch the payment provider go slow and see which guardrail saves you.</p>
       <div class="tags">the whole series, working together</div>
@@ -150,28 +198,33 @@
   </div>
 
   <h2>Three ways through</h2>
-  <p>Twelve hours of reading is a lot to start with no plan. Pick the path that matches why you're here.</p>
+  <p>A dozen guides is a lot to start with no plan. Pick the path that matches why you're here.</p>
 
   <div class="paths">
     <div class="path">
       <h4>The interview in two weeks</h4>
       <p>You need to be able to design something out loud and defend it. Start at the end and work backwards — the capstone shows you the shape of an answer, then fill in whichever guide you fumbled.</p>
-      <span class="seq">7 → 2 → 1 → 4 → 6</span>
+      <span class="seq">12 → 2 → 1 → 4 → 6</span>
     </div>
     <div class="path">
       <h4>Something is on fire</h4>
-      <p>You're not studying, you're diagnosing. Reliability gives you the vocabulary for what you're watching, load balancing explains the cascade, and caching covers the cold-start problem you're about to have.</p>
-      <span class="seq">5 → 3 → 1</span>
+      <p>You're not studying, you're diagnosing. Observability tells you where it's actually broken, reliability gives you the vocabulary for it, load balancing explains the cascade, and caching covers the cold-start problem you're about to have.</p>
+      <span class="seq">7 → 5 → 3 → 1</span>
     </div>
     <div class="path">
       <h4>The product is growing and you're nervous</h4>
       <p>Nothing is broken yet and you want to keep it that way. This is the order the problems actually arrive in for a maturing web app.</p>
-      <span class="seq">1 → 2 → 3 → 4 → 5 → 6 → 7</span>
+      <span class="seq">1 → 2 → 3 → 4 → 5 → 6 → 12</span>
     </div>
     <div class="path">
       <h4>You want the theory</h4>
-      <p>You can already build it and want to know why it works. Consistency is the deep end, the capstone shows the trade-offs being priced, and databases is where the theory meets a bill.</p>
-      <span class="seq">6 → 7 → 2</span>
+      <p>You can already build it and want to know why it works. Consistency is the deep end, coordination is the machinery beneath it, the capstone prices the trade-offs, and databases is where the theory meets a bill.</p>
+      <span class="seq">6 → 10 → 12 → 2</span>
+    </div>
+    <div class="path">
+      <h4>You operate it, not just build it</h4>
+      <p>It's shipped and it's yours to keep alive. See inside it first, then the edge that fronts it, the gateway that guards it, and the live connections that behave unlike anything else in the stack.</p>
+      <span class="seq">7 → 9 → 8 → 11</span>
     </div>
   </div>
 
@@ -197,8 +250,8 @@
   </table>
   </div>
 
-  <h2>The five pillars, in one breath</h2>
-  <p>If you remember nothing else, remember the shape of the problem each guide solves:</p>
+  <h2>The pillars, in one breath</h2>
+  <p>If you remember nothing else, remember the shape of the problem each guide solves. First the five that get you built and scaled:</p>
   <p>
     <span class="pillar">Speed</span> don't redo expensive work — <em>cache it</em>.<br>
     <span class="pillar">State</span> one database has a ceiling — <em>replicate and shard past it</em>.<br>
@@ -207,6 +260,14 @@
     <span class="pillar">Resilience</span> failure is constant — <em>contain it so it can't cascade</em>.
   </p>
   <p>…and the question threaded through every one: <strong>consistency</strong> — how much staleness can this particular piece of data safely tolerate? Answer that per feature, and most design decisions answer themselves.</p>
+  <p>Those five build and scale the system; the back half of the series keeps it alive once it's real:</p>
+  <p>
+    <span class="pillar">Visibility</span> you can't fix what you can't see — <em>instrument it</em>.<br>
+    <span class="pillar">Interface</span> the API is a promise you can't take back — <em>design the contract to outlive the code</em>.<br>
+    <span class="pillar">Distance</span> the speed of light is a hard floor — <em>keep a copy near the user</em>.<br>
+    <span class="pillar">Agreement</span> two machines can't tell slow from dead — <em>elect one and fence the rest</em>.<br>
+    <span class="pillar">Push</span> a live connection makes the server stateful — <em>plan for the reconnect</em>.
+  </p>
 
   <h2>The words everyone uses and nobody defines</h2>
   <dl class="gloss">
@@ -228,20 +289,20 @@
     <dd>If writes stop, all replicas converge on the same value — eventually. It says nothing about how long that takes, which is the part that bites.</dd>
   </dl>
 
-  <div class="savehint">🌐 Every card above opens a full guide, each guide links back here, and there's a <a href="system-design-basics-complete.html">single-file version of the entire series</a> if you'd rather have all seven in one page you can save, print, or read offline.</div>
+  <div class="savehint">🌐 Every card above opens a full guide, each guide links back here, and there's a <a href="system-design-basics-complete.html">single-file version of the seven core guides</a> if you'd rather have them in one page you can save, print, or read offline (the five newer guides above are standalone pages).</div>
 
   <div class="note">
-    <span class="label">The meta-lesson across all seven</span>
+    <span class="label">The meta-lesson across all twelve</span>
     Every guide ends up in the same place: <em>climb only as high as your load forces, and add complexity only when the metrics demand it.</em> The best system is the simplest one that meets its targets. Restraint isn't the boring option — across Figma, Discord, Netflix, and the rest, restraint <em>is</em> the strategy.
   </div>
 
   <div class="note warn">
     <span class="label">How to actually retain this</span>
-    Reading all seven guides straight through will feel productive and won't work. Do this instead: read one guide, close it, and answer its "Check yourself" questions from memory before opening the answers. Getting one wrong is the point — that's the moment the idea actually lands. Then come back a week later and answer them again. Twelve hours of reading retained badly is worth less than four hours read this way.
+    Reading all twelve guides straight through will feel productive and won't work. Do this instead: read one guide, close it, and answer its "Check yourself" questions from memory before opening the answers. Getting one wrong is the point — that's the moment the idea actually lands. Then come back a week later and answer them again. A dozen guides retained badly are worth less than half of them read this way.
   </div>
 
   <hr>
-  <p class="footer">System Design Basics — a seven-part series. Each guide is self-contained, mobile-friendly, and adapts to light or dark. Sources are listed at the foot of every guide.</p>
+  <p class="footer">System Design Basics — a twelve-part series. Each guide is self-contained, mobile-friendly, and adapts to light or dark. Sources are listed at the foot of every guide.</p>
 </div>
 </body>
 </html>
