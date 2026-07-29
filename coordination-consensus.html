@@ -144,6 +144,8 @@
   .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
   .coldopen p{margin:8px 0 0;}
   .note.war{border-left-color:var(--danger);}
+  .note.wild{border-left-color:var(--accent-2);}
+  .note.wild .label{color:var(--accent-2);}
 
   /* --- retention + worked-example layer --- */
   details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
@@ -208,6 +210,10 @@
   <h2 id="leader">2. Leader election, and why you want one</h2>
   <p>Coordination among <em>n</em> peers is an <em>n</em>-way conversation, and <em>n</em>-way conversations are where inconsistency lives. The single most effective simplification in distributed systems is to elect one node the leader and route all decisions through it. Now the system is a sequence of decisions made by one machine, which is a problem you already know how to reason about.</p>
   <p>Leaders show up everywhere once you look. The primary in a replicated database orders all writes. The controller in a Kafka cluster assigns partitions. The scheduler in Kubernetes decides placements. The coordinator of a sharded system decides who owns which range. In each case, the point is not that the leader is faster — it is that having exactly one writer removes an entire category of conflicts.</p>
+  <div class="note wild">
+    <span class="label">◈ In the wild · Google Chubby</span>
+    Most of this pattern traces back to Google's <a href="https://research.google/pubs/the-chubby-lock-service-for-loosely-coupled-distributed-systems/">Chubby</a>, a small, Paxos-backed, strongly consistent store built as a lock service. In practice its dominant use turned out not to be locking at all but leader election and name resolution: systems like GFS and Bigtable elect their primary by racing to acquire a single Chubby lock, and the winner is the leader. It is the direct inspiration for ZooKeeper.
+  </div>
   <div class="cards">
     <div class="card">
       <span class="pill good">What a leader buys you</span>

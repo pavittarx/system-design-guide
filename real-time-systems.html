@@ -144,6 +144,8 @@
   .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
   .coldopen p{margin:8px 0 0;}
   .note.war{border-left-color:var(--danger);}
+  .note.wild{border-left-color:var(--accent-2);}
+  .note.wild .label{color:var(--accent-2);}
 
   /* --- retention + worked-example layer --- */
   details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
@@ -330,6 +332,10 @@ client seq 4812   <span class="good">connected</span>
   </div>
   <p>Two decisions follow. First, <b>how far back can you replay?</b> The log is finite. If the client has been away longer than the retention window, you cannot replay — you must tell it so, and the client must resynchronise from scratch by fetching current state. Handle this explicitly with a "too far behind, resync" response, because the alternative is a client that silently believes it is up to date and is not.</p>
   <p>Second, <b>ordering guarantee within a stream.</b> Sequence numbers give you per-stream order, which is what users perceive: messages in one conversation appear in the order they were sent. Global ordering across all streams is far more expensive and nobody notices its absence. Scope your ordering guarantee to the conversation, the channel, or the document — the same partition-and-order reasoning as <a href="message-queues.html">Message Queues &amp; Async</a>.</p>
+  <div class="note wild">
+    <span class="label">◈ In the wild · Figma</span>
+    Figma leans on exactly this idea for multiplayer editing: every open document lives on a single server that owns the authoritative order of changes, so there is one place that decides what happened first. Rather than reach for full CRDTs, it uses a simpler last-writer-wins rule per object property, with that server acting as referee, so two people dragging the same rectangle converge without a merge conflict. When a client drops and comes back, it resyncs from the server's ordered log — the same "replay from where I left off" move described above. Their team wrote it up in <a href="https://www.figma.com/blog/how-figmas-multiplayer-technology-works/">how Figma's multiplayer technology works</a>.
+  </div>
   <p>And since replay means a message can be delivered twice, clients must deduplicate by message ID. Idempotent handling on the receiving side is what makes at-least-once delivery acceptable, exactly as it is on the server side.</p>
 
   <h2 id="reconnect">9. The reconnect storm</h2>

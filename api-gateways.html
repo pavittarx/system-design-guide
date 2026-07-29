@@ -144,6 +144,8 @@
   .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
   .coldopen p{margin:8px 0 0;}
   .note.war{border-left-color:var(--danger);}
+  .note.wild{border-left-color:var(--accent-2);}
+  .note.wild .label{color:var(--accent-2);}
 
   /* --- retention + worked-example layer --- */
   details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
@@ -275,6 +277,10 @@
   </div>
   <p>The body carries the actionable detail. RFC 7807 (updated by RFC 9457) defines a standard shape — <code>type</code>, <code>title</code>, <code>status</code>, <code>detail</code>, <code>instance</code> — and whether or not you adopt it literally, adopt its properties: a <strong>stable machine-readable code</strong> that clients can branch on (<code>insufficient_funds</code>, not a human sentence that will get reworded), a human-readable message for logs, and for validation failures, <em>which field</em> was wrong. Include your request ID in every error body; it turns a support ticket from an archaeology exercise into a lookup.</p>
   <p>Finally, distinguish retryable from non-retryable inside the 5xx range. A 503 with a <code>Retry-After</code> is an instruction. A 500 is an unknown. A 504 means the request may well have been processed even though you didn't hear back — which is the case that makes <strong>idempotency keys</strong> essential on any endpoint that moves money or creates records: the client sends a unique key, the server records the outcome against it, and a retry with the same key returns the original result instead of doing the work twice.</p>
+  <div class="note wild">
+    <span class="label">◈ In the wild · Stripe</span>
+    Stripe lets a client attach an <code>Idempotency-Key</code> header to any POST, and records the outcome of that request against the key. So when a client retries after a timeout — never certain whether the first charge actually went through — the retry returns the original result rather than charging the card a second time. Keys are honoured for roughly 24 hours, which makes this the canonical production answer to "the request may have succeeded even though I didn't hear back." See <a href="https://docs.stripe.com/api/idempotent_requests">Stripe's idempotent-requests documentation</a>.
+  </div>
 
   <h2 id="gateway">6. What a gateway does — and what it shouldn't</h2>
   <p>An API gateway is the single front door: one place that terminates TLS, authenticates the caller, enforces limits, routes to the right service, and emits a consistent access log. The argument for it is that these concerns are identical for every service, and implementing them forty times produces forty subtly different implementations, thirty-nine of which have a bug.</p>

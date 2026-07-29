@@ -24,6 +24,8 @@
   @media (max-width:560px){nav.toc ol{columns:1;} h1{font-size:1.7rem;}}
   .note{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;padding:12px 16px;margin:18px 0;}
   .note.warn{border-left-color:var(--warn);} .note.key{border-left-color:var(--accent-2);} .note.war{border-left-color:var(--danger);}
+  .note.wild{border-left-color:var(--accent-2);}
+  .note.wild .label{color:var(--accent-2);}
   .note .label{font-weight:700;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:block;margin-bottom:4px;}
   .coldopen{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--danger);border-radius:12px;padding:16px 18px;margin:22px 0;}
   .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
@@ -133,6 +135,10 @@
     <div class="layer"><div class="idx">?</div><div class="body"><h4>Half-open</h4><p>Let a trickle of test calls through. Succeed → close. Fail → open again.</p></div><div class="speed">probing</div></div>
   </div>
   <p>The breaker does two kind things at once: it protects <em>you</em> (no more threads wasted on doomed calls) and it protects <em>them</em> (the struggling service gets breathing room instead of a beating). It's the single most important pattern for stopping cascades.</p>
+  <div class="note wild">
+    <span class="label">◈ In the wild · Netflix Hystrix</span>
+    Netflix built and open-sourced <a href="https://github.com/Netflix/Hystrix/wiki">Hystrix</a>, the library that did more than anything else to popularise the circuit-breaker pattern in microservices. It wraps each call to a dependency, trips open once that dependency's error rate crosses a threshold, and then sheds load fast instead of piling more attempts onto a service that's already struggling. Netflix has since retired Hystrix in favour of newer libraries like resilience4j, but the pattern it spread is now everywhere.
+  </div>
 
   <h2 id="bulkheads">6. Bulkheads &amp; load shedding</h2>
   <p><strong>Bulkheads</strong> — named after a ship's watertight compartments. Isolate resources so a flood in one area can't sink the whole vessel. If calls to the flaky recommendations service get their own limited thread pool, they can exhaust <em>that</em> pool without stealing threads from checkout. One feature browns out; the ship stays afloat.</p>
@@ -304,6 +310,10 @@ compare: three nines on its own
 
   <h2 id="chaos">11. Testing with chaos</h2>
   <p>Here's the punchline to all of the above: <strong>a failure path you've never triggered probably doesn't work.</strong> Backups you don't restore, failovers you don't rehearse, circuit breakers you've never watched trip — they're all theories until tested. So the boldest teams break things <em>on purpose</em>, in production, during business hours, to prove the safety nets hold.</p>
+  <div class="note wild">
+    <span class="label">◈ In the wild · Netflix Chaos Monkey</span>
+    After a painful 2008 database outage and the move to AWS that followed, Netflix built <a href="https://netflixtechblog.com/the-netflix-simian-army-16e57fbab116">Chaos Monkey</a> — part of a wider toolkit it called the "Simian Army" — to randomly terminate production instances during business hours. The point was to force every service to actually tolerate a sudden instance vanishing rather than merely hope it would, turning resilience into something continuously tested instead of quietly assumed.
+  </div>
   <p>Netflix pioneered this with <strong>Chaos Monkey</strong>, a tool that randomly kills live servers to force engineers to build systems that don't care when a server dies. If a random instance vanishing is a non-event, then a real one dying at 3 AM is also a non-event — and everyone sleeps. Chaos engineering is just the discipline of finding your weaknesses before they find you.</p>
 
   <h2 id="examples">12. Real-world examples</h2>
@@ -318,7 +328,7 @@ compare: three nines on its own
     On February 28, 2017, an AWS engineer debugging <strong>S3</strong> in the us-east-1 region ran a command with a <strong>typo</strong>, accidentally removing far more capacity than intended. S3 went down for hours and took a huge slice of the internet with it — sites, smart-home gadgets, even other AWS services that secretly depended on it. Lessons the industry absorbed: guardrails on dangerous commands, blast-radius limits, and not letting one region become a single point of failure for everyone.
   </div>
 
-  <p><strong>Netflix, the reliability obsessives</strong> — beyond Chaos Monkey, Netflix built Hystrix (circuit breakers + bulkheads) precisely because their service depends on hundreds of others. (Hystrix is now in maintenance mode — today teams reach for resilience4j or adaptive concurrency limits — but the patterns it popularized are everywhere.) Their whole architecture assumes dependencies will fail and degrades around them, which is why a struggling microservice usually means a slightly worse row of recommendations, not a dead app.</p>
+  <p><strong>Netflix, the reliability obsessives</strong> — the Hystrix and Chaos Monkey stories above are two faces of a single philosophy. Their whole architecture assumes dependencies will fail and degrades around them, which is why a struggling microservice usually means a slightly worse row of recommendations, not a dead app.</p>
 
   <div class="note key">
     <span class="label">The one-liner to remember</span>

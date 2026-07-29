@@ -144,6 +144,8 @@
   .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
   .coldopen p{margin:8px 0 0;}
   .note.war{border-left-color:var(--danger);}
+  .note.wild{border-left-color:var(--accent-2);}
+  .note.wild .label{color:var(--accent-2);}
 
   /* --- retention + worked-example layer --- */
   details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
@@ -286,6 +288,10 @@
   <h2 id="traces">7. Traces: spans and propagation</h2>
   <p>Metrics told you the checkout endpoint is slow. Logs told you what one request did inside one service. Neither tells you that the slowness lives three hops down, inside a call your service makes to a service that calls a service. That's what tracing is for.</p>
   <p>A <strong>trace</strong> is one request's complete journey. A <strong>span</strong> is one unit of work within it — a service handling the request, a database query, an outbound HTTP call. Spans nest: the parent span's duration contains its children's. What makes it work is <strong>context propagation</strong>: the trace ID is passed along with every outbound call, so that work happening in a different process on a different continent still knows which request it belongs to. The W3C <code>traceparent</code> header is the standard way to carry it, and OpenTelemetry is the standard way to produce it.</p>
+  <div class="note wild">
+    <span class="label">◈ In the wild · Google Dapper</span>
+    Tracing a request across a fleet of services this way is not a new idea — it is essentially Google's Dapper, described in a <a href="https://research.google/pubs/dapper-a-large-scale-distributed-systems-tracing-infrastructure/">2010 paper</a>. Dapper stamps every incoming request with a trace ID and carries it along each service call and RPC the request touches, exactly the propagation described above, and it samples aggressively so the overhead stays negligible. Zipkin, Jaeger, and the OpenTelemetry tooling most teams reach for today are all descendants of that design.
+  </div>
   <div class="trace">
 trace 4f9a2c…   POST /checkout                     <b>2,410 ms</b>
 ├─ gateway                                          <b>2,410 ms</b>

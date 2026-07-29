@@ -144,6 +144,8 @@
   .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
   .coldopen p{margin:8px 0 0;}
   .note.war{border-left-color:var(--danger);}
+  .note.wild{border-left-color:var(--accent-2);}
+  .note.wild .label{color:var(--accent-2);}
 
   /* --- retention + worked-example layer --- */
   details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
@@ -475,6 +477,11 @@ def update_user(user_id, fields):
     <li><strong>Serve-stale-while-revalidate</strong> — keep the old value past its nominal freshness and hand it back instantly while one background task refreshes it. Nobody waits, nobody misses.</li>
   </ul>
 
+  <div class="note wild">
+    <span class="label">◈ In the wild · Meta</span>
+    Meta runs one of the largest Memcached tiers on the planet in front of its databases, and it ships a coalescing throttle for exactly the hot-key stampede above. In the paper <a href="https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf">"Scaling Memcache at Facebook"</a> (NSDI 2013) they describe <em>leases</em>: on a miss for a hot key, only the first request is handed a short-lived token to recompute the value, while the requests arriving behind it are told to wait briefly or are served a slightly stale copy. That is single-flight, enforced at the cache, at production scale.
+  </div>
+
   <h3>Probabilistic early expiration (XFetch)</h3>
   <p>The elegant answer to the hot-key case, and it needs no locks. On every read, alongside the value you store how long the last recompute took (<em>delta</em>) and when the key expires. Then each reader independently rolls a die: recompute early if</p>
 <pre><code>now - delta * beta * ln(random())  &gt;=  expiry_time</code></pre>
@@ -534,9 +541,6 @@ def update_user(user_id, fields):
 
   <h3>Netflix Open Connect — a CDN with pre-warming</h3>
   <p>Netflix places its own caching appliances (Open Connect) <em>inside</em> ISP networks, as close to viewers as possible. The clever part is <strong>proactive prepositioning</strong>: during off-peak hours they push the shows likely to be watched tomorrow onto those edge caches, so the popular content is already there before anyone presses play. That's edge caching plus proactive cache warming at continental scale.</p>
-
-  <h3>Facebook &amp; Memcached — taming the stampede at scale</h3>
-  <p>Facebook runs one of the largest Memcached deployments in the world (cache-aside in front of their databases). Their well-known <a href="https://read.engineerscodex.com/p/how-facebook-scaled-memcached">"Scaling Memcache at Facebook"</a> work describes a mechanism called <strong>leases</strong> to tackle exactly the <em>thundering herd</em> problem from section 7: when a hot key misses, only the first request gets a "lease" to recompute it, while others are told to wait briefly and retry (and may be served a slightly stale value) — a coalescing-style throttle, in production, at enormous scale.</p>
 
   <h3>Twitter/X timelines — precompute and cache the answer</h3>
   <p>Rather than assemble your home timeline from scratch on every load, Twitter historically <em>precomputes</em> it: when someone you follow tweets, that tweet is fanned out and written into your cached timeline in Redis ahead of time — a <strong>fan-out-on-write</strong> approach that materializes each timeline in advance. Reads are then just "fetch the ready-made list." It also shows off the <strong>hot key</strong> problem — a celebrity with 100M followers can't be fanned out to everyone cheaply, so those accounts are handled differently (merged in at read time). One product, two strategies, chosen by the shape of the data.</p>

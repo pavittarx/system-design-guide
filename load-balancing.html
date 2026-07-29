@@ -24,6 +24,8 @@
   @media (max-width:560px){nav.toc ol{columns:1;} h1{font-size:1.7rem;}}
   .note{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;padding:12px 16px;margin:18px 0;}
   .note.warn{border-left-color:var(--warn);} .note.key{border-left-color:var(--accent-2);} .note.war{border-left-color:var(--danger);}
+  .note.wild{border-left-color:var(--accent-2);}
+  .note.wild .label{color:var(--accent-2);}
   .note .label{font-weight:700;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:block;margin-bottom:4px;}
   .coldopen{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--danger);border-radius:12px;padding:16px 18px;margin:22px 0;}
   .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
@@ -157,6 +159,10 @@
   <div class="note key">
     <span class="label">Why consistent hashing is a big deal</span>
     With plain "hash mod N," adding one server changes <em>N</em> in the formula and remaps almost every key to a new server — every cache goes cold at once (hello, <em>thundering herd</em> from the <a href="understanding-caching.html">Caching guide</a>). Consistent hashing moves only a small slice of keys when the fleet grows or shrinks. It's the trick behind distributed caches, CDNs, and databases like Cassandra.
+  </div>
+  <div class="note wild">
+    <span class="label">◈ In the wild · Google Maglev</span>
+    Maglev is Google's own software network load balancer — it runs on ordinary commodity servers rather than dedicated hardware, and fronts a large share of Google's incoming traffic. It leans on exactly the idea above: consistent hashing chooses the backend, but Maglev pairs it with per-connection tracking, so growing or shrinking the fleet reshuffles only a small fraction of connections while every packet of a given flow still lands on the same backend. It's a good illustration of why the "minimal reshuffling" property is worth the extra machinery at scale (<a href="https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/">Google's Maglev paper</a>).
   </div>
 
   <h2 id="health">6. Health checks &amp; failover</h2>
@@ -322,7 +328,6 @@
     A load balancer's health checks assume a dead server <em>stops answering</em>. The nastier failure is the server that keeps answering but returns garbage or hangs at 30 seconds — "brownout," not blackout. Netflix engineered around exactly this with adaptive concurrency limits and circuit breakers, because a slow server that a load balancer keeps feeding is more dangerous than one that cleanly dies. (More in <a href="reliability-toolkit.html">the Reliability guide</a>.)
   </div>
 
-  <p><strong>Google's Maglev</strong> — Google runs software L4 load balancers on commodity machines, using consistent hashing so that even when the fleet changes, existing connections mostly stay put. It's how a single virtual IP fronts an ungodly amount of traffic.</p>
   <p><strong>Anycast + DNS at the edge</strong> — before a request even reaches a traditional load balancer, providers like Cloudflare announce the <em>same</em> IP address from data centers worldwide (anycast), so the network itself routes you to the nearest one. Load balancing that starts at the level of the internet's routing tables.</p>
   <p><strong>The humble <code>/health</code> endpoint</strong> — almost every service you've ever used has an unglamorous URL that a load balancer hits every few seconds, forever. It is the most-visited page in your entire system and no human will ever look at it. Pour one out.</p>
 

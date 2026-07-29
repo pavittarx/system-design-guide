@@ -144,6 +144,8 @@
   .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
   .coldopen p{margin:8px 0 0;}
   .note.war{border-left-color:var(--danger);}
+  .note.wild{border-left-color:var(--accent-2);}
+  .note.wild .label{color:var(--accent-2);}
 
   /* --- retention + worked-example layer --- */
   details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
@@ -211,6 +213,10 @@
   <p>A <strong>point of presence</strong> is a rack — sometimes several — of servers in a data centre or internet exchange, physically near a population of users. A large CDN operates somewhere between dozens and hundreds of these. Each one runs a caching proxy, holds a slice of your content on local SSDs, and terminates TLS.</p>
   <p>Three things happen at a PoP, and only the first is the one people think of:</p>
   <p><strong>It serves cached content.</strong> A hit never touches your infrastructure. Your origin doesn't know the request happened, isn't billed for it, and cannot be taken down by it.</p>
+  <div class="note wild">
+    <span class="label">◈ In the wild · Netflix Open Connect</span>
+    Netflix takes the "near the user" idea to its logical extreme by running its own CDN, <a href="https://openconnect.netflix.com/">Open Connect</a>, and placing its caching appliances directly inside ISP networks rather than at neutral exchanges. During off-peak hours it proactively pushes the titles it predicts people will watch tomorrow onto those appliances — a practice it calls prepositioning — so the bytes are already sitting inside your ISP before you press play. It is the PoP model of this section, extended with proactive warming at continental scale.
+  </div>
   <p><strong>It terminates the connection.</strong> This is the underrated one. TCP and TLS handshakes now happen over 5 ms of local network instead of 160 ms of ocean, and the PoP holds warm, already-established connections back to your origin. Even for a completely uncacheable response, you have replaced three cold round trips across the planet with three warm ones across the street — a substantial win on content the CDN never caches at all.</p>
   <p><strong>It absorbs abuse.</strong> A volumetric attack lands on hundreds of PoPs with far more aggregate capacity than your origin, and gets filtered there.</p>
   <div class="note">

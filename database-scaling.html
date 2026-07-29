@@ -63,6 +63,8 @@
   .note { border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 10px 10px 0; padding: 12px 16px; margin: 18px 0; }
   .note.warn { border-left-color: var(--warn); }
   .note.key { border-left-color: var(--accent-2); }
+  .note.wild { border-left-color: var(--accent-2); }
+  .note.wild .label { color: var(--accent-2); }
   .note .label { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); display:block; margin-bottom: 4px; }
   .stack { margin: 20px 0; }
   .layer { display: flex; align-items: center; gap: 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin: 8px 0; position: relative; }
@@ -313,6 +315,11 @@ SELECT * FROM users WHERE lower(email) = 'ada@example.com';</code></pre>
   <h3>The shard key is everything</h3>
   <p>You pick a <strong>shard key</strong> (user ID, org ID, channel ID…) and a function that maps each row's key to a shard. Every design decision flows from this choice, because it determines how evenly load spreads and which queries stay cheap.</p>
 
+  <div class="note wild">
+    <span class="label">◈ In the wild · Discord</span>
+    Discord stores billions and then trillions of chat messages, and its shard key is effectively a channel paired with a time bucket: messages are partitioned by channel and bucketed by time, which keeps one conversation's history together on a single shard while spreading the overall load across the cluster. Getting there took two migrations — MongoDB gave way to Cassandra, and Cassandra later gave way to ScyllaDB, a C++, Cassandra-compatible store, to tame tail latencies and the operational load of running the cluster. It's a clean illustration of the rule that the shard key should match the boundary your reads already draw. <a href="https://discord.com/blog/how-discord-stores-trillions-of-messages">(Discord Engineering)</a>
+  </div>
+
   <div class="table-scroll">
   <table>
     <thead><tr><th>Strategy</th><th>How it maps</th><th>Strength</th><th>Weakness</th></tr></thead>
@@ -512,14 +519,11 @@ LIMIT  20;</code></pre>
   <h3>Figma — vertical partitioning, then in-house sharding</h3>
   <p>Figma ran a <em>single</em> Postgres instance on AWS's largest box in 2020. They first scaled by <strong>vertical partitioning</strong> — splitting tables like "Files" and "Organizations" onto separate databases — reaching about a dozen databases with replicas and caching by late 2022. But some tables hit terabytes and billions of rows, bumping into RDS IOPS limits and Postgres vacuum problems that partitioning couldn't fix. So they built <strong>horizontal sharding</strong> in-house: multiple shard keys (UserID, FileID, OrgID) rather than one, hashed for even distribution, with "colos" grouping related tables so joins stay within a shard — and a routing service, DBProxy. They deliberately chose this over CockroachDB or Vitess to stay on their known Postgres. First table sharded in September 2023 with ~10 seconds of partial impact. <a href="https://www.figma.com/blog/how-figmas-databases-team-lived-to-tell-the-scale/">(Figma Engineering)</a></p>
 
-  <h3>Discord — MongoDB → Cassandra → ScyllaDB</h3>
-  <p>Discord outgrew MongoDB and moved to <strong>Cassandra</strong> in 2017, partitioning messages by <code>channel_id</code> plus a time bucket. By early 2022 it was <strong>trillions of messages across 177 nodes</strong> — and struggling: popular channels became <strong>hot partitions</strong>, and Java garbage-collection pauses caused latency spikes and heavy on-call toil. They migrated to <strong>ScyllaDB</strong> (a C++ reimplementation of Cassandra) and added a Rust data-services layer that <em>coalesces</em> concurrent requests for the same hot channel — the exact request-coalescing trick from the <a href="understanding-caching.html">Caching guide</a>, at the database tier. Result: 177 nodes down to <strong>72</strong>, and p99 message reads from 40–125 ms to ~15 ms. <a href="https://discord.com/blog/how-discord-stores-trillions-of-messages">(Discord Engineering)</a></p>
-
   <h3>Instagram — thousands of logical shards on few machines</h3>
   <p>Instagram sharded Postgres early by creating <strong>thousands of logical shards</strong> mapped onto a smaller number of physical servers, and encoded the shard ID directly inside their 64-bit primary keys. Growing capacity meant moving logical shards to new hardware — no re-hashing. It's the textbook logical-vs-physical split from section 7.</p>
 
   <div class="note key">
-    <span class="label">The pattern across all three</span>
+    <span class="label">The pattern across both</span>
     Every team climbed the ladder in order — one box, then partitioning/replicas, then sharding — and only sharded when size or write load genuinely forced it. None reached for the most complex tool first. That restraint <em>is</em> the strategy.
   </div>
 
