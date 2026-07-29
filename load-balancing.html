@@ -14,8 +14,8 @@
   .kicker{text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:var(--accent);font-weight:700;margin-bottom:10px;}
   h1{font-size:2.05rem;line-height:1.15;margin:0 0 12px;letter-spacing:-.02em;}
   .lede{color:var(--muted);font-size:1.12rem;margin:0;}
-  h2{font-size:1.5rem;margin:44px 0 14px;letter-spacing:-.01em;padding-top:8px;scroll-margin-top:20px;}
-  h3{font-size:1.16rem;margin:26px 0 8px;}
+  h2 { font-size: 1.5rem; margin: 48px 0 16px; letter-spacing: -0.015em; padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 65px; }
+  h3 { font-size: 1.18rem; margin: 32px 0 10px; font-weight: 600; }
   p{margin:12px 0;} a{color:var(--accent);text-decoration:none;} a:hover{text-decoration:underline;}
   code{background:var(--code-bg);border:1px solid var(--border);padding:1px 6px;border-radius:6px;font-size:.86em;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
   nav.toc{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:8px;}
@@ -63,9 +63,125 @@
   pre{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.6;margin:18px 0;}
   pre code{background:none;border:none;padding:0;font-size:1em;}
   .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
+
+  /* Sticky Top Header */
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+  .header-inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+  }
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+  }
+  .breadcrumbs a {
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .breadcrumbs a:hover {
+    color: var(--accent);
+  }
+  .breadcrumbs .sep {
+    color: var(--border);
+    font-weight: 300;
+  }
+  .breadcrumbs .curr {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .toc-jump a {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Scroll Progress Indicator */
+  @keyframes scroll-progress {
+    from { width: 0%; }
+    to { width: 100%; }
+  }
+  .progress-bar {
+    height: 3px;
+    background: var(--accent);
+    animation: scroll-progress auto linear;
+    animation-timeline: scroll();
+    width: 0%;
+  }
+
+  /* Collapsible Sections */
+  details.sec-collapse {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  details.sec-collapse summary {
+    cursor: pointer;
+    list-style: none;
+    outline: none;
+    padding: 18px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  details.sec-collapse summary::-webkit-details-marker {
+    display: none;
+  }
+  details.sec-collapse summary h2 {
+    margin: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+    font-size: 1.45rem;
+    flex-grow: 1;
+  }
+  details.sec-collapse summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+    transition: transform 0.2s ease;
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+  details.sec-collapse[open] summary::after {
+    transform: rotate(-135deg);
+  }
+  .sec-content {
+    padding: 8px 0 28px 0;
+  }
+
 </style>
 </head>
 <body>
+<div class="sticky-header">
+  <div class="header-inner">
+    <div class="breadcrumbs">
+      <a href="index.html">System Design Guide</a>
+      <span class="sep">/</span>
+      <span class="curr">3. Load Balancing</span>
+    </div>
+    <div class="toc-jump">
+      <a href="#toc-top">Jump to Contents</a>
+    </div>
+  </div>
+  <div class="progress-bar"></div>
+</div>
 <div class="wrap">
 
   <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
@@ -81,7 +197,7 @@
     <p>Your product hits the front page. Traffic 40×'s in ten minutes. Somewhere, a single server — the one you've been meaning to "clean up later" — glows red-hot, accepts one connection too many, and quietly dies. Every user gets a spinning wheel. The tragedy isn't that you had too many visitors. It's that you had exactly one server to greet them, and nobody was standing at the door directing traffic. That doorman is a load balancer, and this guide is about hiring one.</p>
   </div>
 
-  <nav class="toc">
+  <nav class="toc" id="toc-top">
     <strong>Contents</strong>
     <ol>
       <li><a href="#why">Why one server isn't enough</a></li>
@@ -94,17 +210,29 @@
       <li><a href="#auto">Autoscaling</a></li>
       <li><a href="#gotchas">The gotchas nobody diagrams</a></li>
       <li><a href="#cascade">Anatomy of a cascade</a></li>
-      <li><a href="#examples">Real-world examples</a></li>
+      
       <li><a href="#recap">Recap in 60 seconds</a></li>
-      <li><a href="#check-yourself">Check yourself</a></li>
+      
     </ol>
   </nav>
 
-  <h2 id="why">1. Why one server isn't enough</h2>
+<details class="sec-collapse" id="why">
+  <summary><h2>1. Why one server isn't enough</h2></summary>
+  <div class="sec-content">
   <p>A single server has a ceiling: finite CPU, memory, and network. You can buy a bigger one (<em>vertical scaling</em>), but that ladder runs out — and a single anything is a single point of failure. The moment it reboots, your whole product is offline.</p>
   <p>The alternative is <strong>horizontal scaling</strong>: run many identical servers and split the work between them. It scales almost linearly and survives individual deaths. But it raises one immediate question — when a request arrives, <em>which</em> server should handle it? Answering that, well and instantly, millions of times a second, is the entire job of a load balancer.</p>
 
-  <h2 id="what">2. The load balancer, explained</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="what">
+  <summary><h2>2. The load balancer, explained</h2></summary>
+  <div class="sec-content">
+
+  <div class="note wild">
+    <span class="label">◈ In the wild · Anycast + DNS at the Edge</span>
+    Before a request even reaches a traditional load balancer, providers like Cloudflare announce the <em>same</em> IP address from data centers worldwide (anycast), so the network itself routes you to the nearest physical location. Load balancing starts at the level of the internet's routing tables.
+  </div>
+
   <p>A load balancer sits in front of your fleet of servers. Clients connect to <em>it</em>; it picks a healthy server and forwards the request. To the outside world there's one address; behind it, a crowd. Think of a restaurant host: diners don't wander in and fight over tables — the host seats them, keeps things even, and quietly skips the table with a broken chair.</p>
   <div class="stack">
     <div class="layer"><div class="idx">→</div><div class="body"><h4>Clients</h4><p>All hit one address (the load balancer's).</p></div></div>
@@ -115,7 +243,83 @@
   </div>
   <p>Because that one address is now itself a single point of failure, real deployments run the load balancer <em>redundantly</em> too (multiple LBs, DNS-level distribution, or a cloud service that handles this for you). Turtles, but only a couple deep.</p>
 
-  <h2 id="l4l7">3. L4 vs L7: two places to make the decision</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="l4l7">
+  <summary><h2>3. L4 vs L7: two places to make the decision</h2></summary>
+  <div class="sec-content">
+
+  <svg viewBox="0 0 800 280" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+    <style>
+      .box-bg { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; rx: 8; }
+      .lbl-bold { font-family: -apple-system, sans-serif; font-size: 13px; font-weight: bold; fill: var(--text); }
+      .lbl-norm { font-family: -apple-system, sans-serif; font-size: 12px; fill: var(--muted); }
+      .lbl-small { font-family: -apple-system, sans-serif; font-size: 11px; fill: var(--muted); }
+      .flow-line { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+      .flow-arrow { fill: var(--muted); }
+    </style>
+    <rect width="100%" height="100%" fill="var(--panel)" rx="14" />
+
+    <!-- Left: Layer 4 -->
+    <g transform="translate(40, 30)">
+      <rect width="320" height="220" class="box-bg" />
+      <text x="160" y="25" class="lbl-bold" text-anchor="middle">Layer 4 (Transport Layer)</text>
+      
+      <!-- Flow client -> LB -> backend -->
+      <circle cx="60" cy="90" r="16" fill="var(--panel)" stroke="var(--border)" />
+      <text x="60" y="94" class="lbl-bold" text-anchor="middle">IP</text>
+      <text x="60" y="125" class="lbl-small" text-anchor="middle">TCP packets</text>
+
+      <path d="M 76 90 L 130 90" class="flow-line" marker-end="url(#arr)" />
+      
+      <rect x="140" y="60" width="80" height="60" class="box-bg" style="stroke: var(--accent);" />
+      <text x="180" y="94" class="lbl-bold" text-anchor="middle" fill="var(--accent)">L4 LB</text>
+      <text x="180" y="145" class="lbl-small" text-anchor="middle">Fast forwarding</text>
+      <text x="180" y="160" class="lbl-small" text-anchor="middle">(No packet parsing)</text>
+
+      <path d="M 220 90 L 270 90" class="flow-line" marker-end="url(#arr)" />
+
+      <circle cx="290" cy="90" r="16" fill="var(--panel)" stroke="var(--border)" />
+      <text x="290" y="94" class="lbl-bold" text-anchor="middle">App</text>
+    </g>
+
+    <!-- Right: Layer 7 -->
+    <g transform="translate(440, 30)">
+      <rect width="320" height="220" class="box-bg" />
+      <text x="160" y="25" class="lbl-bold" text-anchor="middle">Layer 7 (Application Layer)</text>
+      
+      <!-- Flow client -> L7 LB -> different backends based on URL -->
+      <circle cx="50" cy="90" r="16" fill="var(--panel)" stroke="var(--border)" />
+      <text x="50" y="94" class="lbl-bold" text-anchor="middle">HTTP</text>
+      <text x="50" y="125" class="lbl-small" text-anchor="middle">GET /api/v1</text>
+
+      <path d="M 66 90 L 120 90" class="flow-line" marker-end="url(#arr)" />
+      
+      <rect x="130" y="60" width="80" height="70" class="box-bg" style="stroke: var(--accent-2);" />
+      <text x="170" y="94" class="lbl-bold" text-anchor="middle" fill="var(--accent-2)">L7 LB</text>
+      <text x="170" y="112" class="lbl-small" text-anchor="middle">inspects</text>
+      <text x="170" y="125" class="lbl-small" text-anchor="middle">URL/headers</text>
+
+      <path d="M 210 80 Q 240 50 265 60" class="flow-line" marker-end="url(#arr)" />
+      <text x="240" y="45" class="lbl-small" text-anchor="middle">/api</text>
+      
+      <circle cx="285" cy="70" r="16" fill="var(--panel)" stroke="var(--border)" />
+      <text x="285" y="74" class="lbl-bold" text-anchor="middle">API</text>
+
+      <path d="M 210 110 Q 240 140 265 130" class="flow-line" marker-end="url(#arr)" />
+      <text x="240" y="155" class="lbl-small" text-anchor="middle">/static</text>
+      
+      <circle cx="285" cy="120" r="16" fill="var(--panel)" stroke="var(--border)" />
+      <text x="285" y="124" class="lbl-bold" text-anchor="middle">CDN</text>
+    </g>
+
+    <defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" class="flow-arrow" />
+      </marker>
+    </defs>
+  </svg>
+
   <p>Load balancers come in two broad flavors, named after layers of the networking stack. The difference is <em>how much of the request they bother to read.</em></p>
   <div class="cards">
     <div class="card"><h4>Layer 4 (transport)</h4><p>Routes by IP and port only. It doesn't open the envelope — just forwards packets. Blazing fast, protocol-agnostic, but can't make smart decisions based on <em>content</em>.</p></div>
@@ -123,7 +327,17 @@
   </div>
   <p>Most modern web setups use L7 (Nginx, HAProxy, Envoy, AWS ALB) because content-aware routing is worth the tiny overhead. Reach for L4 (AWS NLB) when you need raw throughput or you're balancing non-HTTP traffic.</p>
 
-  <h2 id="pick-a-layer">4. Which layer do you actually need?</h2>
+  <details class="q">
+    <summary>Check yourself: Your dashboard shows connections evenly spread across ten backends. One of them is at 90% CPU and the others are idle. What's happening?</summary>
+    <div class="a">You're balancing connections, not requests — an L4 hop in front of long-lived clients, and almost certainly HTTP/2 or gRPC, where one connection carries many concurrent streams. The connection counts are even and meaningless; the work behind them is not. Balance at L7 so the decision happens per request, or cap connection age so clients are periodically forced to reconnect and re-balance. Watch requests and in-flight count per backend, never connection count.</div>
+  </details>
+
+
+  </div>
+</details>
+<details class="sec-collapse" id="pick-a-layer">
+  <summary><h2>4. Which layer do you actually need?</h2></summary>
+  <div class="sec-content">
   <p>The two-card summary is fine for a whiteboard and useless when you're staring at a Terraform file. So here it is as a decision table. Find the thing you need in the left column; the right column is what it costs you.</p>
   <div class="table-scroll">
   <table>
@@ -142,7 +356,69 @@
   </div>
   <p>The short version: <strong>if it's HTTP and you have opinions about it, go L7.</strong> Go L4 when you need protocol neutrality, source-IP fidelity for free, or throughput at a price per request that L7 can't touch. And note that "L4 or L7" isn't exclusive — a very common shape is an L4 balancer at the edge fronting a tier of L7 proxies, which is how you get anycast-scale ingress and content routing at the same time.</p>
 
-  <h2 id="algos">5. The algorithms: how it picks</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="algos">
+  <summary><h2>5. The algorithms: how it picks</h2></summary>
+  <div class="sec-content">
+
+  <svg viewBox="0 0 800 280" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+    <style>
+      .ring-circle { fill: none; stroke: var(--border); stroke-width: 4; }
+      .node-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2.5; }
+      .key-dot { fill: var(--warn); stroke: var(--bg); stroke-width: 1.5; }
+      .arrow-curve { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 3 3; fill: none; }
+      .lbl-bold { font-family: -apple-system, sans-serif; font-size: 13px; font-weight: bold; fill: var(--text); }
+      .lbl-norm { font-family: -apple-system, sans-serif; font-size: 12px; fill: var(--muted); }
+      .lbl-small { font-family: -apple-system, sans-serif; font-size: 11px; fill: var(--muted); }
+    </style>
+    <rect width="100%" height="100%" fill="var(--panel)" rx="14" />
+
+    <!-- Ring Circle in the Center -->
+    <g transform="translate(400, 140)">
+      <circle cx="0" cy="0" r="90" class="ring-circle" />
+      <text x="0" y="6" class="lbl-bold" text-anchor="middle">Consistent Hash Ring</text>
+      
+      <!-- Nodes on the Ring -->
+      <!-- Node A: 0 deg (x=90, y=0) -->
+      <circle cx="90" cy="0" r="10" class="node-dot" style="fill: var(--accent);" />
+      <text x="125" y="4" class="lbl-bold" text-anchor="start">Server A</text>
+
+      <!-- Node B: 120 deg (x=-45, y=77.9) -->
+      <circle cx="-45" cy="78" r="10" class="node-dot" style="fill: var(--accent-2);" />
+      <text x="-55" y="105" class="lbl-bold" text-anchor="middle">Server B</text>
+
+      <!-- Node C: 240 deg (x=-45, y=-77.9) -->
+      <circle cx="-45" cy="-78" r="10" class="node-dot" style="fill: var(--warn);" />
+      <text x="-55" y="-100" class="lbl-bold" text-anchor="middle">Server C</text>
+
+      <!-- Keys mapped clockwise -->
+      <!-- Key 1: 45 deg -> Clockwise to Node B -->
+      <circle cx="64" cy="64" r="6" class="key-dot" />
+      <text x="80" y="80" class="lbl-norm">Key 1</text>
+      <path d="M 55 55 A 77 77 0 0 1 -30 70" class="arrow-curve" marker-end="url(#arr-ring)" />
+      <text x="15" y="85" class="lbl-small">routes to Server B</text>
+
+      <!-- Key 2: 180 deg -> Clockwise to Node C -->
+      <circle cx="-90" cy="0" r="6" class="key-dot" />
+      <text x="-135" y="4" class="lbl-norm" text-anchor="end">Key 2</text>
+      <path d="M -80 -10 A 77 77 0 0 1 -50 -60" class="arrow-curve" marker-end="url(#arr-ring)" />
+      <text x="-120" y="-35" class="lbl-small">routes to Server C</text>
+
+      <!-- Key 3: 300 deg -> Clockwise to Node A -->
+      <circle cx="45" cy="-78" r="6" class="key-dot" />
+      <text x="60" y="-95" class="lbl-norm">Key 3</text>
+      <path d="M 55 -65 A 77 77 0 0 1 80 -20" class="arrow-curve" marker-end="url(#arr-ring)" />
+      <text x="110" y="-50" class="lbl-small">routes to Server A</text>
+    </g>
+
+    <defs>
+      <marker id="arr-ring" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--muted)" />
+      </marker>
+    </defs>
+  </svg>
+
   <p>"Pick a healthy server" hides a real decision. The strategy matters more than it looks, because the naive choice quietly punishes you under uneven load.</p>
   <div class="table-scroll">
   <table>
@@ -165,7 +441,23 @@
     Maglev is Google's own software network load balancer — it runs on ordinary commodity servers rather than dedicated hardware, and fronts a large share of Google's incoming traffic. It leans on exactly the idea above: consistent hashing chooses the backend, but Maglev pairs it with per-connection tracking, so growing or shrinking the fleet reshuffles only a small fraction of connections while every packet of a given flow still lands on the same backend. It's a good illustration of why the "minimal reshuffling" property is worth the extra machinery at scale (<a href="https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/">Google's Maglev paper</a>).
   </div>
 
-  <h2 id="health">6. Health checks &amp; failover</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="health">
+  <summary><h2>6. Health checks &amp; failover</h2></summary>
+  <div class="sec-content">
+
+  <div class="note wild">
+    <span class="label">◈ In the wild · The health check endpoint</span>
+    Almost every service you've ever used has an unglamorous <code>/health</code> URL that a load balancer hits every few seconds. It is the most-visited page in your entire system, and no human will ever look at it.
+  </div>
+
+
+  <div class="note war">
+    <span class="label">War story · the doorman who quit</span>
+    A load balancer's health checks assume a dead server <em>stops answering</em>. The nastier failure is the server that keeps answering but returns garbage or hangs at 30 seconds — "brownout," not blackout. Netflix engineered around exactly this with adaptive concurrency limits and circuit breakers, because a slow server that a load balancer keeps feeding is more dangerous than one that cleanly dies. (More in <a href="reliability-toolkit.html">the Reliability guide</a>.)
+  </div>
+
   <p>A load balancer is only as good as its ability to notice a server has died. It constantly pokes each backend — "you alive? <code>GET /health</code>" — and the instant one stops answering, it's pulled from rotation. Traffic silently reroutes to healthy servers; users never see the corpse.</p>
   <p>This is the quiet superpower: <strong>failover for free.</strong> A server can crash at 3 AM and, if you've got spare capacity, nobody wakes up. The subtlety is designing the health check well — a shallow "is the port open?" check will happily send traffic to a server whose database connection is dead but whose web process is technically running. Good health checks test the thing that actually matters.</p>
   <div class="note warn">
@@ -173,7 +465,11 @@
     Health checks that are too aggressive, or that hit a shared dependency, can <em>cause</em> the overload they're meant to detect — thousands of checks hammering one database. And if a check flaps, servers yo-yo in and out of rotation. Tune the interval and thresholds.
   </div>
 
-  <h2 id="sticky">7. Sticky sessions &amp; the case for statelessness</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="sticky">
+  <summary><h2>7. Sticky sessions &amp; the case for statelessness</h2></summary>
+  <div class="sec-content">
   <p>Here's a trap. Say a user logs in and their session lives in <em>that specific server's</em> memory. Now the load balancer's next request from them lands on a different server, which has never heard of them. Suddenly they're logged out. Rude.</p>
   <p>Two ways out:</p>
   <ul class="tight">
@@ -185,12 +481,20 @@
     Statelessness is <em>why</em> caching and horizontal scaling exist as a pair. Move session state into a shared cache (<a href="understanding-caching.html">Caching guide</a>) and your app servers become disposable clones a load balancer can shuffle freely. It also cashes out one layer down: every sharding and read-replica scheme in <a href="database-scaling.html">the Database Scaling guide</a> quietly assumes the app tier is stateless, because a shard map only works if any app server can be pointed at any shard. Fast, scalable, resilient — all unlocked by refusing to remember anything locally.
   </div>
 
-  <h2 id="auto">8. Autoscaling: the fleet that breathes</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="auto">
+  <summary><h2>8. Autoscaling: the fleet that breathes</h2></summary>
+  <div class="sec-content">
   <p>Once servers are stateless and disposable, you can add and remove them automatically based on load. Traffic climbs at lunchtime → spin up five more servers → the load balancer folds them into rotation as their health checks pass. Traffic drops at 2 AM → scale back down and stop paying for idle machines.</p>
   <p>The catch is <strong>cold starts</strong> (new servers boot with empty caches and briefly run slow — see <a href="understanding-caching.html">the Caching guide</a>) and the lag between "we're overloaded" and "new capacity is ready." Good autoscaling scales up <em>early</em> on a leading signal, and down <em>slowly</em> so a brief dip doesn't kill servers you'll want back in five minutes.</p>
   <p>And be clear-eyed about what autoscaling is for. It absorbs the shape of a normal day — the lunchtime ramp, the Monday morning wall, the marketing email. It does not save you from a fleet collapsing in real time, because a new instance needs minutes and a collapse needs seconds. That's a different tool, and it's in <a href="#death-spiral">the death spiral</a> below.</p>
 
-  <h2 id="gotchas">9. The gotchas nobody diagrams</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="gotchas">
+  <summary><h2>9. The gotchas nobody diagrams</h2></summary>
+  <div class="sec-content">
   <p>Everything above is the version that fits on a slide. What follows is the version that pages you. Each of these is a real production failure mode with a specific setting attached to it.</p>
 
   <h3 id="draining">Connection draining, or: why every deploy has an error spike</h3>
@@ -240,7 +544,11 @@
   <p>Autoscaling cannot save you here and it's worth being precise about why. A scale-up needs a metric window (tens of seconds), then an instance boot, then application start, then cache warm, then enough consecutive passing health checks to be added. Minutes, at best. The collapse runs in seconds. By the time the new capacity is ready there's nothing left to relieve.</p>
   <p>The only thing that operates on the right timescale is <strong>refusing work</strong>. Load shedding: when the queue is longer than you can serve inside your latency budget, return <code>503</code> to the excess immediately rather than accepting everything and serving none of it. Per-instance concurrency limits: a hard cap on in-flight requests, so an instance degrades predictably instead of falling over. Both trade visible errors for a surviving fleet, which is a trade people resist right up until the first time they watch the alternative. Details in <a href="reliability-toolkit.html">the Reliability guide</a>.</p>
 
-  <h2 id="cascade">10. Anatomy of a cascade: 03:14 to 03:19</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="cascade">
+  <summary><h2>10. Anatomy of a cascade: 03:14 to 03:19</h2></summary>
+  <div class="sec-content">
   <p>Back to the launch that worked too well. Here is what actually happened between the moment the graph went vertical and the moment it came back — every step of it a mechanism from the sections above. Six instances, round robin, health check every 10 seconds with an unhealthy threshold of 3. Each instance tops out around 2,800 requests per second.</p>
   <div class="trace"><b>03:14:02</b>  6 instances · round robin · all green
           offered 12,400 rps · p99 240ms · cpu 74%
@@ -321,22 +629,19 @@
     Every single default in that timeline was a reasonable default. Round robin, a fast health endpoint, remove-on-unhealthy, retry-on-failure, scale-up-on-CPU. Nothing was misconfigured in the sense of being obviously wrong. Cascades are what reasonable defaults do when they compose.
   </div>
 
-  <h2 id="examples">11. Real-world examples</h2>
 
   <div class="note war">
-    <span class="label">War story · the doorman who quit</span>
-    A load balancer's health checks assume a dead server <em>stops answering</em>. The nastier failure is the server that keeps answering but returns garbage or hangs at 30 seconds — "brownout," not blackout. Netflix engineered around exactly this with adaptive concurrency limits and circuit breakers, because a slow server that a load balancer keeps feeding is more dangerous than one that cleanly dies. (More in <a href="reliability-toolkit.html">the Reliability guide</a>.)
   </div>
 
-  <p><strong>Anycast + DNS at the edge</strong> — before a request even reaches a traditional load balancer, providers like Cloudflare announce the <em>same</em> IP address from data centers worldwide (anycast), so the network itself routes you to the nearest one. Load balancing that starts at the level of the internet's routing tables.</p>
-  <p><strong>The humble <code>/health</code> endpoint</strong> — almost every service you've ever used has an unglamorous URL that a load balancer hits every few seconds, forever. It is the most-visited page in your entire system and no human will ever look at it. Pour one out.</p>
 
   <div class="note key">
-    <span class="label">The one-liner to remember</span>
-    A load balancer turns a fragile <em>single</em> server into a resilient <em>herd</em> — but only if those servers are stateless clones. Make your servers boring and interchangeable, and scaling becomes a slider you drag.
   </div>
 
-  <h2 id="recap">12. Recap in 60 seconds</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="recap">
+  <summary><h2>11. Recap in 60 seconds</h2></summary>
+  <div class="sec-content">
   <div class="recap">
     <ul>
       <li><strong>The job</strong> is to answer "which backend?" correctly, instantly, millions of times a second — and to notice when the answer stops being a backend at all.</li>
@@ -369,39 +674,16 @@
   </table>
   </div>
 
-  <h2 id="check-yourself">13. Check yourself</h2>
   <p>Six situations. Answer before you open them — the useful part is noticing which ones you can't.</p>
 
-  <details class="q">
-    <summary>Your dashboard shows connections evenly spread across ten backends. One of them is at 90% CPU and the others are idle. What's happening?</summary>
-    <div class="a">You're balancing connections, not requests — an L4 hop in front of long-lived clients, and almost certainly HTTP/2 or gRPC, where one connection carries many concurrent streams. The connection counts are even and meaningless; the work behind them is not. Balance at L7 so the decision happens per request, or cap connection age so clients are periodically forced to reconnect and re-balance. Watch requests and in-flight count per backend, never connection count.</div>
-  </details>
 
-  <details class="q">
-    <summary>Every deploy produces a spike of 502s. Name the two settings you'd check first.</summary>
-    <div class="a">Deregistration delay (drain timeout) and the ordering between failing readiness and receiving SIGTERM. The 502s are in-flight requests being cut off on instances that were removed without draining. The instance has to stop being <em>eligible</em> for new traffic first, then keep serving what it already has until it finishes or the drain timeout expires, and only then exit. If your platform sends SIGTERM before the load balancer has noticed the readiness change, no drain timeout will save you — you need a preStop delay to cover the propagation gap.</div>
-  </details>
 
-  <details class="q">
-    <summary>A config push marks all backends unhealthy. What should the load balancer do, and why is "send no traffic" the wrong answer?</summary>
-    <div class="a">It should fail open — ignore health status and distribute across every host it knows about. "Send no traffic" is a 100% outage, and it's chosen on the basis of information that has just proven itself unreliable: if every single host reports unhealthy simultaneously, the overwhelmingly likelier explanation is a broken health check than a fleet that died in unison. Envoy formalises this as the panic threshold, defaulting to 50% healthy. A degraded backend beats no backend, and the failure mode you're guarding against is your own tooling.</div>
-  </details>
 
-  <details class="q">
-    <summary>Least-connections is dogpiling instances the moment they come back from a restart. Two fixes — one on the balancer, one on the instance.</summary>
-    <div class="a">On the balancer: slow start, ramping the returning instance's share from near zero to full over 30 seconds or more, so "emptiest" doesn't mean "gets everything". On the instance: don't report ready until you actually are — warm your connection pools and caches before passing the readiness check, so the balancer never sees an empty, cold, willing target in the first place. The underlying bug is that in-flight count is a proxy for capacity, and a cold instance has almost no capacity and no in-flight requests at all.</div>
-  </details>
 
-  <details class="q">
-    <summary>A dependency is down for eight seconds. Your service is down for twenty minutes. Where did the extra nineteen minutes come from?</summary>
-    <div class="a">Retries, mostly your own. Every layer retried, the multiplication compounded, and because all the timeouts fired at nearly the same instant the retries arrived as a synchronised wave rather than a smear. That wave kept the system saturated well after the dependency recovered, which caused more timeouts, which caused more retries. Retry budgets break the loop by making retry volume a bounded fraction of real traffic; jitter breaks the synchronisation; retrying at exactly one layer stops the multiplication at the source.</div>
-  </details>
 
-  <details class="q">
-    <summary>You're rate limiting by client IP behind an L7 load balancer, and a single abusive client is sailing straight through it. Why?</summary>
-    <div class="a">Either every request looks like it comes from the load balancer — because the proxy terminated the connection and your app is reading the socket's peer address — or you're reading <code>X-Forwarded-For</code> without normalising it, and the client is simply sending its own. Both are the same underlying mistake: treating an attacker-controlled value as identity. Overwrite or normalise <code>X-Forwarded-For</code> at the trusted edge, count hops from the trusted end only, and if you're at L4 use the PROXY protocol, accepted exclusively from the proxy's addresses. A third possibility worth ruling out: your limits are enforced per load-balancer instance, so the real limit is your configured value times the number of proxies.</div>
-  </details>
 
+  </div>
+</details>
   <hr>
   <p class="footer">
     Part of <em>System Design Basics</em>. Sources:
@@ -410,5 +692,62 @@
     <a href="https://aws.amazon.com/elasticloadbalancing/">AWS Elastic Load Balancing</a>
   </p>
 </div>
+
+<script>
+  // Restore open states from localStorage
+  document.querySelectorAll('details.sec-collapse').forEach(details => {
+    const id = details.id;
+    const storedState = localStorage.getItem(`sec-open-${id}`);
+    if (storedState !== null) {
+      details.open = storedState === 'true';
+    } else {
+      // Collapsed by default
+      details.open = false;
+    }
+    
+    // Listen for toggle events to save state
+    details.addEventListener('toggle', () => {
+      localStorage.setItem(`sec-open-${id}`, details.open);
+    });
+  });
+
+  // Restore scroll position
+  const storedScroll = localStorage.getItem('sec-scroll-pos');
+  if (storedScroll !== null && !window.location.hash) {
+    setTimeout(() => {
+      window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
+    }, 100);
+  }
+
+  // Save scroll position on scroll (debounced)
+  let scrollTimeout;
+  window.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      localStorage.setItem('sec-scroll-pos', window.scrollY);
+    }, 150);
+  });
+
+  // Auto-expand details elements when targeted by a hash link
+  function handleHashChange() {
+    const hash = window.location.hash;
+    if (hash) {
+      const target = document.querySelector(hash);
+      if (target) {
+        let parent = target.closest('details');
+        while (parent) {
+          parent.open = true;
+          parent = parent.parentElement.closest('details');
+        }
+        setTimeout(() => {
+          target.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+    }
+  }
+  window.addEventListener('hashchange', handleHashChange);
+  window.addEventListener('DOMContentLoaded', handleHashChange);
+</script>
+
 </body>
 </html>
