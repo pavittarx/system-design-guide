@@ -14,8 +14,8 @@
   .kicker{text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:var(--accent);font-weight:700;margin-bottom:10px;}
   h1{font-size:2.05rem;line-height:1.15;margin:0 0 12px;letter-spacing:-.02em;}
   .lede{color:var(--muted);font-size:1.12rem;margin:0;}
-  h2{font-size:1.5rem;margin:44px 0 14px;letter-spacing:-.01em;padding-top:8px;scroll-margin-top:20px;}
-  h3{font-size:1.16rem;margin:26px 0 8px;}
+  h2 { font-size: 1.5rem; margin: 48px 0 16px; letter-spacing: -0.015em; padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 65px; width: 100%; }
+  h3 { font-size: 1.18rem; margin: 32px 0 10px; font-weight: 600; }
   p{margin:12px 0;} a{color:var(--accent);text-decoration:none;} a:hover{text-decoration:underline;}
   code{background:var(--code-bg);border:1px solid var(--border);padding:1px 6px;border-radius:6px;font-size:.86em;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
   nav.toc{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:8px;}
@@ -61,10 +61,121 @@
   pre{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.6;margin:18px 0;}
   pre code{background:none;border:none;padding:0;font-size:1em;}
   .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
+
+  /* Sticky Top Header */
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+  .header-inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+  }
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+  }
+  .breadcrumbs a {
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .breadcrumbs a:hover {
+    color: var(--accent);
+  }
+  .breadcrumbs .sep {
+    color: var(--border);
+    font-weight: 300;
+  }
+  .breadcrumbs .curr {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .toc-jump a {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Scroll Progress Indicator */
+  .progress-bar {
+    height: 3px;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.08s ease-out;
+  }
+
+  /* Collapsible Sections */
+  details.sec-collapse {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  details.sec-collapse summary {
+    cursor: pointer;
+    list-style: none;
+    outline: none;
+    padding: 18px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  details.sec-collapse summary::-webkit-details-marker {
+    display: none;
+  }
+  details.sec-collapse summary h2 {
+    margin: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+    font-size: 1.45rem;
+    flex-grow: 1;
+  }
+  details.sec-collapse summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+    transition: transform 0.2s ease;
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+  details.sec-collapse[open] summary::after {
+    transform: rotate(-135deg);
+  }
+  .sec-content {
+    padding: 8px 0 28px 0;
+  }
+
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="sticky-header">
+  <div class="header-inner">
+    <div class="breadcrumbs">
+      <a href="index.html">System Design Guide</a>
+      <span class="sep">/</span>
+      <span class="curr">12. Designing Checkout</span>
+    </div>
+    <div class="toc-jump">
+      <a href="#top">Back to Top</a>
+    </div>
+  </div>
+  <div class="progress-bar"></div>
+</div>
+<div class="wrap" id="top">
   <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
   <header class="hero">
     <div class="kicker">System Design Basics · 12 of 12</div>
@@ -93,11 +204,12 @@
       <li><a href="#break">Now break it</a></li>
       <li><a href="#only-if">What you'd build only if you had to</a></li>
       <li><a href="#recap">Recap in 60 seconds</a></li>
-      <li><a href="#check">Check yourself</a></li>
     </ol>
   </nav>
 
-  <h2 id="brief">1. The brief, in numbers</h2>
+<details class="sec-collapse" id="brief">
+  <summary><h2>1. The brief, in numbers</h2></summary>
+  <div class="sec-content">
   <p>"Design the checkout for an e-commerce site." That's the whole brief, and it is useless until you turn it into arithmetic. The single most common failure in system design — in interviews and in real projects — is arguing about Kafka before anyone has worked out how many orders a second we're actually talking about.</p>
   <p>So ask, or assume out loud. Here is the shape we'll design against, and every number below is load-bearing:</p>
 
@@ -127,7 +239,11 @@
 
   <p>The other number nobody asks for and everyone needs: <strong>the latency budget.</strong> How long may "Place order" take? Pick a target and defend it — say p99 under 800 ms, p50 under 300 ms. That single figure is what makes the rest of this guide decidable, because from here on, "can we do this synchronously?" has an arithmetic answer instead of an opinion.</p>
 
-  <h2 id="requirements">2. Requirements — and what we're not building</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="requirements">
+  <summary><h2>2. Requirements — and what we're not building</h2></summary>
+  <div class="sec-content">
   <p>Split these apart deliberately. Functional requirements are what it does; non-functional requirements are what makes the design hard. Interviewers care about the second list, and so should you.</p>
 
   <div class="cards">
@@ -139,7 +255,11 @@
 
   <p>Scoping out loud is not throat-clearing — it's the difference between a design you can defend and a design that grows a new requirement every time someone asks a question. The out-of-scope list is the most useful list on the page.</p>
 
-  <h2 id="naive">3. The naive version, and exactly where it breaks</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="naive">
+  <summary><h2>3. The naive version, and exactly where it breaks</h2></summary>
+  <div class="sec-content">
   <p>Start with the thing you'd actually build on day one, because it's correct and it's fast to ship: one application server, one database, everything synchronous.</p>
 
   <pre><code>POST /checkout
@@ -171,7 +291,35 @@
 
   <p>Read that last block again, because it contains the whole argument for everything that follows. The site does not go down because buying is hard. It goes down because <em>the email server had a slow afternoon</em> and we made every customer wait for it. Every request in the process is holding a thread while it waits, and threads are the resource that runs out. The <a href="reliability-toolkit.html">Reliability guide</a> covers this arithmetic in detail; here it is deciding our architecture on the first page.</p>
 
-  <h2 id="moves">4. The forced moves</h2>
+
+  <div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
+    <svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+      <!-- Title -->
+      <text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Sync vs. Async Checkout Architecture</text>
+      
+      <!-- Naive Sync (Left) -->
+      <text x="20" y="55" fill="var(--danger)" font-size="11" font-weight="600">Naive Synchronous Flow (Fragile blocker)</text>
+      <rect x="20" y="70" width="320" height="120" rx="6" fill="var(--panel-2)" stroke="var(--border)" />
+      <text x="35" y="95" fill="var(--text)" font-size="9">Validate ➔ Reserve Stock ➔ Charge Card</text>
+      <text x="35" y="115" fill="var(--text)" font-size="9">➔ Generate Invoice PDF ➔ Send Email</text>
+      <text x="35" y="135" fill="var(--text)" font-size="9">➔ Notify Warehouse ➔ Update Analytics</text>
+      <text x="35" y="165" fill="var(--danger)" font-size="11" font-weight="700">Total Latency: 1.9s (Fragile to any slow step)</text>
+      
+      <!-- Optimised Async (Right) -->
+      <text x="400" y="55" fill="var(--accent-2)" font-size="11" font-weight="600">Optimised Asynchronous Flow</text>
+      <rect x="400" y="70" width="320" height="120" rx="6" fill="var(--panel-2)" stroke="var(--accent-2)" stroke-width="1.5" />
+      <text x="415" y="95" fill="var(--text)" font-size="9">Validate ➔ Reserve Stock ➔ Charge Card</text>
+      <text x="415" y="115" fill="var(--accent-2)" font-size="9">➔ Save Order + Write Outbox Table [DB committed]</text>
+      <text x="415" y="135" fill="var(--muted)" font-size="9">➔ Outbox relay pushes to Queue ➔ Worker jobs async</text>
+      <text x="415" y="165" fill="var(--accent-2)" font-size="11" font-weight="700">Total Latency: 261ms (Fast, resilient)</text>
+    </svg>
+  </div>
+
+  </div>
+</details>
+<details class="sec-collapse" id="moves">
+  <summary><h2>4. The forced moves</h2></summary>
+  <div class="sec-content">
   <p>Now we build it up. The rule for this section — and for your own designs — is that <strong>every move must be forced by a number or a failure.</strong> Not by fashion, not by what the last place you worked used, and definitely not by what sounds impressive. If you can't name the figure that made a component necessary, the component is decoration.</p>
 
   <h3>Move 1 — split the request in two</h3>
@@ -219,7 +367,11 @@
     <div class="layer"><div class="idx">6</div><div class="body"><h4>Queue + consumers</h4><p>Receipts, invoices, warehouse, analytics, loyalty.</p></div><div class="speed">async</div></div>
   </div>
 
-  <h2 id="notshard">5. The move we are not making</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="notshard">
+  <summary><h2>5. The move we are not making</h2></summary>
+  <div class="sec-content">
   <p>Here is where most designs go wrong, including in interviews, where candidates shard because they think sharding is the answer the interviewer wants. Let's price it honestly.</p>
   <p>We write 200 orders/s at peak and roughly 12/s the rest of the year. We accumulate about 2 TB of order data per year including indexes, and 18 months of that is hot — call it 3 TB of working set, with the rest archived. A single modern database instance handles both of those figures without breathing hard. <strong>Sharding is not indicated.</strong></p>
   <p>And the bill for doing it anyway, from the <a href="database-scaling.html">Databases guide</a>: every schema migration becomes N migrations. Every backup becomes N backups plus a coordinated restore procedure you have to actually test. Cross-shard queries become scatter-gather or become unavailable. Cross-shard transactions become a saga, which means compensating actions, which means the intermediate state was visible to somebody. Resharding stops being a task and becomes a quarter.</p>
@@ -230,7 +382,11 @@
     Not "we're big now." Specifically: sustained write throughput within ~2× of what the instance can do, <em>or</em> a hot dataset that no longer fits in memory and won't after the next hardware tier, <em>or</em> a restore time that has grown past what the business will tolerate. Any of those is a real reason. None of them is currently true, so the correct architecture diagram has one database on it, and being able to say why is worth more than being able to draw sixteen.
   </div>
 
-  <h2 id="inseparable">6. Making the order and its event inseparable</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="inseparable">
+  <summary><h2>6. Making the order and its event inseparable</h2></summary>
+  <div class="sec-content">
   <p>Back to the cold open. We charge the card, we save the order, and we publish an "order placed" event so the receipt gets sent and the warehouse gets told. Three side effects, at least two systems, and no transaction spanning them. Every ordering of those operations has a crash window that produces a state nobody wants.</p>
 
   <div class="trace"><b>save, then publish</b>
@@ -263,7 +419,117 @@ COMMIT;
   <p>The payment provider is outside our transaction and always will be. What makes that safe is an <strong>idempotency key</strong> — a unique identifier we generate for this checkout attempt and pass to the provider. If our request times out and we retry, the provider recognises the key and returns the original result instead of charging again. This is why payment APIs have that field, and it is not optional at any real volume.</p>
   <p>Order of operations matters here. Write the order in a <code>pending_payment</code> state first, then authorise with the key, then confirm. If we die after authorising, a reconciliation job finds orders stuck in <code>pending_payment</code>, asks the provider what happened to that idempotency key, and settles them — completing the ones that succeeded and voiding the ones that didn't. Money and orders can then never disagree for longer than the reconciliation interval, which is a bound you can state out loud and hold yourself to.</p>
 
-  <h2 id="guardrails">7. Guardrails around every dependency</h2>
+
+  <div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
+    <svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+      <!-- Title -->
+      <text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Transactional Outbox Pattern</text>
+      
+      <!-- Client request -->
+      <text x="20" y="55" fill="var(--accent)" font-size="10" font-weight="600">Checkout Request</text>
+      <path d="M 100,60 L 150,90" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)" />
+      
+      <!-- Single DB Transaction -->
+      <rect x="160" y="70" width="220" height="100" rx="6" fill="var(--panel-2)" stroke="var(--accent-2)" stroke-width="1.5" />
+      <text x="270" y="88" fill="var(--accent-2)" font-size="11" font-weight="600" text-anchor="middle">Single Database Transaction</text>
+      <rect x="180" y="102" width="180" height="20" rx="3" fill="var(--panel)" stroke="var(--border)" />
+      <text x="270" y="115" fill="var(--text)" font-size="9" text-anchor="middle">INSERT INTO orders</text>
+      <rect x="180" y="132" width="180" height="20" rx="3" fill="var(--panel)" stroke="var(--border)" />
+      <text x="270" y="145" fill="var(--text)" font-size="9" text-anchor="middle">INSERT INTO outbox_events</text>
+      
+      <!-- Outbox Relay -->
+      <rect x="440" y="95" width="100" height="50" rx="4" fill="var(--panel-2)" stroke="var(--accent)" />
+      <text x="490" y="124" fill="var(--text)" font-size="10" text-anchor="middle">Outbox Relay</text>
+      
+      <path d="M 380,120 H 440" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="3,3" />
+      <text x="410" y="115" fill="var(--muted)" font-size="8" text-anchor="middle">Reads table</text>
+      
+      <!-- Message Broker -->
+      <rect x="600" y="95" width="120" height="50" rx="4" fill="var(--panel-2)" stroke="var(--border)" />
+      <text x="660" y="124" fill="var(--text)" font-size="10" text-anchor="middle">Message Broker</text>
+      
+      <path d="M 540,120 H 600" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)" />
+      <text x="570" y="115" fill="var(--accent)" font-size="8" text-anchor="middle">Publish</text>
+      
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--accent)" />
+        </marker>
+      </defs>
+    </svg>
+  </div>
+
+
+  <div class="note key">
+    <span class="label">🛠️ Hands-On Lab: Implement the Transactional Outbox Pattern</span>
+    <p>Build this capstone mini-project to implement the transactional outbox pattern with SQLite and Python/Node.js:</p>
+    <ul class="tight" style="margin-top: 8px; font-size: 0.95rem;">
+      <li><strong>1. The Database Schema:</strong> Set up an SQLite table:
+        <pre><code class="language-sql">CREATE TABLE orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INT,
+  total_cents INT,
+  status TEXT
+);
+
+CREATE TABLE outbox_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  topic TEXT,
+  payload TEXT,
+  status TEXT DEFAULT 'PENDING'
+);</code></pre>
+      </li>
+      <li><strong>2. Atomic Transaction:</strong> Write a script that writes to both tables inside a single atomic transaction:
+        <pre><code class="language-python">def create_order(db_conn, customer_id, total_cents):
+    cursor = db_conn.cursor()
+    cursor.execute("BEGIN;")
+    try:
+        cursor.execute("""
+            INSERT INTO orders (customer_id, total_cents, status) 
+            VALUES (?, ?, 'CONFIRMED')
+        """, (customer_id, total_cents))
+        order_id = cursor.lastrowid
+        
+        event_payload = {"order_id": order_id, "total": total_cents}
+        cursor.execute("""
+            INSERT INTO outbox_events (topic, payload) 
+            VALUES ('order.placed', ?)
+        """, (json.dumps(event_payload),))
+        cursor.execute("COMMIT;")
+    except Exception as e:
+        cursor.execute("ROLLBACK;")
+        raise e</code></pre>
+      </li>
+      <li><strong>3. The Outbox Relay:</strong> Write a separate background process (the relay) that polls the <code>outbox_events</code> table periodically, publishes messages, and marks them as <code>PROCESSED</code> in a transaction:
+        <pre><code class="language-python">def poll_and_relay(db_conn):
+    cursor = db_conn.cursor()
+    cursor.execute("SELECT id, topic, payload FROM outbox_events WHERE status = 'PENDING' LIMIT 10")
+    pending = cursor.fetchall()
+    
+    for event_id, topic, payload in pending:
+        # Simulate publishing to RabbitMQ/Kafka
+        print(f"Relaying event {event_id} to {topic}: {payload}")
+        
+        # Mark processed atomically
+        cursor.execute("UPDATE outbox_events SET status = 'PROCESSED' WHERE id = ?", (event_id,))
+    db_conn.commit()</code></pre>
+      </li>
+      <li><strong>4. Validate Crashes:</strong> Run the creator script and kill it midway. Verify that order and outbox records are either both committed or both rolled back. Run the relay, simulate a network dropout, and verify that no events are lost and duplicates are safely handled downstream.</li>
+    </ul>
+    <p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Feature this Transactional Outbox pattern on your portfolio as a capstone benchmark of bulletproof transactional consistency.</p>
+  </div>
+
+
+  <details class="q">
+    <summary>Check yourself: Where in this design can a customer be charged without an order existing, and what prevents it?</summary>
+    <div class="a">Between authorising the payment and committing the order transaction. The process can die in that window and the money is gone with nothing recorded. Three things together close it: the order is written in <code>pending_payment</code> <em>before</em> the charge, so there's always a record to reconcile against; the charge carries an idempotency key, so retrying can't double-charge; and a reconciliation job sweeps stuck <code>pending_payment</code> orders, asks the provider what happened to that key, and either completes or voids. You can't make it impossible — the provider is outside your transaction — but you can bound how long the disagreement lasts.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="guardrails">
+  <summary><h2>7. Guardrails around every dependency</h2></summary>
+  <div class="sec-content">
   <p>Every arrow leaving our service is a way for someone else's bad day to become ours. The <a href="reliability-toolkit.html">Reliability guide</a> supplies the toolkit; here is where each tool actually goes, and what it costs us if we get it wrong.</p>
 
   <div class="table-scroll">
@@ -287,7 +553,17 @@ COMMIT;
 
   <p>Two settings that people consistently miss, and that this design depends on. First, <strong>deadline propagation</strong>: if the customer's request has 800 ms of budget and 500 ms are already spent, the payment call must know it has 300 ms left, not its own independent 3-second timeout. Otherwise we burn capacity computing answers nobody is waiting for. Second, <strong>retry budgets</strong>: retry at exactly one layer, and cap total retries at a small fraction of live traffic. Three layers each retrying three times turns one user action into twenty-seven requests, arriving precisely when the system can least afford them.</p>
 
-  <h2 id="staleness">8. Staleness, decided field by field</h2>
+
+  <details class="q">
+    <summary>Check yourself: Your cache dies completely at peak. Trace what happens, and say why "the app still works" is not a good answer.</summary>
+    <div class="a">The cache absorbs about 96% of 25,000 reads/s, so the database instantly sees roughly 25× its normal read load. It saturates, query latency climbs, connections back up, and because the pool is shared, checkout starts timing out too — a read-path failure has become a write-path outage. Then clients retry, adding load, and the system can stay collapsed even after the cache comes back, because the retry traffic and cold cache are now self-sustaining. That's metastable failure: you can't wait it out, you have to shed load and reintroduce it gradually. "It degrades instead of erroring" is true for about four seconds.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="staleness">
+  <summary><h2>8. Staleness, decided field by field</h2></summary>
+  <div class="sec-content">
   <p>This is the section that separates a design from a shopping list. "Is the system consistent?" is the wrong question — the <a href="consistency-cap.html">Consistency guide</a>'s central point is that consistency is a per-field decision with a per-field price. So go field by field and say what you're buying.</p>
 
   <div class="table-scroll">
@@ -324,7 +600,17 @@ COMMIT;
     Many large retailers accept a small oversell rate on purpose. Perfectly serialised global inventory across every channel — web, app, stores, marketplaces — costs enormous latency on every read and a coordination protocol that becomes the bottleneck on your busiest day. Occasionally apologising, refunding and offering a voucher is cheaper. That is a <em>commercial</em> resolution to a <em>distributed systems</em> problem, and recognising when one is available is a genuine engineering skill. It is also, precisely, the <a href="consistency-cap.html">AP branch</a> being chosen deliberately: stay available, reconcile the conflict afterwards.
   </div>
 
-  <h2 id="trace">9. One request, end to end</h2>
+
+  <details class="q">
+    <summary>Check yourself: You add a second region. Name the three decisions that just got harder.</summary>
+    <div class="a">First, inventory: a globally serialised count now needs cross-region coordination on every checkout, and cross-region round trips are 60–150 ms set by the speed of light. Second, the database: one writable primary means one region pays a latency penalty on every write, while two writable primaries means conflict resolution for every field — and last-write-wins on an inventory count silently loses data. Third, failover: "the region is down" is a judgement call made by a timeout you configured, and getting it wrong in either direction is expensive. Most teams start with one write region and read replicas elsewhere, precisely to avoid the second problem.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="trace">
+  <summary><h2>9. One request, end to end</h2></summary>
+  <div class="sec-content">
   <p>The hub page promises you can follow a single request through the whole series. Here it is, on a normal Tuesday, with plausible latencies that sum to a stated total. Every hop is something one of the six guides taught you.</p>
 
   <div class="trace"><b>POST /checkout</b>
@@ -373,7 +659,11 @@ COMMIT;
 
   <p>261 milliseconds of customer-visible work; roughly 1.8 seconds of work that happens after they've closed the tab. That ratio is the entire argument of this series in one number. The naive version in <a href="#naive">section 3</a> did all of it inline and took 1.9 seconds on a good day — and fell over completely on a bad one.</p>
 
-  <h2 id="break">10. Now break it</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="break">
+  <summary><h2>10. Now break it</h2></summary>
+  <div class="sec-content">
   <p>A design you haven't tried to break is a diagram. Four failures, each one traced, each one saved by something a guide taught.</p>
 
   <h3>Failure 1 — the payment provider gets slow, but not dead</h3>
@@ -434,7 +724,23 @@ COMMIT;
     Not one of these is a component <em>breaking</em>. A slow provider, a lagging replica, a stopped consumer, an over-eager health check — every single one is a system doing exactly what it was configured to do, in a situation nobody pictured while configuring it. This is what real incidents look like, and it's why the settings in <a href="#guardrails">section 7</a> deserve more design attention than the boxes in the diagram.
   </div>
 
-  <h2 id="only-if">11. What you'd build only if you had to</h2>
+
+  <details class="q">
+    <summary>Check yourself: The payment provider's p99 goes from 200 ms to 8 s. Walk through what happens to your checkout endpoint, in order.</summary>
+    <div class="a">Requests start piling up in flight: Little's Law says 200/s × 8 s demands 1,600 concurrent slots against a pool of 400, so the pool exhausts in roughly two seconds. Without a bulkhead, that pool is shared, so <em>every</em> endpoint fails — including browsing, which never touches payments. With a bulkhead of 300, checkout throughput drops to about 37/s and the rest of the site is untouched. The circuit breaker opens once the error rate crosses its threshold and stops you calling a dead dependency at all, then half-opens with a jittered trickle so recovery doesn't stampede. The breaker alone would not have saved you — it trips after failures, and the pool dies first.</div>
+  </details>
+
+
+  <details class="q">
+    <summary>Check yourself: A customer says they were charged twice. The logs show one request. What are the two most likely explanations?</summary>
+    <div class="a">First, the visibility timeout: if the payment consumer's work takes longer than the queue's invisibility window, the broker assumes it died and redelivers to a second consumer while the first is still running — genuine concurrent duplicate processing, with no retry in the logs to show for it. Second, the check-then-act idempotency race: if the code checks "already processed?" and then does the work, two concurrent duplicates both read false before either writes, and both charge. The fix for the second is claiming the ID atomically before doing the work; the fix for the first is a timeout above your real p99 plus heartbeating. Note that "one request in the logs" is what makes both of these so nasty to diagnose.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="only-if">
+  <summary><h2>11. What you'd build only if you had to</h2></summary>
+  <div class="sec-content">
   <p>The last discipline is knowing what you left out and why. Here is everything a reader will be tempted to add to this design, and the specific signal that would justify each one. Absent the signal, adding it makes the system worse — more moving parts, more failure modes, more onboarding, and no benefit.</p>
 
   <div class="table-scroll">
@@ -454,7 +760,17 @@ COMMIT;
 
   <p>Notice that every justification is a <em>measurement</em> or a <em>constraint</em>, never an aspiration. That's the test. If the argument for a component is "we'll need it eventually," you are paying today's complexity for tomorrow's maybe — and the version of this system that gets built with restraint is also the version that's still comprehensible when the real problem arrives.</p>
 
-  <h2 id="recap">12. Recap in 60 seconds</h2>
+
+  <details class="q">
+    <summary>Check yourself: Your interviewer says "now make it handle 10× the traffic." What do you change, and what do you deliberately not change?</summary>
+    <div class="a">10× is 2,000 orders/s and 250,000 reads/s. The read path scales by adding cache capacity and replicas — that's more of the same, not a redesign. The app tier is stateless, so it scales horizontally by definition. The write path at 2,000/s is now within range of a single instance's ceiling rather than an order of magnitude below it, so <em>this</em> is where sharding finally earns its place — and you'd shard by customer or order ID, accept scatter-gather on cross-customer reporting, and move reporting off the transactional store entirely. What you don't change: the outbox, the idempotency keys, the guardrails, and the per-field consistency decisions. Those were correct at 200/s and they're correct at 2,000/s — which is a decent sign they were the right calls.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="recap">
+  <summary><h2>12. Recap in 60 seconds</h2></summary>
+  <div class="sec-content">
   <div class="recap">
     <ul>
       <li><strong>Numbers first.</strong> Requests per second, read/write ratio, payload size, storage growth, latency budget. A design defended without them is a guess.</li>
@@ -490,26 +806,8 @@ COMMIT;
   </table>
   </div>
 
-  <h2 id="check">13. Check yourself</h2>
-  <p>These are harder than the per-guide questions on purpose — each one needs at least two guides to answer properly. Try them before opening the answers; getting one wrong is the moment the idea actually lands.</p>
-
-  <details class="q"><summary>The payment provider's p99 goes from 200 ms to 8 s. Walk through what happens to your checkout endpoint, in order.</summary><div class="a">Requests start piling up in flight: Little's Law says 200/s × 8 s demands 1,600 concurrent slots against a pool of 400, so the pool exhausts in roughly two seconds. Without a bulkhead, that pool is shared, so <em>every</em> endpoint fails — including browsing, which never touches payments. With a bulkhead of 300, checkout throughput drops to about 37/s and the rest of the site is untouched. The circuit breaker opens once the error rate crosses its threshold and stops you calling a dead dependency at all, then half-opens with a jittered trickle so recovery doesn't stampede. The breaker alone would not have saved you — it trips after failures, and the pool dies first.</div></details>
-
-  <details class="q"><summary>Where in this design can a customer be charged without an order existing, and what prevents it?</summary><div class="a">Between authorising the payment and committing the order transaction. The process can die in that window and the money is gone with nothing recorded. Three things together close it: the order is written in <code>pending_payment</code> <em>before</em> the charge, so there's always a record to reconcile against; the charge carries an idempotency key, so retrying can't double-charge; and a reconciliation job sweeps stuck <code>pending_payment</code> orders, asks the provider what happened to that key, and either completes or voids. You can't make it impossible — the provider is outside your transaction — but you can bound how long the disagreement lasts.</div></details>
-
-  <details class="q"><summary>You add a second region. Name the three decisions that just got harder.</summary><div class="a">First, inventory: a globally serialised count now needs cross-region coordination on every checkout, and cross-region round trips are 60–150 ms set by the speed of light. Second, the database: one writable primary means one region pays a latency penalty on every write, while two writable primaries means conflict resolution for every field — and last-write-wins on an inventory count silently loses data. Third, failover: "the region is down" is a judgement call made by a timeout you configured, and getting it wrong in either direction is expensive. Most teams start with one write region and read replicas elsewhere, precisely to avoid the second problem.</div></details>
-
-  <details class="q"><summary>Your cache dies completely at peak. Trace what happens, and say why "the app still works" is not a good answer.</summary><div class="a">The cache absorbs about 96% of 25,000 reads/s, so the database instantly sees roughly 25× its normal read load. It saturates, query latency climbs, connections back up, and because the pool is shared, checkout starts timing out too — a read-path failure has become a write-path outage. Then clients retry, adding load, and the system can stay collapsed even after the cache comes back, because the retry traffic and cold cache are now self-sustaining. That's metastable failure: you can't wait it out, you have to shed load and reintroduce it gradually. "It degrades instead of erroring" is true for about four seconds.</div></details>
-
-  <details class="q"><summary>A customer says they were charged twice. The logs show one request. What are the two most likely explanations?</summary><div class="a">First, the visibility timeout: if the payment consumer's work takes longer than the queue's invisibility window, the broker assumes it died and redelivers to a second consumer while the first is still running — genuine concurrent duplicate processing, with no retry in the logs to show for it. Second, the check-then-act idempotency race: if the code checks "already processed?" and then does the work, two concurrent duplicates both read false before either writes, and both charge. The fix for the second is claiming the ID atomically before doing the work; the fix for the first is a timeout above your real p99 plus heartbeating. Note that "one request in the logs" is what makes both of these so nasty to diagnose.</div></details>
-
-  <details class="q"><summary>Your interviewer says "now make it handle 10× the traffic." What do you change, and what do you deliberately not change?</summary><div class="a">10× is 2,000 orders/s and 250,000 reads/s. The read path scales by adding cache capacity and replicas — that's more of the same, not a redesign. The app tier is stateless, so it scales horizontally by definition. The write path at 2,000/s is now within range of a single instance's ceiling rather than an order of magnitude below it, so <em>this</em> is where sharding finally earns its place — and you'd shard by customer or order ID, accept scatter-gather on cross-customer reporting, and move reporting off the transactional store entirely. What you don't change: the outbox, the idempotency keys, the guardrails, and the per-field consistency decisions. Those were correct at 200/s and they're correct at 2,000/s — which is a decent sign they were the right calls.</div></details>
-
-  <div class="note key">
-    <span class="label">The one-liner to remember</span>
-    A system design is not a diagram, it's a sequence of decisions — and each one is only defensible if you can name the number that forced it and the failure it prevents. Everything else on the whiteboard is decoration, and decoration is the part that pages you at three in the morning.
   </div>
-
+</details>
   <hr>
   <p class="footer">
     Part of <em>System Design Basics</em> — the capstone. Sources:
@@ -520,5 +818,81 @@ COMMIT;
   </p>
 
 </div>
+
+<script>
+  // Restore open states from localStorage
+  document.querySelectorAll('details.sec-collapse').forEach(details => {
+    const id = details.id;
+    const storedState = localStorage.getItem(`sec-open-${id}`);
+    if (storedState !== null) {
+      details.open = storedState === 'true';
+    } else {
+      details.open = false; // Collapsed by default
+    }
+    
+    // Listen for toggle events to save state
+    details.addEventListener('toggle', () => {
+      localStorage.setItem(`sec-open-${id}`, details.open);
+    });
+  });
+
+  // Restore scroll position
+  const storedScroll = localStorage.getItem('sec-scroll-pos');
+  if (storedScroll !== null && !window.location.hash) {
+    setTimeout(() => {
+      window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
+    }, 100);
+  }
+
+  // Save scroll position on scroll (debounced)
+  let scrollTimeout;
+  window.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      localStorage.setItem('sec-scroll-pos', window.scrollY);
+    }, 150);
+  });
+
+  // Auto-expand details elements when targeted by a hash link
+  function handleHashChange() {
+    const hash = window.location.hash;
+    if (hash) {
+      const target = document.querySelector(hash);
+      if (target) {
+        let parent = target.closest('details');
+        while (parent) {
+          parent.open = true;
+          parent = parent.parentElement.closest('details');
+        }
+        setTimeout(() => {
+          target.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+    }
+  }
+  window.addEventListener('hashchange', handleHashChange);
+  window.addEventListener('DOMContentLoaded', handleHashChange);
+
+  // Update scroll progress bar dynamically
+  const progressBar = document.querySelector('.progress-bar');
+  function updateProgress() {
+    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+    if (scrollHeight > 0) {
+      const progress = (window.scrollY / scrollHeight) * 100;
+      progressBar.style.width = `${progress}%`;
+    } else {
+      progressBar.style.width = '0%';
+    }
+  }
+  window.addEventListener('scroll', updateProgress);
+  window.addEventListener('resize', updateProgress);
+  document.querySelectorAll('details').forEach(d => {
+    d.addEventListener('toggle', () => {
+      setTimeout(updateProgress, 60);
+    });
+  });
+  updateProgress();
+</script>
+
 </body>
 </html>
