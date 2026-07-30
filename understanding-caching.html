@@ -262,23 +262,11 @@
     padding: 8px 0 28px 0;
   }
 </style>
+<script src="components.js" defer></script>
 </head>
 <body>
-<div class="sticky-header">
-  <div class="header-inner">
-    <div class="breadcrumbs">
-      <a href="index.html">System Design Guide</a>
-      <span class="sep">/</span>
-      <span class="curr">1. Caching</span>
-    </div>
-    <div class="toc-jump">
-      <a href="#toc-top">Jump to Contents</a>
-    </div>
-  </div>
-  <div class="progress-bar"></div>
-</div>
+<sys-header current="1. Caching"></sys-header>
 <div class="wrap">
-
   <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
   <header class="hero">
     <div class="kicker">System Design Basics · 1 of 12</div>
@@ -291,7 +279,6 @@
     <span class="tag">◇ the ninety seconds after the key expired</span>
     <p>19:42 on a Tuesday, the busiest hour of the week. One key — the homepage feed, cached for an hour, requested about 8,000 times a second — reaches the end of its TTL. Every one of those 8,000 requests looks in the cache, finds nothing, and does the obvious thing: asks the database. The query takes 40 ms when the database is idle. It is not idle; it is now running 8,000 of them at once, so it takes four seconds, then twelve. Clients time out at two seconds and retry, which adds a second wave on top of the first. Nobody deployed anything. Nobody's disk failed. A timer ran out, and by 19:44 the site is down.</p>
   </div>
-
   <nav class="toc" id="toc-top">
     <strong>Contents</strong>
     <ol>
@@ -312,9 +299,7 @@
       <li><a href="#recap">Recap &amp; Cheat Sheet</a></li>
     </ol>
   </nav>
-<details class="sec-collapse" id="what">
-  <summary><h2>1. What a cache actually is</h2></summary>
-  <div class="sec-content">
+<sys-collapse id="what" title="1. What a cache actually is">
   <p>A <strong>cache</strong> is a small, fast store that keeps copies of data close to where it's needed, so you don't have to redo expensive work — a database query, an API call, a heavy computation, a network round-trip. You spend a little memory and some added complexity to buy a lot of speed and a much lighter load on the systems behind it.</p>
   <p>The reason it matters is a gap in speed. Reading from an in-memory cache is measured in microseconds (local) to well under a millisecond (a Redis hop); the same request that falls through to a database and back can take <strong>tens of milliseconds</strong> — often orders of magnitude slower. When most requests are answered by the cache, average latency collapses and the origin barely notices the traffic.</p>
   <div class="note key">
@@ -322,11 +307,8 @@
     <em>"There are only two hard things in Computer Science: cache invalidation and naming things."</em> — attributed to Phil Karlton. Caching is easy to add and hard to keep <em>correct</em>. That's the real subject of this guide.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="layers">
-  <summary><h2>2. The layers: where caches live</h2></summary>
-  <div class="sec-content">
+</sys-collapse>
+<sys-collapse id="layers" title="2. The layers: where caches live">
   <p>Caching isn't one thing — it's a series of layers between the user and the source of truth. A request can be satisfied at any of them, and the earlier it's answered, the cheaper it is. Walk a request from the browser inward:</p>
 
   <svg viewBox="0 0 800 320" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
@@ -459,11 +441,8 @@
     An <strong>in-process</strong> cache is fastest (no network hop) but every server has its own copy — they can disagree, and you multiply memory use. A <strong>distributed</strong> cache (Redis/Memcached) adds a network hop but gives every instance one shared, consistent view. Once you have more than one server, distributed is usually the answer.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="strategies">
-  <summary><h2>3. Read/write strategies</h2></summary>
-  <div class="sec-content">
+</sys-collapse>
+<sys-collapse id="strategies" title="3. Read/write strategies">
   <p>Each pattern answers two questions: <em>who talks to the cache</em>, and <em>when does the cache get written</em>. The read patterns decide how misses get filled; the write patterns decide how the cache stays in step with the source of truth.</p>
 
   <h3>Cache-aside (lazy loading) — the default</h3>
@@ -581,11 +560,8 @@
   <p>Real systems mix these. AWS, for instance, recommends combining <strong>write-through</strong> (to keep the cache fresh) with <strong>cache-aside</strong> reads (as the miss fallback), plus TTLs to keep it lean.</p>
   <p>Worth saying out loud: caching is not the only way to take read load off a database. Read replicas move the same reads to a different machine without introducing a second copy of the truth with its own lifetime — see <a href="database-scaling.html">the Database Scaling guide</a>. Caching wins when the work is expensive to <em>compute</em>, not merely expensive to <em>fetch</em>.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="worked">
-  <summary><h2>4. Cache-aside in code</h2></summary>
-  <div class="sec-content">
+</sys-collapse>
+<sys-collapse id="worked" title="4. Cache-aside in code">
   <p>Everything above is vocabulary. Here is what cache-aside looks like when you actually write it, and it is worth staring at, because this exact function is in production somewhere near you right now.</p>
 
 <pre><code>def get_user(user_id):
@@ -602,11 +578,8 @@ def update_user(user_id, fields):
     db.update("users", user_id, fields)
     redis.delete(f"user:{user_id}")</code></pre>
 
-  </div>
-</details>
-<details class="sec-collapse" id="bugs">
-  <summary><h2>5. Three invalidation bugs (and their fixes)</h2></summary>
-  <div class="sec-content">
+</sys-collapse>
+<sys-collapse id="bugs" title="5. Three invalidation bugs (and their fixes)">
   <p>Textbook cache-aside code is straightforward in shape but wrong in several critical ways. Let's trace how real-world scheduling, negative responses, and application rollouts break it.</p>
   
   <h3>Cache invalidation</h3>
@@ -707,6 +680,8 @@ def update_user(user_id, fields):
     <li>The Reader wakes up and finishes its write, saving the stale value <code>Ada</code> back into the empty Redis slot.</li>
   </ol>
   <p>Now, the database has <code>Grace</code> but the cache confidently serves <code>Ada</code>. No subsequent writes will clear this key unless a user updates their profile again. The cache will remain stale for the entire 60 minutes.</p>
+  <p>This is why <strong>invalidation-on-write alone is not sufficient</strong>, no matter how carefully you find every call site. The window is small, but "small" times "a million writes a day" is a support ticket. Narrowing it is possible — Facebook's <em>leases</em> hand the missing reader a token that the writer's delete invalidates, so the late fill is simply rejected; a "delayed double delete" removes the key again a second after the write. Eliminating it needs versioned compare-and-set on the fill.</p>
+  <p>And it is why a <strong>bounded TTL is a safety net rather than a nicety</strong>. The TTL is the only thing in the buggy version above that ever repairs this. Every key you cache without an expiry is a key that can be silently wrong forever. If you find yourself writing <code>SET</code> with no TTL, you are betting that your invalidation logic is perfect. It is not.</p>
 
 
   <!-- Simulator 1: Cache-Aside & Invalidation Race -->
@@ -1000,16 +975,14 @@ def update_user(user_id, fields):
   </script>
 
 
-  <p>And it is why a <strong>bounded TTL is a safety net rather than a nicety</strong>. The TTL is the only thing in the buggy version above that ever repairs this. Every key you cache without an expiry is a key that can be silently wrong forever. If you find yourself writing <code>SET</code> with no TTL, you are betting that your invalidation logic is perfect. It is not.</p>
-
-  <details class="q">
-    <summary>Check yourself: You invalidate on every write, you've checked every call site, and users still report stale data — for almost exactly your TTL duration. What happened?</summary>
+  <sys-question q="Check yourself: You invalidate on every write, you've checked every call site, and users still report stale data — for almost exactly your TTL duration. What happened?">
+    The stale-forever race. A reader missed, read the old value from the database, got descheduled; your writer updated the row and deleted a key that wasn't there; the reader woke up and wrote its stale value into the empty slot. Your invalidation ran before the poisoning write, so it invalidated nothing. The giveaway is the duration: it's the TTL, because the TTL is the only thing that ever clears it. Narrow the window with leases or a delayed second delete, and never remove the TTL.
+  </sys-question>
 
   <h3>Bug B — Misses and empty results are the same thing</h3>
-  </details>
-
   <h3>4. Misses and empty results are the same thing</h3>
   <p><code>db.query_one</code> returns <code>None</code> for a user that doesn't exist. <code>json.dumps(None)</code> is the string <code>"null"</code>, which gets cached for a full hour and is indistinguishable from a real value. So a user created one second after somebody looked them up stays invisible for an hour. Flip the code the other way — only cache when <code>user is not None</code> — and you get the opposite failure, <strong>cache penetration</strong>: every request for a non-existent ID misses the cache and hits the database, forever, which is a free denial-of-service for anyone who can guess URLs.</p>
+  <p>The answer is to cache negatives <em>deliberately</em>, with their own short TTL and a sentinel you can tell apart from real data. (While you are in there: <code>if cached:</code> is also wrong — an empty cached value is falsy, so a legitimately-empty entry is treated as a miss on every read. Test <code>is not None</code>.)</p>
 
   <h3>Bug C — Schema/key versioning during deploys</h3>
   <h3>Cache key versioning</h3>
@@ -1017,7 +990,6 @@ def update_user(user_id, fields):
 
 
   <h3>The production-grade version</h3>
-
   <h3>The version that survives contact</h3>
 
 <pre><code>MISS = "◇none"                      # sentinel: cached "does not exist"
@@ -1052,11 +1024,9 @@ def update_user(user_id, fields):
     redis.delete(f"v3:user:{user_id}")   # delete, don't write the new value in</code></pre>
 
   <p>What changed: misses collapse to one query, TTLs no longer synchronise, non-existent users get a short negative entry instead of either an hour of invisibility or an open channel to the database, and the key carries a schema version. <code>nx=True</code> means a slow reader can never clobber a value someone else has already refreshed — it does <em>not</em> close the stale-forever race, because after the writer's <code>DEL</code> the slot is empty and the stale <code>SET</code> succeeds. Only the bounded TTL saves you there, which is the whole point.</p>
-  </div>
-</details>
-<details class="sec-collapse" id="eviction">
-  <summary><h2>6. Expiration &amp; Eviction: keeping the cache lean</h2></summary>
-  <div class="sec-content">
+  <p>Note also the last line: the writer <em>deletes</em> rather than writing the new value. Two concurrent writers who both write their value into the cache can land in the opposite order they landed in the database. Delete-on-write has one outcome — the next reader goes and finds out — and one outcome is much easier to reason about than two.</p>
+</sys-collapse>
+<sys-collapse id="eviction" title="6. Expiration &amp; Eviction: keeping the cache lean">
   <p>A cache has finite memory, so it must decide what to drop.</p>
   <p><strong>Expiration (TTL)</strong> gives every entry a time-to-live; after it lapses, the entry is refetched. TTL is the simplest correctness tool — it bounds how stale data can get without any explicit invalidation. Short TTL = fresher but more misses; long TTL = faster but staler.</p>
   <div style="font-size:0.88rem;color:var(--accent-2);margin: -8px 0 16px 0;line-height:1.4;"><strong>◈ In the wild:</strong> DNS (domain name resolution) is the world's largest example of TTL-based caching. When a website owner updates a DNS record, resolvers worldwide continue serving the old IP address from their caches until the record's TTL lapses. This is why DNS changes "take time to propagate" and represent eventual consistency in action.</div>
@@ -1072,11 +1042,8 @@ def update_user(user_id, fields):
     Eviction is the cache freeing space <em>on its own terms</em>. Invalidation is <em>you</em> deciding a value is now wrong. Conflating the two is a common source of confusion.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="stampede">
-  <summary><h2>7. The Cache Stampede (Jitter vs. Coalescing)</h2></summary>
-  <div class="sec-content">
+</sys-collapse>
+<sys-collapse id="stampede" title="7. The Cache Stampede (Jitter vs. Coalescing)">
   <h3>Cache stampede — two different problems that people merge into one</h3>
   <p>These get taught together but are caused by different mechanics and have completely different fixes. Adding jitter to a hot-key issue will not fix it, and adding single-flight to a mass-expiry issue is overkill. Let's compare them:</p>
 
@@ -1362,15 +1329,12 @@ def update_user(user_id, fields):
   <pre><code>now - delta * beta * ln(random())  &gt;=  expiry_time</code></pre>
   <p>Since <code>random()</code> returns a decimal between 0 and 1, its natural log <code>ln(random())</code> is a negative number. This pushes the left-hand side ahead of <code>now</code>. As the key gets closer to its expiration, the probability of rolling a "yes" climbs smoothly. A single request volunteers to refresh the data in the background, updates the cache, and every other user continues hitting a warm cache. <em>beta</em> (default 1) lets you tune how early you want the background refreshes to start.</p>
  
-  <details class="q">
-    <summary>Check yourself: You added jitter to every TTL and your hot-key stampede is exactly as bad as before. What did you misunderstand?</summary>
-    <div class="a">Jitter desynchronises <em>different keys</em> that were written at the same moment. A hot key is one key with one expiry time — randomising when that moment arrives doesn't reduce the number of requests that miss when it does. You need single-flight so only one request rebuilds the value, or probabilistic early expiration so one request refreshes it slightly early and nobody ever sees the miss, or stale-while-revalidate so the old value is served during the rebuild.</div>
-  </details>
-  </div>
-</details>
-<details class="sec-collapse" id="metastable">
-  <summary><h2>8. Metastable Failures: the self-sustaining death spiral</h2></summary>
-  <div class="sec-content">
+
+  <sys-question q="Check yourself: You added jitter to every TTL and your hot-key stampede is exactly as bad as before. What did you misunderstand?">
+    Jitter desynchronises <em>different keys</em> that were written at the same moment. A hot key is one key with one expiry time — randomising when that moment arrives doesn't reduce the number of requests that miss when it does. You need single-flight so only one request rebuilds the value, or probabilistic early expiration so one request refreshes it slightly early and nobody ever sees the miss, or stale-while-revalidate so the old value is served during the rebuild.
+  </sys-question>
+</sys-collapse>
+<sys-collapse id="metastable" title="8. Metastable Failures: the self-sustaining death spiral">
   <h3>Metastable failure — the self-sustaining death spiral</h3>
   <p>This is the failure mode that surprises engineers because the original trigger (the bug, the bad deploy) is gone, but the system remains down. It is a **vicious loop** that feeds on its own recovery attempts:</p>
 
@@ -1404,15 +1368,11 @@ def update_user(user_id, fields):
   </div>
 
   <p>The system is trapped. Reverting the bad code or restarting the cache does nothing because the offered load is self-sustaining. The only exit is to **forcefully break the loop**: shed traffic at the gateway, disable the expensive endpoint, or drop client retry budgets to zero. Once database load drops, it can finally answer queries, refill the cache, and recover. Only then can you gradually ramp the traffic back up.</p>
-  <details class="q">
-    <summary>Check yourself: You flush the cache during a 3am deploy every week and it's fine. You do it at peak and the site is down for 40 minutes, even though you reverted the change within seconds. Why didn't reverting help?</summary>
-    <div class="a">At 3am the database has enough headroom to serve 100% of reads while the cache refills. At peak it doesn't, so it saturates, requests exceed the client timeout, clients retry, and offered load doubles or triples at the worst possible moment. That's a metastable failure: the load keeping you down is now being generated by the outage itself, so removing the original trigger changes nothing. You have to shed traffic until the database can answer enough queries to repopulate the cache, then ramp back. Also: version your keys instead of flushing.</div>
-  </details>
-  </div>
-</details>
-<details class="sec-collapse" id="hotkeys">
-  <summary><h2>9. Hot Keys and Partitioning</h2></summary>
-  <div class="sec-content">
+  <sys-question q="Check yourself: You flush the cache during a 3am deploy every week and it's fine. You do it at peak and the site is down for 40 minutes, even though you reverted the change within seconds. Why didn't reverting help?">
+    At 3am the database has enough headroom to serve 100% of reads while the cache refills. At peak it doesn't, so it saturates, requests exceed the client timeout, clients retry, and offered load doubles or triples at the worst possible moment. That's a metastable failure: the load keeping you down is now being generated by the outage itself, so removing the original trigger changes nothing. You have to shed traffic until the database can answer enough queries to repopulate the cache, then ramp back. Also: version your keys instead of flushing.
+  </sys-question>
+</sys-collapse>
+<sys-collapse id="hotkeys" title="9. Hot Keys and Partitioning">
   <h3>Hot keys don't get fixed by more cache nodes</h3>
   <p>Worth being explicit, because it's the first thing everyone tries. A cache cluster distributes keys by hashing them — consistent hashing, usually — which means <code>user:celebrity</code> maps to exactly one node. Adding nodes changes which node. It does not change how many. You can triple your cluster and that one node is still absorbing 100% of the traffic for that key while the other nodes idle. The fixes are different in kind:</p>
   <ul class="tight">
@@ -1439,11 +1399,8 @@ def update_user(user_id, fields):
     </tbody>
   </table>
   </div>
-  </div>
-</details>
-<details class="sec-collapse" id="http">
-  <summary><h2>10. HTTP Caching &amp; CDN Guardrails</h2></summary>
-  <div class="sec-content">
+</sys-collapse>
+<sys-collapse id="http" title="10. HTTP Caching &amp; CDN Guardrails">
   <p>If you work on anything web-facing, this layer is standardized and immediately actionable. It's controlled by response headers.</p>
 
   <h3>Cache-Control — the main lever</h3>
@@ -1489,15 +1446,11 @@ def update_user(user_id, fields):
     <span class="label">The blunt instrument, and why you want it</span>
     <code>Cache-Control: private</code> tells shared caches not to store the response at all — only the end user's own browser may. For anything personalised, reach for <code>private</code> (or <code>no-store</code> if it's sensitive) rather than trying to get <code>Vary</code> exactly right. <code>Vary: Cookie</code> is technically correct and practically useless: if your site sets any cookie at all, every visitor has a unique key and your hit rate goes to roughly zero. The real fix for a page that is <em>mostly</em> public is to cache the public shell and fetch the personalised fragment separately.
   </div>
-  <details class="q">
-    <summary>Check yourself: Which of these must never be cached in a shared CDN, and why: (a) the logged-in dashboard HTML, (b) <code>app.9f2a1c.js</code>, (c) <code>/api/me</code>, (d) a public product image?</summary>
-    <div class="a">(a) and (c). A shared cache keys on the URL plus whatever <code>Vary</code> declares, and both of those return different bytes to different people at the same URL — so the first response gets stored and handed to the next visitor. Mark them <code>Cache-Control: private</code>, or <code>no-store</code> if they carry anything sensitive. Don't rely on <code>Vary: Cookie</code> to save you: it's correct in theory and gives you a ~0% hit rate in practice, so someone will eventually "optimise" it away.</div>
-  </details>
-  </div>
-</details>
-<details class="sec-collapse" id="ops">
-  <summary><h2>11. Operational Reality: Redis and Memcached</h2></summary>
-  <div class="sec-content">
+  <sys-question q="Check yourself: Which of these must never be cached in a shared CDN, and why: (a) the logged-in dashboard HTML, (b) &lt;code&gt;app.9f2a1c.js&lt;/code&gt;, (c) &lt;code&gt;/api/me&lt;/code&gt;, (d) a public product image?">
+    (a) and (c). A shared cache keys on the URL plus whatever <code>Vary</code> declares, and both of those return different bytes to different people at the same URL — so the first response gets stored and handed to the next visitor. Mark them <code>Cache-Control: private</code>, or <code>no-store</code> if they carry anything sensitive. Don't rely on <code>Vary: Cookie</code> to save you: it's correct in theory and gives you a ~0% hit rate in practice, so someone will eventually "optimise" it away.
+  </sys-question>
+</sys-collapse>
+<sys-collapse id="ops" title="11. Operational Reality: Redis and Memcached">
 
   <h3>Redis: <code>maxmemory-policy</code> defaults to <code>noeviction</code></h3>
   <p>This one catches almost everybody. Redis is a database that people use as a cache, and its defaults are a database's defaults. Set <code>maxmemory</code>, leave <code>maxmemory-policy</code> alone, and when the cache fills up Redis does not evict anything — it starts returning <code>OOM command not allowed when used memory &gt; 'maxmemory'</code> on every write. Your cache stops accepting new entries, which means every miss stays a miss, which means the database takes the full load. A full cache has become a total cache outage, quietly, without a single alarm firing.</p>
@@ -1508,21 +1461,17 @@ def update_user(user_id, fields):
     <li>Redis's LRU is <em>approximate</em> — it samples a handful of keys (<code>maxmemory-samples</code>, default 5) and evicts the best candidate among them, rather than tracking a true global ordering. Close enough for caching, but don't reason as if it's exact.</li>
   </ul>
 
-  <details class="q">
-    <summary>Check yourself: Your Redis is at its memory limit. Instead of evicting anything, it started returning errors on <code>SET</code> — and your database load quietly tripled. What's the setting?</summary>
-    <div class="a"><code>maxmemory-policy</code>, which defaults to <code>noeviction</code> because Redis is a database first and a cache second. A full cache that refuses writes can never fill a miss, so every miss stays a miss and the whole read load lands on the origin. Set <code>allkeys-lru</code> or <code>allkeys-lfu</code> for a pure cache. Avoid <code>volatile-*</code> unless you're certain every key has a TTL — those policies only consider keys that have one, and can run out of candidates and start erroring anyway.</div>
-  </details>
+  <sys-question q="Check yourself: You set Redis maxmemory, you didn't touch maxmemory-policy, and writes start returning OOM errors instead of dropping old keys. What did you get wrong?">
+    <code>maxmemory-policy</code>, which defaults to <code>noeviction</code> because Redis is a database first and a cache second. A full cache that refuses writes can never fill a miss, so every miss stays a miss and the whole read load lands on the origin. Set <code>allkeys-lru</code> or <code>allkeys-lfu</code> for a pure cache. Avoid <code>volatile-*</code> unless you're certain every key has a TTL — those policies only consider keys that have one, and can run out of candidates and start erroring anyway.
+  </sys-question>
   <h3>Memcached: slab calcification</h3>
   <p>Memcached carves memory into pages and assigns each page to a <em>slab class</em> — a bucket for items of a particular size range. Once a page belongs to the 1 KB class, it stays there. So if your workload shifts — you start storing bigger serialised objects, or a new feature caches small counters — the new size class runs out of pages and starts evicting aggressively while another class sits half-empty holding memory it no longer needs. Your hit rate drops and your memory graph shows plenty free. That's calcification. Modern versions can rebalance (<code>slab_reassign</code> / <code>slab_automove</code>), but it is not something to discover during an incident: watch per-slab eviction counts, not just the total.</p>
 
   <h3>The numbers may not mean what you think</h3>
   <p>Redis reports <code>mem_fragmentation_ratio</code> in <code>INFO memory</code> — resident memory divided by the memory Redis thinks it's using. Meaningfully above 1 (say 1.5) means the allocator is holding memory it isn't handing back, so your 8 GB instance is really using 12 and your capacity planning is fiction. Below 1 is worse: it means part of your in-memory cache has been swapped to disk, and a cache that reads from disk is just a slow database with extra steps. Check it before you conclude anything from a memory graph. Likewise, <code>keyspace_hits</code> and <code>keyspace_misses</code> are server-wide counters since boot — if three services share the instance, that ratio is nobody's hit rate. Instrument hit rate in your own client, per cache.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="dont">
-  <summary><h2>12. When <em>not</em> to cache</h2></summary>
-  <div class="sec-content">
+</sys-collapse>
+<sys-collapse id="dont" title="12. When <em>not</em> to cache">
   <p>Caching isn't free — it adds a whole new class of bugs (stale reads, invalidation races). Skip or minimize it when:</p>
   <ul class="tight">
     <li>Data changes constantly and must be exact — financial ledgers, inventory at checkout.</li>
@@ -1532,11 +1481,8 @@ def update_user(user_id, fields):
   </ul>
   <p>A cache you can't reason about is a liability, not an optimization. <strong>Measure the hit rate</strong> — a cache with a low hit rate is often worse than none.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="metrics">
-  <summary><h2>13. Metrics that matter</h2></summary>
-  <div class="sec-content">
+</sys-collapse>
+<sys-collapse id="metrics" title="13. Metrics that matter">
   <div class="cards">
     <div class="card"><h4>Hit / miss rate</h4><p>The headline number. A low hit rate means the cache isn't earning its keep.</p></div>
     <div class="card"><h4>Latency (p50 / p99)</h4><p>The actual user-facing win — watch the tail, not just the average.</p></div>
@@ -1544,15 +1490,11 @@ def update_user(user_id, fields):
     <div class="card"><h4>Origin load reduction</h4><p>How much traffic the cache absorbs before it reaches the DB/API.</p></div>
   </div>
 
-  <details class="q">
-    <summary>Check yourself: Your hit rate is 94% and p99 latency got <em>worse</em> after you added the cache. What's the likely cause?</summary>
-    <div class="a">p99 is made of the 6% that miss, and a miss now costs a cache round trip <em>plus</em> the database query it always cost — you added latency to exactly the requests that were already slowest. Averages improved, the tail didn't. Look also for serialisation cost on large objects, connection-pool contention against the cache, and one slow node in the cache cluster dragging a slice of traffic. Instrument hit latency and miss latency as separate metrics; a single blended number will hide this forever.</div>
-  </details>
-  </div>
-</details>
-<details class="sec-collapse" id="lab">
-  <summary><h2>14. Hands-on Lab: Build a Cache Stampede Coalescer</h2></summary>
-  <div class="sec-content">
+  <sys-question q="Check yourself: Your hit rate is 94% and p99 latency got &lt;em&gt;worse&lt;/em&gt; after you added the cache. What's the likely cause?">
+    p99 is made of the 6% that miss, and a miss now costs a cache round trip <em>plus</em> the database query it always cost — you added latency to exactly the requests that were already slowest. Averages improved, the tail didn't. Look also for serialisation cost on large objects, connection-pool contention against the cache, and one slow node in the cache cluster dragging a slice of traffic. Instrument hit latency and miss latency as separate metrics; a single blended number will hide this forever.
+  </sys-question>
+</sys-collapse>
+<sys-collapse id="lab" title="14. Hands-on Lab: Build a Cache Stampede Coalescer">
   <div class="note key">
     <span class="label">🛠️ Hands-On Lab: Build a Cache Stampede Coalescer</span>
     <p>Build this mini-project to see the difference between a naive cache and a production-grade coalesced cache under load:</p>
@@ -1565,11 +1507,8 @@ def update_user(user_id, fields):
     </ul>
     <p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Put this project on your GitHub portfolio as a demonstrated benchmark of request coalescing and load protection.</p>
   </div>
-  </div>
-</details>
-<details class="sec-collapse" id="recap">
-  <summary><h2>15. Recap &amp; Cheat Sheet</h2></summary>
-  <div class="sec-content">
+</sys-collapse>
+<sys-collapse id="recap" title="15. Recap &amp; Cheat Sheet">
   <div class="recap">
     <ul>
       <li>A cache trades memory and a new class of bugs for latency and origin load. The bugs are the price, not a defect.</li>
@@ -1623,100 +1562,8 @@ def update_user(user_id, fields):
   </ol>
   <p>Add complexity in response to evidence, not anticipation. The best caching setup is the simplest one that hits your latency and freshness targets.</p>
 
-  </div>
-</details>
-  <hr>
-  <p class="footer">
-    Part of <em>System Design Basics</em>. Sources:
-    <a href="https://docs.aws.amazon.com/whitepapers/latest/database-caching-strategies-using-redis/caching-patterns.html">AWS — Database Caching Strategies Using Redis</a> ·
-    <a href="https://redis.io/blog/how-to-tame-the-thundering-herd-problem/">Redis — Taming the Thundering Herd</a> ·
-    <a href="https://accreditly.io/articles/the-practical-guide-to-http-caching-headers-cache-control-etag-and-304s">Accreditly — HTTP Caching Headers</a> ·
-    <a href="https://blog.bytebytego.com/p/a-crash-course-in-caching-final-part">ByteByteGo — A Crash Course in Caching</a> ·
-    <a href="https://read.engineerscodex.com/p/how-facebook-scaled-memcached">Scaling Memcache at Facebook</a> ·
-    <a href="https://openconnect.netflix.com/">Netflix Open Connect</a> ·
-    <a href="https://www.prisma.io/dataguide/managing-databases/introduction-database-caching">Prisma — Database Caching</a>
-  </p>
+</sys-collapse>
+<sys-footer></sys-footer>
 </div>
-
-
-<script>
-  // Restore open states from localStorage
-  document.querySelectorAll('details.sec-collapse').forEach(details => {
-    const id = details.id;
-    const storedState = localStorage.getItem(`sec-open-${id}`);
-    if (storedState !== null) {
-      details.open = storedState === 'true';
-    } else {
-      // Collapsed by default
-      details.open = false;
-    }
-    
-    // Listen for toggle events to save state
-    details.addEventListener('toggle', () => {
-      localStorage.setItem(`sec-open-${id}`, details.open);
-    });
-  });
-
-  // Restore scroll position
-  const storedScroll = localStorage.getItem('sec-scroll-pos');
-  if (storedScroll !== null && !window.location.hash) {
-    // Only restore scroll if there is no direct hash link navigation
-    setTimeout(() => {
-      window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
-    }, 100);
-  }
-
-  // Save scroll position on scroll (debounced)
-  let scrollTimeout;
-  window.addEventListener('scroll', () => {
-    clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
-      localStorage.setItem('sec-scroll-pos', window.scrollY);
-    }, 150);
-  });
-
-  // Auto-expand details elements when targeted by a hash link
-  function handleHashChange() {
-    const hash = window.location.hash;
-    if (hash) {
-      const target = document.querySelector(hash);
-      if (target) {
-        let parent = target.closest('details');
-        while (parent) {
-          parent.open = true;
-          parent = parent.parentElement.closest('details');
-        }
-        setTimeout(() => {
-          target.scrollIntoView({ behavior: 'smooth' });
-        }, 100);
-      }
-    }
-  }
-  window.addEventListener('hashchange', handleHashChange);
-  window.addEventListener('DOMContentLoaded', handleHashChange);
-
-  // Update scroll progress bar dynamically
-  const progressBar = document.querySelector('.progress-bar');
-  function updateProgress() {
-    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
-    if (scrollHeight > 0) {
-      const progress = (window.scrollY / scrollHeight) * 100;
-      progressBar.style.width = `${progress}%`;
-    } else {
-      progressBar.style.width = '0%';
-    }
-  }
-  window.addEventListener('scroll', updateProgress);
-  window.addEventListener('resize', updateProgress);
-  document.querySelectorAll('details').forEach(d => {
-    d.addEventListener('toggle', () => {
-      setTimeout(updateProgress, 60);
-    });
-  });
-  updateProgress();
-
-</script>
-
-
 </body>
 </html>
