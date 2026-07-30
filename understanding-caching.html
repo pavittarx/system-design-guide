@@ -599,7 +599,6 @@ def update_user(user_id, fields):
     Most caches give <strong>eventual consistency</strong> — for a window, readers may see old data. If that trade-off is critical for your data type (like account balances), <a href="consistency-cap.html">the Consistency &amp; CAP guide</a> unpacks exactly what you are and aren't promised.
   </div>
 
-  <h3>Bug A — The stale-forever race</h3>
   <p>Thirteen lines, textbook-correct in shape, and wrong in at least four ways.</p>
 
   <h3>1. Nothing coalesces the misses</h3>
@@ -979,17 +978,14 @@ def update_user(user_id, fields):
     The stale-forever race. A reader missed, read the old value from the database, got descheduled; your writer updated the row and deleted a key that wasn't there; the reader woke up and wrote its stale value into the empty slot. Your invalidation ran before the poisoning write, so it invalidated nothing. The giveaway is the duration: it's the TTL, because the TTL is the only thing that ever clears it. Narrow the window with leases or a delayed second delete, and never remove the TTL.
   </sys-question>
 
-  <h3>Bug B — Misses and empty results are the same thing</h3>
   <h3>4. Misses and empty results are the same thing</h3>
   <p><code>db.query_one</code> returns <code>None</code> for a user that doesn't exist. <code>json.dumps(None)</code> is the string <code>"null"</code>, which gets cached for a full hour and is indistinguishable from a real value. So a user created one second after somebody looked them up stays invisible for an hour. Flip the code the other way — only cache when <code>user is not None</code> — and you get the opposite failure, <strong>cache penetration</strong>: every request for a non-existent ID misses the cache and hits the database, forever, which is a free denial-of-service for anyone who can guess URLs.</p>
   <p>The answer is to cache negatives <em>deliberately</em>, with their own short TTL and a sentinel you can tell apart from real data. (While you are in there: <code>if cached:</code> is also wrong — an empty cached value is falsy, so a legitimately-empty entry is treated as a miss on every read. Test <code>is not None</code>.)</p>
 
-  <h3>Bug C — Schema/key versioning during deploys</h3>
   <h3>Cache key versioning</h3>
   <p>Prefix every key with a schema version: <code>v3:user:123</code>. You will not appreciate why until the deploy where you add a field to the serialised shape, and every instance running the old code starts reading objects that have it while every instance running the new code reads objects that don't. Without a version prefix your options are (a) flush the cache, which is the cold-start outage described below, or (b) write defensive deserialisation forever. With one, you bump <code>v3</code> to <code>v4</code>, the new code writes and reads new keys, the old keys are read by nobody and quietly age out under their own TTL or get evicted by LRU. It costs six characters per key.</p>
 
 
-  <h3>The production-grade version</h3>
   <h3>The version that survives contact</h3>
 
 <pre><code>MISS = "◇none"                      # sentinel: cached "does not exist"
@@ -1132,13 +1128,11 @@ def update_user(user_id, fields):
     </g>
   </svg>
 
-  <h3>Problem 1: Mass Expiry (Cliff Problem)</h3>
   <p><strong>1. Synchronised Mass Expiry (Multiple keys, same expiry).</strong> Many <em>different</em> keys were written at roughly the same moment — a deploy warmed them, a batch job populated them, the cache restarted and refilled in a burst — and because they all got the same fixed TTL, they all expire at roughly the same moment too. One second you're at a 95% hit rate; the next you're at nothing, and the database gets the whole read load.</p>
   <ul class="tight">
     <li><strong>The fix is TTL jitter:</strong> Randomise expiry per key — e.g. 3600 seconds plus 0–360 random — so the cliff becomes a slope. This is a simple, three-line fix that you should do by default.</li>
   </ul>
   
-  <h3>Problem 2: A Single Hot Key Expiring (Herd Problem)</h3>
   <p><strong>2. A Single Hot Key Expiring (One key, high traffic).</strong> A single key is requested thousands of times a second (like the homepage feed or a celebrity user profile). When its TTL expires, every in-flight request misses simultaneously and queries the database. Note that jitter does <em>nothing</em> here: there is only one key, it has one expiry time, and randomising <em>when</em> the cliff happens doesn't reduce the height of the drop.</p>
   <ul class="tight">
     <li><strong>Request coalescing / single-flight:</strong> The first request to miss takes a lock and recomputes; the rest wait for its result. N misses become one query. This is the actual fix.</li>
