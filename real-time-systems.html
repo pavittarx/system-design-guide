@@ -60,11 +60,8 @@
   }
   h1 { font-size: 2.05rem; line-height: 1.15; margin: 0 0 12px; letter-spacing: -0.02em; }
   .lede { color: var(--muted); font-size: 1.12rem; margin: 0; }
-  h2 {
-    font-size: 1.5rem; margin: 44px 0 14px; letter-spacing: -0.01em;
-    padding-top: 8px; scroll-margin-top: 20px;
-  }
-  h3 { font-size: 1.16rem; margin: 26px 0 8px; }
+  h2 { font-size: 1.5rem; margin: 48px 0 16px; letter-spacing: -0.015em; padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 65px; width: 100%; }
+  h3 { font-size: 1.18rem; margin: 32px 0 10px; font-weight: 600; }
   p { margin: 12px 0; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
@@ -161,10 +158,121 @@
   pre{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.6;margin:18px 0;}
   pre code{background:none;border:none;padding:0;font-size:1em;}
   .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
+
+  /* Sticky Top Header */
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+  .header-inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+  }
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+  }
+  .breadcrumbs a {
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .breadcrumbs a:hover {
+    color: var(--accent);
+  }
+  .breadcrumbs .sep {
+    color: var(--border);
+    font-weight: 300;
+  }
+  .breadcrumbs .curr {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .toc-jump a {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Scroll Progress Indicator */
+  .progress-bar {
+    height: 3px;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.08s ease-out;
+  }
+
+  /* Collapsible Sections */
+  details.sec-collapse {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  details.sec-collapse summary {
+    cursor: pointer;
+    list-style: none;
+    outline: none;
+    padding: 18px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  details.sec-collapse summary::-webkit-details-marker {
+    display: none;
+  }
+  details.sec-collapse summary h2 {
+    margin: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+    font-size: 1.45rem;
+    flex-grow: 1;
+  }
+  details.sec-collapse summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+    transition: transform 0.2s ease;
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+  details.sec-collapse[open] summary::after {
+    transform: rotate(-135deg);
+  }
+  .sec-content {
+    padding: 8px 0 28px 0;
+  }
+
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="sticky-header">
+  <div class="header-inner">
+    <div class="breadcrumbs">
+      <a href="index.html">System Design Guide</a>
+      <span class="sep">/</span>
+      <span class="curr">11. Real-Time Systems</span>
+    </div>
+    <div class="toc-jump">
+      <a href="#top">Back to Top</a>
+    </div>
+  </div>
+  <div class="progress-bar"></div>
+</div>
+<div class="wrap" id="top">
   <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
   <header class="hero">
     <div class="kicker">System Design Basics · 11 of 12</div>
@@ -193,11 +301,12 @@
       <li><a href="#backpressure">Backpressure: the slow consumer</a></li>
       <li><a href="#gotchas">The gotchas that actually bite</a></li>
       <li><a href="#recap">Recap in 60 seconds</a></li>
-      <li><a href="#check">Check yourself</a></li>
     </ol>
   </nav>
 
-  <h2 id="inversion">1. The inversion</h2>
+<details class="sec-collapse" id="inversion">
+  <summary><h2>1. The inversion</h2></summary>
+  <div class="sec-content">
   <p>Everything in this series so far has assumed the same shape: a client asks, a server answers, the server forgets. That statelessness is what makes the earlier guides work. It is why you can put ten identical servers behind a load balancer and route each request to whichever is least busy. It is why an instance can be terminated mid-deploy and nobody notices. It is why capacity is a function of requests per second and nothing else.</p>
   <p>Real-time systems invert it. The server must send data the client never asked for, at a moment the client did not choose. To do that it must hold an open connection, and the moment it does, three assumptions break at once.</p>
   <div class="cards">
@@ -216,7 +325,11 @@
   </div>
   <p>None of that is a reason to avoid real-time. It is a reason to be honest that you are building a distinctly different kind of system, with a different capacity model and a different set of failure modes, and to notice when a feature request quietly drags you across that line. "Can we show a live unread count?" is a small product ask and a large architectural one.</p>
 
-  <h2 id="options">2. Polling, long polling, SSE, WebSockets</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="options">
+  <summary><h2>2. Polling, long polling, SSE, WebSockets</h2></summary>
+  <div class="sec-content">
   <p>There are four mechanisms in common use, and they form a ladder from "no new problems" to "all the new problems, plus full duplex".</p>
   <div class="stack">
     <div class="layer"><span class="idx">1</span> <b>Short polling.</b> The client asks every <em>n</em> seconds. Dead simple, works everywhere, caches and load-balances like anything else. Latency averages <em>n</em>/2 and most requests return nothing.</div>
@@ -232,7 +345,35 @@
   </div>
   <p>That comparison is why the ladder exists. But note the direction of the trade — polling's waste is bandwidth and latency, which are cheap and measurable; push's cost is <em>state</em>, which is expensive and shows up as operational complexity rather than a line on a graph.</p>
 
-  <h2 id="choose">3. Choosing between them</h2>
+
+  <div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
+    <svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+      <!-- Title -->
+      <text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">SSE vs. WebSockets Architecture</text>
+      
+      <!-- SSE (Left) -->
+      <text x="20" y="55" fill="var(--accent)" font-size="11" font-weight="600">Server-Sent Events (SSE)</text>
+      <rect x="20" y="70" width="320" height="120" rx="6" fill="var(--panel-2)" stroke="var(--border)" />
+      <text x="35" y="95" fill="var(--text)" font-size="10">HTTP/2 multiplexed, unidirectional push</text>
+      <text x="35" y="115" fill="var(--text)" font-size="10">Text only (JSON payloads)</text>
+      <text x="35" y="135" fill="var(--accent-2)" font-size="10">Auto-reconnect with Last-Event-ID: free</text>
+      <text x="35" y="165" fill="var(--muted)" font-size="9">Best for: Feeds, metrics, progress feeds</text>
+      
+      <!-- WebSockets (Right) -->
+      <text x="400" y="55" fill="var(--accent-2)" font-size="11" font-weight="600">WebSockets</text>
+      <rect x="400" y="70" width="320" height="120" rx="6" fill="var(--panel-2)" stroke="var(--accent-2)" stroke-width="1.5" />
+      <text x="415" y="95" fill="var(--text)" font-size="10">Bidirectional full-duplex persistent TCP socket</text>
+      <text x="415" y="115" fill="var(--text)" font-size="10">Binary + Text support</text>
+      <text x="415" y="135" fill="var(--danger)" font-size="10">You manage handshakes, frames, retry backoff</text>
+      <text x="415" y="165" fill="var(--muted)" font-size="9">Best for: Chat, collaboration, gaming</text>
+    </svg>
+  </div>
+
+  </div>
+</details>
+<details class="sec-collapse" id="choose">
+  <summary><h2>3. Choosing between them</h2></summary>
+  <div class="sec-content">
   <p>The decision is usually made by fashion, and it should be made by direction and frequency.</p>
   <div class="table-scroll">
     <table class="num-table">
@@ -256,7 +397,43 @@
   </div>
   <p>Choose WebSockets when the client genuinely streams: chat with typing indicators, collaborative editing with cursor positions, multiplayer games, live drawing. Choose polling when updates are rare and a few seconds of staleness costs nothing — a five-second poll on a page one person has open is not a design failure, it is a perfectly good use of a boring tool.</p>
 
-  <h2 id="cost">4. What a connection actually costs</h2>
+
+  <div class="note key">
+    <span class="label">🛠️ Hands-On Lab: Build a Real-Time SSE Stream with Heartbeats &amp; Gap Recovery</span>
+    <p>Build this portfolio project to implement a production-ready, low-overhead Server-Sent Events stream:</p>
+    <ul class="tight" style="margin-top: 8px; font-size: 0.95rem;">
+      <li><strong>1. The Server:</strong> Write an API server in Node.js or Python. Create a <code>GET /events</code> route.</li>
+      <li><strong>2. Configure SSE Headers:</strong> Set the required headers to keep the browser socket open and disable proxies buffering output:
+        <pre><code class="language-javascript">res.writeHead(200, {
+  'Content-Type': 'text/event-stream',
+  'Cache-Control': 'no-cache',
+  'Connection': 'keep-alive',
+  'X-Accel-Buffering': 'no' // Prevent Nginx buffering
+});</code></pre>
+      </li>
+      <li><strong>3. Heartbeats &amp; Resync:</strong> Read the incoming header <code>Last-Event-ID</code> (if present). Keep a short rolling memory buffer of recent events. If the client sends an ID, replay missed items. Otherwise, send heartbeats every 15s to keep the socket alive:
+        <pre><code class="language-javascript">// Send a comment frame to keep the socket warm
+const heartbeatInterval = setInterval(() => {
+  res.write(': keepalive\n\n');
+}, 15000);
+
+// Sending an event frame
+function sendEvent(id, name, data) {
+  res.write(`id: ${id}\n`);
+  res.write(`event: ${name}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+}</code></pre>
+      </li>
+      <li><strong>4. Test Disconnects:</strong> Connect a client in a browser. Kill your network connection briefly and verify that the client auto-reconnects, passes the last seen ID, and recovers missing events cleanly without duplicates.</li>
+    </ul>
+    <p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Include this SSE project in your portfolio to show hands-on mastery of lightweight push protocols and gap-tolerant stream design.</p>
+  </div>
+
+  </div>
+</details>
+<details class="sec-collapse" id="cost">
+  <summary><h2>4. What a connection actually costs</h2></summary>
+  <div class="sec-content">
   <p>The "C10K problem" was solved twenty years ago and the folklore has not caught up. Modern servers using epoll or kqueue hold enormous numbers of idle connections; WhatsApp famously reached <b>2 million connections on a single FreeBSD box</b> in 2012. The cost is not the connection, it is what you attach to it.</p>
   <div class="note key">
     <span class="label">The memory arithmetic</span>
@@ -271,7 +448,20 @@
     It also bites <em>between</em> your own tiers: a gateway holding many connections to one backend can exhaust ports. Fix with multiple backend ports or IPs, and by reusing pooled connections rather than opening new ones.
   </div>
 
-  <h2 id="routing">5. Routing to a stateful server</h2>
+
+  <details class="q">
+    <summary>Check yourself: A server can easily hold 100,000 idle connections, but crashes when they actually start receiving traffic. Explain the difference between connection scale and buffer memory.</summary>
+    <div class="a">
+      <p>An idle TCP connection costs very little: basic kernel sockets and connection registry metadata (~10–30 KB). The scaling ceiling changes completely when traffic starts flowing. Kernel-level read/write socket buffers dynamically grow (often to 64 KB or higher) to support outstanding data, and application-level send queues can buffer undelivered payloads for slow clients.</p>
+      <p>If 100,000 connections each accumulate 200 KB of buffered data (e.g. because of slow network receivers), the server requires 20 GB of memory just for queues. Unbounded buffers degrade isolation, causing healthy connections to be dropped when the host goes out of memory. Defensive engineering requires setting hard queue limits and forcing disconnections on slow consumers so they resync from a sequence log later.</p>
+    </div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="routing">
+  <summary><h2>5. Routing to a stateful server</h2></summary>
+  <div class="sec-content">
   <p>Your user is connected to gateway 7. An event for that user is generated by a worker that has never heard of gateway 7. Getting the message from one to the other is the central architectural problem of real-time systems, and there are three standard answers.</p>
   <div class="stack">
     <div class="layer"><span class="idx">A</span> <b>Registry.</b> Every gateway writes "user 8817 is on gateway-7" into a shared store (Redis, or a coordination store from <a href="coordination-consensus.html">Getting Machines to Agree</a>). Senders look it up and deliver directly. Precise and efficient; the registry becomes a hot dependency, and it goes stale the instant a gateway dies.</div>
@@ -285,7 +475,11 @@
     Mitigations: drain slowly, closing connections at a controlled rate (say 500/s) rather than all at once; send a close frame with a reason so clients know to reconnect with jitter rather than immediately; and deliberately rebalance a small fraction of connections continuously in normal operation, so that "reconnect" is a well-exercised path rather than a rare emergency.
   </div>
 
-  <h2 id="fanout">6. Fan-out: on write or on read?</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="fanout">
+  <summary><h2>6. Fan-out: on write or on read?</h2></summary>
+  <div class="sec-content">
   <p>When one user's action must reach many users' screens, you choose when to pay for the multiplication. This is the single biggest design decision in a feed or chat system, and it is genuinely a choice — both answers are correct for different workloads.</p>
   <div class="cards">
     <div class="card">
@@ -306,7 +500,11 @@
   <p>For chat the same choice appears with different names. A two-person conversation fans out on write, always. A 200,000-member community channel does not — you store the message once in the channel's log and let connected clients read from it, which is roughly Discord's approach: a channel is a stream, and only the members currently connected and currently looking at it receive a push.</p>
   <p>The refinement that makes the difference at scale is to fan out only to <em>active</em> recipients. A message needs to reach the screens that are open right now; everyone else can be served from the channel log the next time they connect, and can receive a push notification through an entirely separate, much cheaper path. Fan-out cost then scales with concurrent viewers rather than with membership, and those two numbers can differ by three orders of magnitude.</p>
 
-  <h2 id="presence">7. Presence, typing and the cheap-signal trap</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="presence">
+  <summary><h2>7. Presence, typing and the cheap-signal trap</h2></summary>
+  <div class="sec-content">
   <p>Presence — the green dot — looks like the smallest feature on the page and is reliably one of the most expensive things in a real-time system, for a reason that generalises: <b>the cost of a signal is its rate times its audience, and presence is high on both.</b></p>
   <p>Consider a 1,000-member channel where 200 people are online. Each of those 200 has a status that can change. If every change is broadcast to every member, one person opening their laptop generates 1,000 messages. Now imagine a busy morning where people connect and disconnect constantly — a mobile client on a train changes state every few minutes — and presence traffic dwarfs the actual conversation by an order of magnitude.</p>
   <div class="note key">
@@ -319,7 +517,21 @@
   <p>Typing indicators are the same problem in miniature and are best handled with a simple protocol: the client sends "typing" at most once every few seconds while the user types, the server broadcasts it with no persistence whatsoever, and the indicator expires on the receiving client after a few seconds without renewal. No "stopped typing" message is needed, which conveniently means a lost message cannot leave someone permanently typing.</p>
   <p>The general lesson is worth extracting because it applies to read receipts, cursor positions, live reactions and anything else in this family: <b>ephemeral signals must never touch durable storage, must be batched, and must be scoped to the audience actually looking.</b> Persisting a typing indicator to a database is a mistake with a remarkably high ceiling on how much damage it can do.</p>
 
-  <h2 id="ordering">8. Ordering, gaps and catch-up</h2>
+
+  <details class="q">
+    <summary>Check yourself: Presence traffic is 10× your message traffic. Where did it go wrong, and how do you fix it without removing the feature?</summary>
+    <div class="a">
+      <p>The usual cause is broadcasting every status change to every member of every channel the user belongs to. One person opening a laptop, in ten channels averaging a thousand members, is ten thousand messages — for a green dot. Mobile clients making it worse by flapping on and off the network several times a minute is the second half of the problem.</p>
+      <p>Four fixes, roughly in order of payoff. Scope to viewers: send presence only to users currently looking at that channel, not all members — typically 10–100× on its own. Batch: collect changes and flush every one to five seconds as a single message; presence has no correctness requirement so the delay is invisible. Debounce: wait 30–60 seconds before marking someone offline, which removes most flapping entirely. And for large member lists, stop pushing altogether — fetch presence when the user opens the list and refresh it while it is open.</p>
+      <p>Underneath all four is one rule: ephemeral signals must never touch durable storage, must be batched, and must be scoped to the audience actually looking.</p>
+    </div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="ordering">
+  <summary><h2>8. Ordering, gaps and catch-up</h2></summary>
+  <div class="sec-content">
   <p>A connection that drops for eleven seconds creates a hole in the user's view of the world, and the client cannot see the hole — it only knows what it received. Making that recoverable requires the same primitive in every design: a <b>monotonic sequence number per stream</b>.</p>
   <p>Every message carries a sequence. The client tracks the highest it has seen. On reconnect it says "I have up to 4,812", and the server replays everything after that from a log. SSE has this built in — the server sets <code>id:</code> on each event and the browser sends <code>Last-Event-ID</code> automatically on reconnect. With WebSockets you build it yourself, and it is the first thing you should build.</p>
   <div class="trace">
@@ -338,7 +550,21 @@ client seq 4812   <span class="good">connected</span>
   </div>
   <p>And since replay means a message can be delivered twice, clients must deduplicate by message ID. Idempotent handling on the receiving side is what makes at-least-once delivery acceptable, exactly as it is on the server side.</p>
 
-  <h2 id="reconnect">9. The reconnect storm</h2>
+
+  <details class="q">
+    <summary>Check yourself: Your users report messages "arriving out of order" after a brief network blip. What's actually happening?</summary>
+    <div class="a">
+      <p>Almost certainly not reordering — TCP guarantees order within a connection. What they are seeing is a <em>gap</em>: messages sent while they were disconnected never arrived, so a later message appears immediately after an earlier one with the middle missing. The client has no way to know something is absent unless you tell it.</p>
+      <p>The fix is a monotonic sequence number per stream. The client tracks the highest it has seen and sends it on reconnect; the server replays everything after it from the channel log. If the client is further behind than your retention window, respond with an explicit "too far behind — resync" so it fetches current state rather than silently believing it is complete.</p>
+      <p>Two details to get right: replay means duplicates are possible, so clients must deduplicate by message ID; and scope the ordering guarantee to a single stream (conversation, channel, document). Global ordering across all streams is far more expensive and nobody perceives its absence.</p>
+    </div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="reconnect">
+  <summary><h2>9. The reconnect storm</h2></summary>
+  <div class="sec-content">
   <p>This is the failure mode from the cold open, and it deserves its own section because it is the one that turns a small incident into a long one.</p>
   <p>The dynamics are brutally simple. Something disconnects a large number of clients simultaneously — a gateway crash, a deploy, a network blip, a load balancer restart. Every client notices at nearly the same moment and reconnects immediately. Reconnection is expensive: TLS handshake, authentication, subscription setup, state resync. The surviving capacity, already carrying the failed servers' share, receives a synchronised burst of the most expensive operation in the system. It falls over. Its clients now reconnect too. This is the metastable failure pattern from <a href="reliability-toolkit.html">The Reliability Toolkit</a> in its purest form: the system cannot recover even after the original trigger is gone, because the recovery traffic is itself the load.</p>
   <div class="note key">
@@ -350,7 +576,57 @@ client seq 4812   <span class="good">connected</span>
   </div>
   <p>The uncomfortable part is that all four defences live in code you must have shipped <em>before</em> the incident, much of it on clients you cannot update quickly. A mobile app with a bad retry loop is a permanent liability — it will still be reconnecting aggressively months after you fix the server. Get backoff and jitter right in the client on day one; it is the highest-leverage twelve lines of code in the whole system.</p>
 
-  <h2 id="backpressure">10. Backpressure: the slow consumer</h2>
+
+  <div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
+    <svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+      <!-- Title -->
+      <text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Metastable Reconnect Storm Loop</text>
+      
+      <rect x="40" y="60" width="140" height="40" rx="4" fill="var(--panel-2)" stroke="var(--danger)" />
+      <text x="110" y="84" fill="var(--text)" font-size="10" text-anchor="middle">1. Network Drop / Restart</text>
+      
+      <rect x="220" y="60" width="140" height="40" rx="4" fill="var(--panel-2)" stroke="var(--danger)" />
+      <text x="290" y="84" fill="var(--text)" font-size="10" text-anchor="middle">2. 100k clients disconnect</text>
+      
+      <rect x="400" y="60" width="140" height="40" rx="4" fill="var(--panel-2)" stroke="var(--danger)" />
+      <text x="470" y="84" fill="var(--text)" font-size="9" text-anchor="middle">3. Sync handshakes overload CPU</text>
+      
+      <rect x="580" y="60" width="140" height="40" rx="4" fill="var(--panel-2)" stroke="var(--danger)" />
+      <text x="650" y="84" fill="var(--text)" font-size="10" text-anchor="middle">4. Gateway crashes again</text>
+      
+      <path d="M 180,80 H 220" stroke="var(--danger)" stroke-width="1.5" marker-end="url(#arrow)" />
+      <path d="M 360,80 H 400" stroke="var(--danger)" stroke-width="1.5" marker-end="url(#arrow)" />
+      <path d="M 540,80 H 580" stroke="var(--danger)" stroke-width="1.5" marker-end="url(#arrow)" />
+      <path d="M 650,100 C 650,160 110,160 110,100" fill="none" stroke="var(--danger)" stroke-width="2" stroke-dasharray="4,4" marker-end="url(#arrow)" />
+      <text x="380" y="145" fill="var(--danger)" font-size="10" font-weight="700" text-anchor="middle">Metastable Failure Loop (Permanent overload)</text>
+      
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--danger)" />
+        </marker>
+      </defs>
+    </svg>
+  </div>
+
+
+  <details class="q">
+    <summary>Check yourself: Reconnection is a standard client requirement. Explain why it is also your system's most dangerous load test, and name three server-side mitigations.</summary>
+    <div class="a">
+      <p>Reconnection is a dangerous load test because a mass disconnect causes thousands of clients to attempt to reconnect simultaneously. A reconnect is much more expensive than a simple request, requiring a full TLS handshake, client authentication, and a complete state resynchronization. This surge can saturate server CPU and memory, causing surviving servers to fall over, creating a cascading metastable failure loop.</p>
+      <p>Three server-side mitigations are:</p>
+      <ol class="tight">
+        <li><strong>Server-Directed Reconnect:</strong> Send a close frame containing a randomized reconnect delay and targets, spacing out the stampede.</li>
+        <li><strong>Admission Control:</strong> Set a strict limit on connection setup rates, quickly rejecting over-quota handshakes so they back off.</li>
+        <li><strong>Cheap Resumes:</strong> Let clients resume from a sequence number to fetch only deltas instead of forcing a full cold sync.</li>
+      </ol>
+    </div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="backpressure">
+  <summary><h2>10. Backpressure: the slow consumer</h2></summary>
+  <div class="sec-content">
   <p>You are pushing messages at a client on a train with two bars of signal. It cannot keep up. Where do the messages go?</p>
   <p>By default, into a buffer, and buffers grow. One slow client with a large channel subscription can accumulate tens of megabytes of undelivered messages, and a few hundred such clients can exhaust the memory of a gateway serving fifty thousand healthy ones. The healthy connections die because of the sick ones — a failure of isolation, which is precisely what bulkheads exist to prevent.</p>
   <div class="note warn">
@@ -378,7 +654,11 @@ client seq 4812   <span class="good">connected</span>
   <p>"Disconnect and let them resync" is the option teams resist and then adopt, because it is the only one whose worst case is bounded. It is also why section 8's sequence numbers are load-bearing: cheap resume is what makes aggressive disconnection an acceptable policy rather than a data-loss event.</p>
   <p>The related discipline is to <b>send less</b>. Coalesce rapid updates into one frame on a short timer. Send deltas rather than full objects. Let the client declare what it is actually looking at and stop sending it everything else — a client viewing one channel does not need live updates for the other four hundred it is a member of.</p>
 
-  <h2 id="gotchas">11. The gotchas that actually bite</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="gotchas">
+  <summary><h2>11. The gotchas that actually bite</h2></summary>
+  <div class="sec-content">
   <div class="note">
     <span class="label">1 · Idle timeouts you didn't set</span>
     Load balancers, corporate proxies and mobile carrier NATs all close connections that have been idle for 30–120 seconds, usually without telling either side. Send application-level heartbeats every 20–30 s, and use them to detect death in both directions. A TCP connection can appear open for many minutes after the peer is gone.
@@ -408,7 +688,21 @@ client seq 4812   <span class="good">connected</span>
     Load tests from a single machine hit ephemeral port exhaustion at ~64k connections and rarely reproduce the thing that actually breaks you — the synchronised reconnect. Test the storm explicitly: connect 50,000 clients, kill a gateway, and watch what the survivors do.
   </div>
 
-  <h2 id="recap">12. Recap in 60 seconds</h2>
+
+  <details class="q">
+    <summary>Check yourself: WebSockets upgrade from HTTP. Why is this upgrade a security and rate-limiting trap?</summary>
+    <div class="a">
+      <p>Because once the connection upgrades, it bypasses all standard L7 HTTP gateway middleware (logging, authorization filters, body-size limits, and WAF rules). The connection stays open for hours, and the server-side framework does not run validation on incoming WebSocket frames.</p>
+      <p>Concretely: a user authorised for a channel an hour ago may have been removed since, and their still-open socket will keep receiving and sending unless something checks. A client can send ten thousand messages a second with no rate limiter in the path. A malformed or enormous frame can hit a parser that was never fuzzed because "the gateway limits body size".</p>
+      <p>So: check authorisation per message against current state (cached with a short TTL, not read from the socket's initial context), apply a per-connection rate limit, bound frame size, and re-verify the token periodically — closing the connection when it expires rather than trusting it indefinitely. And validate the <code>Origin</code> header at handshake time, since the same-origin policy does not protect WebSockets.</p>
+    </div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="recap">
+  <summary><h2>12. Recap in 60 seconds</h2></summary>
+  <div class="sec-content">
   <div class="recap">
     <p><b>Push makes servers stateful.</b> That one change breaks stateless load balancing, stateless deploys, and requests-per-second capacity planning all at once.</p>
     <p><b>Climb the ladder only as far as you must.</b> Polling for rare updates, SSE for server-to-client streams, WebSockets when the client streams too. SSE is the most under-used option by a wide margin.</p>
@@ -422,71 +716,8 @@ client seq 4812   <span class="good">connected</span>
     <p><b>Heartbeat everything.</b> Idle timeouts you never configured will close your connections, and TCP will not tell you.</p>
   </div>
 
-  <h2 id="check">13. Check yourself</h2>
-  <p>Answer before expanding. If one makes you hesitate, that section is worth a second pass.</p>
-
-  <details class="q">
-    <summary>A product manager asks for a live notification bell. Do you reach for WebSockets?</summary>
-    <div class="a">
-      <p>Probably not. Ask which direction the data flows: a notification bell is purely server-to-client, and the user's actions (marking read, clicking through) are ordinary HTTP requests. That is exactly SSE's shape, and SSE gives you automatic reconnection with <code>Last-Event-ID</code> resume for free, traverses proxies as normal HTTP, and needs no new load balancer configuration.</p>
-      <p>Also ask how fresh it needs to be. If a 30-second delay is acceptable — and for most notification bells it is — polling every 30 seconds is a handful of lines, adds no stateful infrastructure, and can be deleted trivially if the feature doesn't land. Reach for the persistent connection when latency genuinely matters or when polling volume becomes the larger cost.</p>
-      <p>If you do choose SSE, confirm HTTP/2 is in play end to end, or the six-connections-per-origin limit will surprise someone with several tabs open.</p>
-    </div>
-  </details>
-
-  <details class="q">
-    <summary>A celebrity with 100 million followers posts. Trace what happens under each fan-out strategy.</summary>
-    <div class="a">
-      <p><b>Fan-out on write:</b> 100 million inserts into 100 million inboxes. Even at 100,000 writes/second that is nearly 17 minutes, during which the post appears for some followers and not others, your storage tier is saturated, and every other user's writes are queued behind it. And the great majority of those inboxes belong to people who will not open the app today, so most of the work is discarded unread.</p>
-      <p><b>Fan-out on read:</b> the post is stored once — instant. But now every one of that celebrity's followers, on every feed load, must query the celebrity's timeline and merge it, which for a popular account means an enormous read amplification concentrated on one row range.</p>
-      <p><b>Hybrid, which is what real systems do:</b> mark high-follower accounts as pull. Their posts are stored once and merged in at read time; everyone else's are fanned out on write. A follower's feed is their precomputed inbox merged with the recent posts of the few large accounts they follow — a small merge, over a small set, that caches well. Push notifications go through an entirely separate path sized for the burst.</p>
-    </div>
-  </details>
-
-  <details class="q">
-    <summary>You deploy a new version to twenty gateways, each holding 50,000 connections. What goes wrong and how do you prevent it?</summary>
-    <div class="a">
-      <p>Each restart drops 50,000 connections at once, and all 50,000 clients reconnect immediately — to the nineteen remaining gateways, which are already absorbing that server's traffic. Each reconnect costs a TLS handshake, auth, subscription setup and a state sync, so the surviving fleet gets a synchronised burst of the most expensive operation it performs. Repeat nineteen more times and you can push the fleet into the metastable state where reconnect load alone sustains the failure.</p>
-      <p>Prevention: drain gradually rather than restarting abruptly — close connections at a few hundred per second, so reconnects arrive as a trickle. Send a close frame carrying a suggested reconnect delay so clients spread themselves out instead of racing. Ensure resume-from-sequence works, so a reconnect is kilobytes rather than megabytes. Add admission control so a gateway rejects excess new connections fast instead of accepting them slowly. And leave real headroom — a fleet running at 90% connection capacity has nowhere to put a rolling deploy's displaced connections.</p>
-    </div>
-  </details>
-
-  <details class="q">
-    <summary>One client is on a terrible mobile connection and subscribed to a busy channel. How do you stop it from hurting anyone else?</summary>
-    <div class="a">
-      <p>Give its send queue a hard bound — a fixed number of messages or bytes — and decide explicitly what happens when the bound is hit. For state-like data, conflate: keep only the latest value per key, so a price feed sends one current price rather than four hundred stale ones. For a message stream where every item matters, disconnect the client; it reconnects and resumes from its sequence number, and the memory is reclaimed immediately.</p>
-      <p>The point is isolation. Without a bound, that one connection's buffer grows until the gateway's memory is exhausted, and fifty thousand healthy connections die because of one sick one. That is the bulkhead argument from <a href="reliability-toolkit.html">The Reliability Toolkit</a> applied to memory rather than threads.</p>
-      <p>Reduce the pressure too: send deltas rather than full objects, coalesce rapid updates on a short timer, and only send updates for what the client is actually viewing.</p>
-    </div>
-  </details>
-
-  <details class="q">
-    <summary>Why does a WebSocket connection need authorisation checks on every message?</summary>
-    <div class="a">
-      <p>Because the HTTP middleware stack — auth, rate limiting, request-size limits, logging, tracing — runs on the upgrade request and then never again. Everything after the upgrade is frames on a socket that your framework does not inspect.</p>
-      <p>Concretely: a user authorised for a channel an hour ago may have been removed since, and their still-open socket will keep receiving and sending unless something checks. A client can send ten thousand messages a second with no rate limiter in the path. A malformed or enormous frame can hit a parser that was never fuzzed because "the gateway limits body size".</p>
-      <p>So: check authorisation per message against current state (cached with a short TTL, not read from the socket's initial context), apply a per-connection rate limit, bound frame size, and re-verify the token periodically — closing the connection when it expires rather than trusting it indefinitely. And validate the <code>Origin</code> header at handshake time, since the same-origin policy does not protect WebSockets.</p>
-    </div>
-  </details>
-
-  <details class="q">
-    <summary>Your users report messages "arriving out of order" after a brief network blip. What's actually happening?</summary>
-    <div class="a">
-      <p>Almost certainly not reordering — TCP guarantees order within a connection. What they are seeing is a <em>gap</em>: messages sent while they were disconnected never arrived, so a later message appears immediately after an earlier one with the middle missing. The client has no way to know something is absent unless you tell it.</p>
-      <p>The fix is a monotonic sequence number per stream. The client tracks the highest it has seen and sends it on reconnect; the server replays everything after it from the channel log. If the client is further behind than your retention window, respond with an explicit "too far behind — resync" so it fetches current state rather than silently believing it is complete.</p>
-      <p>Two details to get right: replay means duplicates are possible, so clients must deduplicate by message ID; and scope the ordering guarantee to a single stream (conversation, channel, document). Global ordering across all streams is far more expensive and nobody perceives its absence.</p>
-    </div>
-  </details>
-
-  <details class="q">
-    <summary>Presence traffic is 10× your message traffic. Where did it go wrong, and how do you fix it without removing the feature?</summary>
-    <div class="a">
-      <p>The usual cause is broadcasting every status change to every member of every channel the user belongs to. One person opening a laptop, in ten channels averaging a thousand members, is ten thousand messages — for a green dot. Mobile clients making it worse by flapping on and off the network several times a minute is the second half of the problem.</p>
-      <p>Four fixes, roughly in order of payoff. Scope to viewers: send presence only to users currently looking at that channel, not all members — typically 10–100× on its own. Batch: collect changes and flush every one to five seconds as a single message; presence has no correctness requirement so the delay is invisible. Debounce: wait 30–60 seconds before marking someone offline, which removes most flapping entirely. And for large member lists, stop pushing altogether — fetch presence when the user opens the list and refresh it while it is open.</p>
-      <p>Underneath all four is one rule: ephemeral signals must never touch durable storage, must be batched, and must be scoped to the audience actually looking.</p>
-    </div>
-  </details>
-
+  </div>
+</details>
   <hr>
 
   <div class="footer">
@@ -496,5 +727,81 @@ client seq 4812   <span class="good">connected</span>
   </div>
 
 </div>
+
+<script>
+  // Restore open states from localStorage
+  document.querySelectorAll('details.sec-collapse').forEach(details => {
+    const id = details.id;
+    const storedState = localStorage.getItem(`sec-open-${id}`);
+    if (storedState !== null) {
+      details.open = storedState === 'true';
+    } else {
+      details.open = false; // Collapsed by default
+    }
+    
+    // Listen for toggle events to save state
+    details.addEventListener('toggle', () => {
+      localStorage.setItem(`sec-open-${id}`, details.open);
+    });
+  });
+
+  // Restore scroll position
+  const storedScroll = localStorage.getItem('sec-scroll-pos');
+  if (storedScroll !== null && !window.location.hash) {
+    setTimeout(() => {
+      window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
+    }, 100);
+  }
+
+  // Save scroll position on scroll (debounced)
+  let scrollTimeout;
+  window.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      localStorage.setItem('sec-scroll-pos', window.scrollY);
+    }, 150);
+  });
+
+  // Auto-expand details elements when targeted by a hash link
+  function handleHashChange() {
+    const hash = window.location.hash;
+    if (hash) {
+      const target = document.querySelector(hash);
+      if (target) {
+        let parent = target.closest('details');
+        while (parent) {
+          parent.open = true;
+          parent = parent.parentElement.closest('details');
+        }
+        setTimeout(() => {
+          target.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+    }
+  }
+  window.addEventListener('hashchange', handleHashChange);
+  window.addEventListener('DOMContentLoaded', handleHashChange);
+
+  // Update scroll progress bar dynamically
+  const progressBar = document.querySelector('.progress-bar');
+  function updateProgress() {
+    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+    if (scrollHeight > 0) {
+      const progress = (window.scrollY / scrollHeight) * 100;
+      progressBar.style.width = `${progress}%`;
+    } else {
+      progressBar.style.width = '0%';
+    }
+  }
+  window.addEventListener('scroll', updateProgress);
+  window.addEventListener('resize', updateProgress);
+  document.querySelectorAll('details').forEach(d => {
+    d.addEventListener('toggle', () => {
+      setTimeout(updateProgress, 60);
+    });
+  });
+  updateProgress();
+</script>
+
 </body>
 </html>
