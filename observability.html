@@ -60,11 +60,8 @@
   }
   h1 { font-size: 2.05rem; line-height: 1.15; margin: 0 0 12px; letter-spacing: -0.02em; }
   .lede { color: var(--muted); font-size: 1.12rem; margin: 0; }
-  h2 {
-    font-size: 1.5rem; margin: 44px 0 14px; letter-spacing: -0.01em;
-    padding-top: 8px; scroll-margin-top: 20px;
-  }
-  h3 { font-size: 1.16rem; margin: 26px 0 8px; }
+  h2 { font-size: 1.5rem; margin: 48px 0 16px; letter-spacing: -0.015em; padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 65px; width: 100%; }
+  h3 { font-size: 1.18rem; margin: 32px 0 10px; font-weight: 600; }
   p { margin: 12px 0; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
@@ -161,10 +158,121 @@
   pre{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.6;margin:18px 0;}
   pre code{background:none;border:none;padding:0;font-size:1em;}
   .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
+
+  /* Sticky Top Header */
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+  .header-inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+  }
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+  }
+  .breadcrumbs a {
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .breadcrumbs a:hover {
+    color: var(--accent);
+  }
+  .breadcrumbs .sep {
+    color: var(--border);
+    font-weight: 300;
+  }
+  .breadcrumbs .curr {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .toc-jump a {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Scroll Progress Indicator */
+  .progress-bar {
+    height: 3px;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.08s ease-out;
+  }
+
+  /* Collapsible Sections */
+  details.sec-collapse {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  details.sec-collapse summary {
+    cursor: pointer;
+    list-style: none;
+    outline: none;
+    padding: 18px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  details.sec-collapse summary::-webkit-details-marker {
+    display: none;
+  }
+  details.sec-collapse summary h2 {
+    margin: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+    font-size: 1.45rem;
+    flex-grow: 1;
+  }
+  details.sec-collapse summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+    transition: transform 0.2s ease;
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+  details.sec-collapse[open] summary::after {
+    transform: rotate(-135deg);
+  }
+  .sec-content {
+    padding: 8px 0 28px 0;
+  }
+
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="sticky-header">
+  <div class="header-inner">
+    <div class="breadcrumbs">
+      <a href="index.html">System Design Guide</a>
+      <span class="sep">/</span>
+      <span class="curr">7. Observability</span>
+    </div>
+    <div class="toc-jump">
+      <a href="#top">Back to Top</a>
+    </div>
+  </div>
+  <div class="progress-bar"></div>
+</div>
+<div class="wrap" id="top">
 
   <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
   <header class="hero">
@@ -195,11 +303,12 @@
       <li><a href="#incident">One incident, three signals</a></li>
       <li><a href="#gotchas">The gotchas that actually bite</a></li>
       <li><a href="#recap">Recap in 60 seconds</a></li>
-      <li><a href="#check">Check yourself</a></li>
     </ol>
   </nav>
 
-  <h2 id="green">1. Green dashboards, broken system</h2>
+<details class="sec-collapse" id="green">
+  <summary><h2>1. Green dashboards, broken system</h2></summary>
+  <div class="sec-content">
   <p>There is a specific kind of professional misery that comes from staring at a wall of healthy graphs while customers tell you the product is unusable. It is worth understanding exactly how it happens, because it is not bad luck — it's a predictable consequence of how most instrumentation gets built.</p>
   <p>Monitoring, as most teams practise it, means picking a set of things that might break and watching them. CPU. Memory. Disk. Error rate. Those are all real, and every one of them has caught a real outage. But the list is written in advance, by people reasoning about failures they can imagine. The failure that takes you down is, almost by definition, the one nobody put on the list.</p>
   <div class="note key">
@@ -209,7 +318,11 @@
   <p>The checkout outage above is the canonical shape. Every dashboard was an aggregate. Aggregates are lossy on purpose — that's what makes them cheap. And the loss is not random: aggregation systematically hides small populations. A failure affecting 2% of users disappears into a 0.02% error rate if it manifests as slowness rather than errors. A failure affecting one customer — who happens to be your largest — disappears entirely.</p>
   <p>So the practical question is not "do we have monitoring." Everyone has monitoring. The question is: <em>when something breaks in a way we did not anticipate, can we find it from the data we're already collecting?</em> Most teams discover the answer is no at the worst possible time.</p>
 
-  <h2 id="signals">2. Three signals, three jobs</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="signals">
+  <summary><h2>2. Three signals, three jobs</h2></summary>
+  <div class="sec-content">
   <p>The industry has more or less converged on three kinds of telemetry. They are not three formats for the same information — they are three different trade-offs between cost, breadth, and detail, and using the wrong one for a job is where most of the waste lives.</p>
   <div class="table-scroll">
     <table>
@@ -228,7 +341,11 @@
   </div>
   <p>A fourth signal, <strong>profiles</strong> (continuous CPU and memory profiling in production), has become practical in the last few years and is worth knowing about — it answers "which line of code is burning the CPU" in the same way traces answer "which service is burning the latency." It's not yet table stakes the way the other three are.</p>
 
-  <h2 id="metrics">3. Metrics: counters, gauges, histograms</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="metrics">
+  <summary><h2>3. Metrics: counters, gauges, histograms</h2></summary>
+  <div class="sec-content">
   <p>There are essentially three metric types, and choosing wrongly between them produces graphs that are worse than no graph, because they look authoritative.</p>
   <p>A <strong>counter</strong> only goes up. Requests served, bytes written, errors returned. You never read a counter's absolute value — it's meaningless, an artefact of how long the process has been running. You read its <em>rate</em>: the derivative. This is why counters survive restarts gracefully; the collector sees the value reset to zero and treats it as a new series rather than as a catastrophic negative spike.</p>
   <p>A <strong>gauge</strong> goes up and down. Queue depth, connections in use, memory resident, temperature. Gauges are instantaneous samples, which means they miss everything between samples. A gauge scraped every 15 seconds cannot see a queue that spikes to 50,000 and drains in 3 seconds. This is a real and common blind spot: your queue depth graph is flat and your users are timing out.</p>
@@ -239,7 +356,17 @@
   </div>
   <p>The compensation for that awkwardness is enormous: histograms are <em>aggregatable</em>. You can add the bucket counts from 400 instances together and compute a fleet-wide p99 that is genuinely correct, because you're summing counts, not averaging summaries. That property is worth a great deal, and it's exactly the property that pre-computed percentiles lack — which brings us to the most common statistical error in this entire field.</p>
 
-  <h2 id="average">4. Why the average lies</h2>
+
+  <details class="q">
+    <summary>Check yourself: Your queue-depth gauge is flat at near zero, but consumers are visibly falling behind and users are timing out. Where's the gap?</summary>
+    <div class="a">A gauge is an instantaneous sample, so a 15-second scrape interval can only ever see 15-second-apart snapshots of a value that may be moving far faster. A queue that fills to 40,000 and drains in four seconds is completely invisible — every scrape happens to catch it empty. Anything bursty needs either a counter you can take the rate of (enqueued and dequeued totals, whose divergence reveals the backlog even between samples) or a high-water-mark gauge that the application resets each scrape rather than reporting the current value. The general lesson is that your scrape interval sets a hard floor on the duration of any phenomenon you can observe, and most of the interesting ones — GC pauses, pool exhaustion, lock contention — live below it.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="average">
+  <summary><h2>4. Why the average lies</h2></summary>
+  <div class="sec-content">
   <p>Take a service handling 100 requests. Ninety-nine of them complete in 20 ms. One takes 2 seconds.</p>
   <div class="note key">
     <span class="label">The arithmetic</span>
@@ -256,7 +383,22 @@
   </div>
   <p>The practical consequence: if your load test says p99 is 40 ms and production says p99 is 900 ms, do not assume production is misconfigured. Check whether your load generator was coordinating with the thing it was supposed to be stressing.</p>
 
-  <h2 id="red-use">5. RED and USE</h2>
+
+  <details class="q">
+    <summary>Check yourself: Two instances report p99s of 100 ms and 300 ms. What's the fleet-wide p99?</summary>
+    <div class="a">Unknowable from those two numbers. A percentile is a property of a distribution, and you cannot recover the combined distribution from two summary points — the answer depends on the full shape of both and on how many requests each instance served. If the 300 ms instance handled 1% of traffic the fleet p99 is close to 100 ms; if it handled 60% it is much nearer 300 ms; and in a skewed population the true value can sit outside the range of the two inputs entirely. The only correct method is to sum the histogram bucket counts across instances and compute the percentile once on the combined counts, which is exactly why bucketed histograms are worth their awkward fixed boundaries. Any dashboard showing <code>avg(p99)</code> or <code>max(p99)</code> across hosts is displaying a number with no defined relationship to user experience.</div>
+  </details>
+
+  <details class="q">
+    <summary>Check yourself: Your load test reports a p99 of 40 ms; production is at 900 ms with the same traffic shape. Name the most likely measurement bug.</summary>
+    <div class="a">Coordinated omission in the load generator. A tool that sends a request, waits for the response, then sends the next one stops issuing load exactly when the system stalls — so a two-second freeze produces one slow sample instead of the thousands of slow samples that real users, who do not pause politely, would have generated. The stall is recorded as a single unlucky request rather than as a period during which everyone was queued, and the tail of the reported distribution is understated by orders of magnitude. The correction is to measure each request's latency against the time it <em>should</em> have been sent under the intended arrival rate, not the time it was actually dispatched; HdrHistogram's correcting recorders exist to do precisely this. Before rebuilding a service to chase a discrepancy like this, check whether the two numbers are even measuring the same thing.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="red-use">
+  <summary><h2>5. RED and USE</h2></summary>
+  <div class="sec-content">
   <p>Two mnemonics, each for a different kind of thing, and between them they cover most of what a new service needs on day one.</p>
   <p><strong>RED</strong> is for services — anything that handles requests. <em>Rate</em> (requests per second), <em>Errors</em> (how many failed), <em>Duration</em> (distribution of how long they took). Three metrics per endpoint. If you instrument nothing else, instrument these, because almost every user-visible symptom shows up in one of them.</p>
   <p><strong>USE</strong> is for resources — CPUs, disks, network links, connection pools, thread pools. <em>Utilization</em> (percentage of time busy), <em>Saturation</em> (how much work is queued and waiting), <em>Errors</em>. Brendan Gregg's insight was that saturation, not utilization, is the signal that matters: a disk at 100% utilization with an empty queue is fine — it's working. A disk at 70% utilization with a queue 200 deep is in trouble.</p>
@@ -270,7 +412,31 @@
     Split latency by outcome. A fast failure and a fast success are both fast, and mixing them means an outage that turns 30% of your traffic into instant 500s will make your latency graph <em>improve</em>. More than one team has watched p99 drop during an incident and briefly felt good about it.
   </div>
 
-  <h2 id="logs">6. Logs: structured, sampled, expensive</h2>
+
+  <div class="note key">
+    <span class="label">🛠️ Hands-On Lab: Build a RED Metric Prometheus Exporter</span>
+    <p>Build this mini-project to implement custom instrumentation and scrape setups:</p>
+    <ul class="tight" style="margin-top: 8px; font-size: 0.95rem;">
+      <li><strong>1. The Server:</strong> Write an API server in Node.js or Python. Create endpoints `/checkout` (simulated 50ms latency) and `/hash` (simulated 200ms latency).</li>
+      <li><strong>2. The Metrics Endpoint:</strong> Expose a `/metrics` route that outputs Prometheus-formatted metrics. Implement:
+        <ul class="tight" style="margin-left: 16px;">
+          <li>A counter for request rates: <code>http_requests_total{method="POST", handler="/checkout", status="200"}</code></li>
+          <li>A bucketed histogram for latency durations: <code>http_request_duration_seconds_bucket{le="0.05", handler="/checkout"}</code></li>
+        </ul>
+      </li>
+      <li><strong>3. Prometheus Scrape Configuration:</strong> Spin up a Prometheus instance in Docker with a <code>prometheus.yml</code> file configured to scrape your server's `/metrics` endpoint every 5s.</li>
+      <li><strong>4. Benchmarking under Load:</strong> Run a load test using <code>k6</code> against your API server. Query your local Prometheus web console at <code>localhost:9090</code>, and calculate the exact p99 latency dynamically using:
+        <pre><code class="language-promql">histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[1m])) by (le))</code></pre>
+      </li>
+    </ul>
+    <p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Put this local metric exporter setup on your portfolio as a demonstration of production-grade RED monitoring.</p>
+  </div>
+
+  </div>
+</details>
+<details class="sec-collapse" id="logs">
+  <summary><h2>6. Logs: structured, sampled, expensive</h2></summary>
+  <div class="sec-content">
   <p>Logs are the signal everybody starts with and almost nobody plans for. The failure mode is not that they don't work — it's that they work fine at 100 requests per second and become a budget line item at 10,000.</p>
   <p>Work the numbers. Ten thousand requests per second, one log line per request, 1.2 KB per line: that is 12 MB/s, or roughly <strong>1 TB per day</strong>, from one service. Ingest-and-index pricing for hosted log platforms is commonly quoted in the region of a few tenths of a dollar per GB, so a terabyte a day lands somewhere in the mid five figures per month — for one service, before anyone adds debug logging to chase a bug and forgets to take it out.</p>
   <div class="note warn">
@@ -285,7 +451,11 @@
     A <strong>trace ID</strong> (so a log can be joined to the trace it belongs to), a <strong>request ID</strong> (so a customer's support ticket can be tied to actual events), and the <strong>deploy or build version</strong> (so "did this start with the release?" takes ten seconds to answer rather than forty minutes).
   </div>
 
-  <h2 id="traces">7. Traces: spans and propagation</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="traces">
+  <summary><h2>7. Traces: spans and propagation</h2></summary>
+  <div class="sec-content">
   <p>Metrics told you the checkout endpoint is slow. Logs told you what one request did inside one service. Neither tells you that the slowness lives three hops down, inside a call your service makes to a service that calls a service. That's what tracing is for.</p>
   <p>A <strong>trace</strong> is one request's complete journey. A <strong>span</strong> is one unit of work within it — a service handling the request, a database query, an outbound HTTP call. Spans nest: the parent span's duration contains its children's. What makes it work is <strong>context propagation</strong>: the trace ID is passed along with every outbound call, so that work happening in a different process on a different continent still knows which request it belongs to. The W3C <code>traceparent</code> header is the standard way to carry it, and OpenTelemetry is the standard way to produce it.</p>
   <div class="note wild">
@@ -310,7 +480,59 @@ trace 4f9a2c…   POST /checkout                     <b>2,410 ms</b>
   <p><strong>Sampling</strong> is unavoidable — storing every span of every request at scale is prohibitive — and where you decide is the interesting question. <em>Head sampling</em> makes the keep-or-drop decision at the start of the request, before anything has happened. It's cheap and simple, and it throws away the interesting requests at exactly the same rate as the boring ones. <em>Tail sampling</em> buffers all the spans and decides after the request completes, so you can keep every trace that errored or exceeded a latency threshold and 0.1% of the rest. It costs memory in the collector and adds a delay before traces are queryable, and it is almost always worth it.</p>
   <p>The other half of the value is structural rather than diagnostic: a trace is an empirical, always-current service dependency graph. The architecture diagram in the wiki is a claim about how the system works; the trace data is a measurement. They differ more often than anyone is comfortable with.</p>
 
-  <h2 id="cardinality">8. Cardinality: the bill that ate the budget</h2>
+
+  <div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
+    <svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+      <!-- Title -->
+      <text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Distributed Context Propagation Timeline</text>
+      
+      <!-- Gateway Span -->
+      <rect x="120" y="50" width="580" height="30" rx="4" fill="var(--panel-2)" stroke="var(--accent)" stroke-width="1.5" />
+      <text x="135" y="69" fill="var(--text)" font-size="11" font-weight="600">POST /checkout [trace_id: 4f9a2c]</text>
+      
+      <!-- Auth Verify Span -->
+      <rect x="140" y="90" width="120" height="30" rx="4" fill="var(--panel-2)" stroke="var(--border)" stroke-width="1.5" />
+      <text x="155" y="109" fill="var(--text)" font-size="10">auth.verify</text>
+      
+      <!-- Pricing Quote Span -->
+      <rect x="280" y="90" width="400" height="30" rx="4" fill="var(--panel-2)" stroke="var(--danger)" stroke-width="1.5" />
+      <text x="295" y="109" fill="var(--text)" font-size="10" font-weight="600">pricing.quote</text>
+      
+      <!-- FX Rates Span -->
+      <rect x="320" y="130" width="340" height="30" rx="4" fill="var(--panel-2)" stroke="var(--danger)" stroke-width="1.5" />
+      <text x="335" y="149" fill="var(--text)" font-size="10">fx.rates (Attempts &amp; Timeouts)</text>
+      
+      <!-- Headers arrows -->
+      <!-- Gateway -> Auth header -->
+      <path d="M 130,80 V 90" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2,2" marker-end="url(#arrow-grey)" />
+      <!-- Gateway -> Pricing header -->
+      <path d="M 285,80 V 90" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2,2" marker-end="url(#arrow-grey)" />
+      <!-- Pricing -> FX Rates header -->
+      <path d="M 325,120 V 130" fill="none" stroke="var(--muted)" stroke-width="1" stroke-dasharray="2,2" marker-end="url(#arrow-grey)" />
+      
+      <!-- Label -->
+      <text x="20" y="180" fill="var(--muted)" font-size="10">W3C Header: traceparent: 00-4f9a2c...-01</text>
+      
+      <!-- Marker definitions -->
+      <defs>
+        <marker id="arrow-grey" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--muted)" />
+        </marker>
+      </defs>
+    </svg>
+  </div>
+
+
+  <details class="q">
+    <summary>Check yourself: You sample 1% of traces at ingress to control cost. Why do rare errors stay invisible?</summary>
+    <div class="a">Head sampling decides before the request runs, so it cannot know the request will be interesting — it keeps 1% of everything, which means 1% of your errors too. An error occurring in one request per hundred thousand now appears roughly once per ten million, which in practice means never, and when you finally get a report you'll find you have no trace for it. Tail sampling fixes this by buffering all spans until the request completes and deciding afterwards: keep 100% of errors, 100% of anything over a latency threshold, and a fraction of a percent of the routine successes. The costs are real — the collector needs memory to hold in-flight traces, and traces become queryable a few seconds later than they otherwise would — but they buy you the property that the traces you kept are the ones you'd actually want, which is the entire point of keeping any.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="cardinality">
+  <summary><h2>8. Cardinality: the bill that ate the budget</h2></summary>
+  <div class="sec-content">
   <p>Time-series databases store one series per unique combination of metric name and label values. Not one per metric — one per <em>combination</em>. That word does all the damage.</p>
   <p>Start with something reasonable. <code>http_requests_total</code> labelled by endpoint, status, region and instance:</p>
   <div class="note key">
@@ -326,7 +548,52 @@ trace 4f9a2c…   POST /checkout                     <b>2,410 ms</b>
   </div>
   <p>The right answer to "I want per-customer latency" is usually not a metric at all. It's structured events with the customer ID as a field, queried on demand — the cost is storage that scales with traffic rather than a cross-product that scales with your customer table. <strong>Exemplars</strong> are the useful bridge: a histogram bucket carries a handful of sample trace IDs, so you can click from "the p99 bucket got fatter" straight to an actual slow trace, without ever putting a high-cardinality value in a label.</p>
 
-  <h2 id="slo">9. SLIs, SLOs and error budgets</h2>
+
+  <div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
+    <svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+      <!-- Title -->
+      <text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Metrics Cardinality Multiplier</text>
+      
+      <!-- Bounded Labels (Left) -->
+      <rect x="20" y="55" width="280" height="130" rx="8" fill="var(--panel-2)" stroke="var(--accent-2)" stroke-width="1.5" />
+      <text x="35" y="78" fill="var(--accent-2)" font-size="12" font-weight="700">Bounded Dimensions (Safe)</text>
+      <text x="35" y="105" fill="var(--text)" font-size="11">HTTP Status codes [5 values] (200, 400, etc.)</text>
+      <text x="35" y="125" fill="var(--text)" font-size="11">Region codes [3 values] (us-east, us-west, etc.)</text>
+      <text x="35" y="145" fill="var(--text)" font-size="11">Endpoints [20 values] (/checkout, /cart, etc.)</text>
+      <text x="35" y="170" fill="var(--muted)" font-size="11">5 &times; 3 &times; 20 = 300 series</text>
+      
+      <!-- Multiplication Arrow -->
+      <path d="M 310,120 H 420" fill="none" stroke="var(--danger)" stroke-width="2" marker-end="url(#arrow-red)" />
+      <text x="365" y="108" fill="var(--danger)" font-size="9" text-anchor="middle" font-weight="700">&times; Unbounded</text>
+      
+      <!-- Unbounded Labels (Right) -->
+      <rect x="430" y="55" width="310" height="130" rx="8" fill="var(--panel-2)" stroke="var(--danger)" stroke-width="1.5" />
+      <text x="445" y="78" fill="var(--danger)" font-size="12" font-weight="700">Unbounded Dimension (Explosion)</text>
+      <text x="445" y="105" fill="var(--text)" font-size="11">User ID [2,000,000 values]</text>
+      <text x="445" y="125" fill="var(--muted)" font-size="11">OR Order ID / raw URL with path parameters</text>
+      <text x="445" y="150" fill="var(--danger)" font-size="12" font-weight="700">300 &times; 2,000,000 = 600,000,000 series</text>
+      <text x="445" y="170" fill="var(--danger)" font-size="10">Results in TSDB memory crash or massive billing.</text>
+      
+      <!-- Marker definitions -->
+      <defs>
+        <marker id="arrow-red" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--danger)" />
+        </marker>
+      </defs>
+    </svg>
+  </div>
+
+
+  <details class="q">
+    <summary>Check yourself: Product wants per-customer latency, and you have 50,000 customers. Do you add a <code>customer_id</code> label?</summary>
+    <div class="a">No — that multiplies every existing series by 50,000 and will either take down your metrics backend or produce a bill that gets the whole observability programme cancelled. The correct home for an unbounded dimension is an event store: structured logs or traces with <code>customer_id</code> as a field, queried on demand, where cost scales with traffic rather than with the cross-product of every label. If you need alerting rather than ad-hoc querying, the usual compromise is to promote a bounded subset — a <code>tier</code> label with three values, or an explicit allow-list of your twenty largest accounts, which keeps the cardinality fixed and known. Exemplars close the remaining gap by attaching a few trace IDs to each histogram bucket, so you can jump from an aggregate to a specific customer's slow request without any high-cardinality label existing at all.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="slo">
+  <summary><h2>9. SLIs, SLOs and error budgets</h2></summary>
+  <div class="sec-content">
   <p>Everything so far has been about seeing. This section is about deciding what "working" means, in a number, in advance — which is the part that turns telemetry into a management tool rather than a hobby.</p>
   <p>An <strong>SLI</strong> (service level indicator) is a measurement: the proportion of requests that succeeded in under 300 ms. An <strong>SLO</strong> (objective) is a target for it: 99.9% of requests, measured over 30 days. An <strong>SLA</strong> is an SLO with money attached and lawyers involved, and should always be looser than your internal SLO — you want to be paging yourself well before you're paying customers.</p>
   <div class="note key">
@@ -338,7 +605,11 @@ trace 4f9a2c…   POST /checkout                     <b>2,410 ms</b>
   <p>The <strong>error budget</strong> is the inversion, and it's the genuinely clever idea: if your SLO is 99.9%, you are <em>permitted</em> 0.1% failure. That budget is a resource. Spend it on risky deploys, migrations, chaos experiments, an aggressive feature launch. Reliability stops being a vague virtue that competes with shipping and becomes a quantity that both sides of the argument can point at. Budget remaining? Ship. Budget exhausted? Freeze features, spend the sprint on stability. The policy has to be agreed before the budget is gone, or it is not a policy — it is a negotiation you will lose during an incident.</p>
   <p>Two design decisions determine whether an SLO is useful or theatre. First, <strong>measure from the user's side</strong>: at the load balancer or in the client, not inside the service, or you will systematically exclude the failures where the request never arrived. Second, <strong>pick a window and stick to it</strong>. A rolling 30-day window is standard; calendar-month windows produce an unhelpful psychological reset on the first of the month, where the team that burned everything on the 29th is suddenly flush again on the 1st.</p>
 
-  <h2 id="alerting">10. Alert on symptoms, not causes</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="alerting">
+  <summary><h2>10. Alert on symptoms, not causes</h2></summary>
+  <div class="sec-content">
   <p>An alert should mean: a human needs to do something, now. Everything else is a dashboard, a ticket, or a weekly report. Most alerting systems fail because they were built on the opposite principle — page on every cause anyone could think of — and the result is not vigilance but noise.</p>
   <p>The arithmetic of noise is brutal. Sixty alert rules, each with one false positive per month, is two pages a day, forever. Nobody stays sharp under that. The team learns, correctly and rationally, that pages are usually nothing, and the response time on the page that <em>is</em> something quietly stretches from three minutes to twenty.</p>
   <div class="note">
@@ -353,7 +624,17 @@ trace 4f9a2c…   POST /checkout                     <b>2,410 ms</b>
     At peak, a 5% error rate is thousands of failures and unambiguously real. At 3 a.m. you serve two requests, one fails, and your ratio-based alert reports a <strong>50% error rate</strong> and pages someone. Every rate-based alert needs a minimum-volume floor: fire only if the error ratio is breached <em>and</em> the absolute count of failures exceeds some threshold. Otherwise your alerting gets loudest exactly when your traffic is quietest.
   </div>
 
-  <h2 id="incident">11. One incident, three signals</h2>
+
+  <details class="q">
+    <summary>Check yourself: Your metrics pipeline dies at 2 a.m. Every graph goes flat and no alert fires. Why, and what would have caught it?</summary>
+    <div class="a">Because almost every alert is written as a threshold on a value — errors above N, latency above M — and when a series stops arriving there is no value to compare, so the rule evaluates to nothing rather than to a breach. Absence looks like calm. Two mechanisms cover it: an explicit staleness rule that fires when a series you expect has reported nothing for some multiple of its scrape interval, and a dead man's switch, which is an alert deliberately wired to fire continuously into an external service that pages you if the stream <em>stops</em>. The second is the one that catches a total pipeline failure, because it does not depend on the pipeline being alive to work — and the general principle it embodies is that anything monitoring itself has a blind spot exactly the size of itself.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="incident">
+  <summary><h2>11. One incident, three signals</h2></summary>
+  <div class="sec-content">
   <p>Here is the whole toolkit used the way it's meant to be used — the cold open at the top of this guide, worked through properly.</p>
   <p><strong>The page.</strong> Not "CPU high." The symptom alert fires: checkout success rate has fallen below the SLO threshold and the one-hour burn rate is 20×. Something a customer would notice is happening now.</p>
   <p><strong>Metrics, to bound the problem.</strong> Request rate: normal. Error rate: 0.02%, unchanged — so requests are not failing. Latency: p50 flat at 20 ms, p99 up from 240 ms to 2.4 seconds. That combination is the signature of a <em>tail</em> problem, not a broken system. Slice the p99 by region: all regions. By instance: all instances. By endpoint: only checkout. Four queries have eliminated most of the hypothesis space — it isn't a bad host, it isn't a bad region, it's something specific to one path.</p>
@@ -364,7 +645,11 @@ trace 4f9a2c…   POST /checkout                     <b>2,410 ms</b>
     Metrics <em>bounded</em> the problem in about ninety seconds. Traces <em>located</em> it. Logs <em>explained</em> it. Each signal did the job it is cheap at, and no signal was asked to do a job it is bad at. The forty minutes lost in the cold open were spent asking metrics a question only traces could answer.
   </div>
 
-  <h2 id="gotchas">12. The gotchas that actually bite</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="gotchas">
+  <summary><h2>12. The gotchas that actually bite</h2></summary>
+  <div class="sec-content">
   <p><strong>Missing data is not zero.</strong> When a service dies, it stops reporting. A graph of its error rate goes flat, not up. An alert on "errors > threshold" will never fire, because there are no errors — there is nothing at all. Alert on absence explicitly, and give your alerting pipeline a heartbeat: a rule that fires if it hasn't heard from itself recently. A monitoring system that goes down silently is worse than none, because you're still trusting it.</p>
   <p><strong>Your scrape interval is your resolution limit.</strong> A 15-second scrape cannot see a 3-second spike. Queue depth, connection pool exhaustion and GC pauses all operate below that resolution. If a gauge is flat while users are timing out, suspect the sampling rate before you suspect the users.</p>
   <p><strong>Fast failures make latency graphs improve.</strong> If a bug turns 30% of traffic into instant 500s, your p99 gets better. Always split latency by outcome, or your headline graph will actively mislead you during the exact incident it exists for.</p>
@@ -374,7 +659,17 @@ trace 4f9a2c…   POST /checkout                     <b>2,410 ms</b>
   <p><strong>Logs contain what you put in them, including the things you shouldn't.</strong> Email addresses, tokens, full request bodies with card details. Logs are usually the least access-controlled datastore in the company and the most widely replicated. Redact at the emitting library, not in a downstream pipeline, because the pipeline will be bypassed by someone debugging at some point.</p>
   <p><strong>Instrumenting only the paths you own.</strong> A request that never reached your service produces no telemetry in your service. TLS handshake failures, DNS problems, gateway 502s and client-side errors are all invisible from the inside. If your SLI is computed from application logs, it structurally cannot count the requests that never arrived — and those are exactly the ones customers complain about.</p>
 
-  <h2 id="recap">13. Recap in 60 seconds</h2>
+
+  <details class="q">
+    <summary>Check yourself: During an incident your p99 latency graph <em>improved</em>. What's the most likely explanation?</summary>
+    <div class="a">Something started failing fast. A dependency that returns a connection-refused in two milliseconds is far quicker than one that does real work, so a bug converting a third of your traffic into immediate 500s will pull the whole latency distribution down and make the graph look better than it did yesterday. The same effect shows up when a circuit breaker opens — that's the breaker working correctly, but it means latency alone can no longer tell you anything about health. The fix is to split every latency metric by outcome and to make the primary panel show successful requests only, with error rate directly beside it. A latency graph that mixes successes and failures is measuring two different populations and reporting their blend as though it were one number.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="recap">
+  <summary><h2>13. Recap in 60 seconds</h2></summary>
+  <div class="sec-content">
   <div class="recap">
     <ul>
       <li><strong>Monitoring answers known questions; observability answers new ones.</strong> The failure that takes you down is the one nobody put on the dashboard.</li>
@@ -388,43 +683,8 @@ trace 4f9a2c…   POST /checkout                     <b>2,410 ms</b>
     </ul>
   </div>
 
-  <h2 id="check">14. Check yourself</h2>
-
-  <details class="q">
-    <summary>During an incident your p99 latency graph <em>improved</em>. What's the most likely explanation?</summary>
-    <div class="a">Something started failing fast. A dependency that returns a connection-refused in two milliseconds is far quicker than one that does real work, so a bug converting a third of your traffic into immediate 500s will pull the whole latency distribution down and make the graph look better than it did yesterday. The same effect shows up when a circuit breaker opens — that's the breaker working correctly, but it means latency alone can no longer tell you anything about health. The fix is to split every latency metric by outcome and to make the primary panel show successful requests only, with error rate directly beside it. A latency graph that mixes successes and failures is measuring two different populations and reporting their blend as though it were one number.</div>
-  </details>
-
-  <details class="q">
-    <summary>Your queue-depth gauge is flat at near zero, but consumers are visibly falling behind and users are timing out. Where's the gap?</summary>
-    <div class="a">A gauge is an instantaneous sample, so a 15-second scrape interval can only ever see 15-second-apart snapshots of a value that may be moving far faster. A queue that fills to 40,000 and drains in four seconds is completely invisible — every scrape happens to catch it empty. Anything bursty needs either a counter you can take the rate of (enqueued and dequeued totals, whose divergence reveals the backlog even between samples) or a high-water-mark gauge that the application resets each scrape rather than reporting the current value. The general lesson is that your scrape interval sets a hard floor on the duration of any phenomenon you can observe, and most of the interesting ones — GC pauses, pool exhaustion, lock contention — live below it.</div>
-  </details>
-
-  <details class="q">
-    <summary>Product wants per-customer latency, and you have 50,000 customers. Do you add a <code>customer_id</code> label?</summary>
-    <div class="a">No — that multiplies every existing series by 50,000 and will either take down your metrics backend or produce a bill that gets the whole observability programme cancelled. The correct home for an unbounded dimension is an event store: structured logs or traces with <code>customer_id</code> as a field, queried on demand, where cost scales with traffic rather than with the cross-product of every label. If you need alerting rather than ad-hoc querying, the usual compromise is to promote a bounded subset — a <code>tier</code> label with three values, or an explicit allow-list of your twenty largest accounts, which keeps the cardinality fixed and known. Exemplars close the remaining gap by attaching a few trace IDs to each histogram bucket, so you can jump from an aggregate to a specific customer's slow request without any high-cardinality label existing at all.</div>
-  </details>
-
-  <details class="q">
-    <summary>Two instances report p99s of 100 ms and 300 ms. What's the fleet-wide p99?</summary>
-    <div class="a">Unknowable from those two numbers. A percentile is a property of a distribution, and you cannot recover the combined distribution from two summary points — the answer depends on the full shape of both and on how many requests each instance served. If the 300 ms instance handled 1% of traffic the fleet p99 is close to 100 ms; if it handled 60% it is much nearer 300 ms; and in a skewed population the true value can sit outside the range of the two inputs entirely. The only correct method is to sum the histogram bucket counts across instances and compute the percentile once on the combined counts, which is exactly why bucketed histograms are worth their awkward fixed boundaries. Any dashboard showing <code>avg(p99)</code> or <code>max(p99)</code> across hosts is displaying a number with no defined relationship to user experience.</div>
-  </details>
-
-  <details class="q">
-    <summary>You sample 1% of traces at ingress to control cost. Why do rare errors stay invisible?</summary>
-    <div class="a">Head sampling decides before the request runs, so it cannot know the request will be interesting — it keeps 1% of everything, which means 1% of your errors too. An error occurring in one request per hundred thousand now appears roughly once per ten million, which in practice means never, and when you finally get a report you'll find you have no trace for it. Tail sampling fixes this by buffering all spans until the request completes and deciding afterwards: keep 100% of errors, 100% of anything over a latency threshold, and a fraction of a percent of the routine successes. The costs are real — the collector needs memory to hold in-flight traces, and traces become queryable a few seconds later than they otherwise would — but they buy you the property that the traces you kept are the ones you'd actually want, which is the entire point of keeping any.</div>
-  </details>
-
-  <details class="q">
-    <summary>Your metrics pipeline dies at 2 a.m. Every graph goes flat and no alert fires. Why, and what would have caught it?</summary>
-    <div class="a">Because almost every alert is written as a threshold on a value — errors above N, latency above M — and when a series stops arriving there is no value to compare, so the rule evaluates to nothing rather than to a breach. Absence looks like calm. Two mechanisms cover it: an explicit staleness rule that fires when a series you expect has reported nothing for some multiple of its scrape interval, and a dead man's switch, which is an alert deliberately wired to fire continuously into an external service that pages you if the stream <em>stops</em>. The second is the one that catches a total pipeline failure, because it does not depend on the pipeline being alive to work — and the general principle it embodies is that anything monitoring itself has a blind spot exactly the size of itself.</div>
-  </details>
-
-  <details class="q">
-    <summary>Your load test reports a p99 of 40 ms; production is at 900 ms with the same traffic shape. Name the most likely measurement bug.</summary>
-    <div class="a">Coordinated omission in the load generator. A tool that sends a request, waits for the response, then sends the next one stops issuing load exactly when the system stalls — so a two-second freeze produces one slow sample instead of the thousands of slow samples that real users, who do not pause politely, would have generated. The stall is recorded as a single unlucky request rather than as a period during which everyone was queued, and the tail of the reported distribution is understated by orders of magnitude. The correction is to measure each request's latency against the time it <em>should</em> have been sent under the intended arrival rate, not the time it was actually dispatched; HdrHistogram's correcting recorders exist to do precisely this. Before rebuilding a service to chase a discrepancy like this, check whether the two numbers are even measuring the same thing.</div>
-  </details>
-
+  </div>
+</details>
   <hr>
   <p class="footer">
     Part of <em>System Design Basics</em>. Sources:
@@ -439,5 +699,81 @@ trace 4f9a2c…   POST /checkout                     <b>2,410 ms</b>
   </p>
 
 </div>
+
+<script>
+  // Restore open states from localStorage
+  document.querySelectorAll('details.sec-collapse').forEach(details => {
+    const id = details.id;
+    const storedState = localStorage.getItem(`sec-open-${id}`);
+    if (storedState !== null) {
+      details.open = storedState === 'true';
+    } else {
+      details.open = false; // Collapsed by default
+    }
+    
+    // Listen for toggle events to save state
+    details.addEventListener('toggle', () => {
+      localStorage.setItem(`sec-open-${id}`, details.open);
+    });
+  });
+
+  // Restore scroll position
+  const storedScroll = localStorage.getItem('sec-scroll-pos');
+  if (storedScroll !== null && !window.location.hash) {
+    setTimeout(() => {
+      window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
+    }, 100);
+  }
+
+  // Save scroll position on scroll (debounced)
+  let scrollTimeout;
+  window.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      localStorage.setItem('sec-scroll-pos', window.scrollY);
+    }, 150);
+  });
+
+  // Auto-expand details elements when targeted by a hash link
+  function handleHashChange() {
+    const hash = window.location.hash;
+    if (hash) {
+      const target = document.querySelector(hash);
+      if (target) {
+        let parent = target.closest('details');
+        while (parent) {
+          parent.open = true;
+          parent = parent.parentElement.closest('details');
+        }
+        setTimeout(() => {
+          target.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+    }
+  }
+  window.addEventListener('hashchange', handleHashChange);
+  window.addEventListener('DOMContentLoaded', handleHashChange);
+
+  // Update scroll progress bar dynamically
+  const progressBar = document.querySelector('.progress-bar');
+  function updateProgress() {
+    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+    if (scrollHeight > 0) {
+      const progress = (window.scrollY / scrollHeight) * 100;
+      progressBar.style.width = `${progress}%`;
+    } else {
+      progressBar.style.width = '0%';
+    }
+  }
+  window.addEventListener('scroll', updateProgress);
+  window.addEventListener('resize', updateProgress);
+  document.querySelectorAll('details').forEach(d => {
+    d.addEventListener('toggle', () => {
+      setTimeout(updateProgress, 60);
+    });
+  });
+  updateProgress();
+</script>
+
 </body>
 </html>
