@@ -64,8 +64,8 @@
     font-size: 1.5rem; margin: 48px 0 16px; letter-spacing: -0.015em;
     padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 65px;
   }
-  h3 { font-size: 1.18rem; margin: 32px 0 10px; font-weight: 600; }
-  p { margin: 12px 0; }
+  h3 { font-size: 1.3rem; margin: 36px 0 12px; font-weight: 700; }
+  p { margin: 20px 0; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
   code {
@@ -110,7 +110,7 @@
     flex: 0 0 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
     font-weight: 700; background: var(--panel-2); color: var(--accent); font-size: 0.95rem;
   }
-  .layer .body h4 { margin: 0 0 2px; font-size: 1rem; }
+  .layer .body h4 { margin: 0 0 2px; font-size: 1.1rem; }
   .layer .body p { margin: 0; font-size: 0.9rem; color: var(--muted); }
   .layer .speed { margin-left: auto; font-size: 0.78rem; color: var(--accent-2); font-weight: 600; white-space: nowrap; }
   .arrow { text-align: center; color: var(--muted); font-size: 0.8rem; margin: -2px 0; }
@@ -131,7 +131,7 @@
   .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
   @media (max-width: 560px){ .cards { grid-template-columns: 1fr; } }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-  .card h4 { margin: 0 0 6px; font-size: 1rem; }
+  .card h4 { margin: 0 0 6px; font-size: 1.1rem; }
   .card p { margin: 0; font-size: 0.9rem; color: var(--muted); }
 
   hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
@@ -246,7 +246,7 @@
     margin: 0;
     border-bottom: none;
     padding-bottom: 0;
-    font-size: 1.4rem;
+    font-size: 1.55rem;
     flex-grow: 1;
   }
   details.sec-collapse summary::after {
@@ -1045,7 +1045,6 @@ def update_user(user_id, fields):
 
 </sys-collapse>
 <sys-collapse id="stampede" title="7. The Cache Stampede (Jitter vs. Coalescing)">
-  <h3>Cache stampede — two different problems that people merge into one</h3>
   <p>These get taught together but are caused by different mechanics and have completely different fixes. Adding jitter to a hot-key issue will not fix it, and adding single-flight to a mass-expiry issue is overkill. Let's compare them:</p>
 
   <svg viewBox="0 0 800 360" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
@@ -1333,7 +1332,6 @@ def update_user(user_id, fields):
   </sys-question>
 </sys-collapse>
 <sys-collapse id="metastable" title="8. Metastable Failures: the self-sustaining death spiral">
-  <h3>Metastable failure — the self-sustaining death spiral</h3>
   <p>This is the failure mode that surprises engineers because the original trigger (the bug, the bad deploy) is gone, but the system remains down. It is a **vicious loop** that feeds on its own recovery attempts:</p>
 
   <div class="table-scroll">
@@ -1371,8 +1369,7 @@ def update_user(user_id, fields):
   </sys-question>
 </sys-collapse>
 <sys-collapse id="hotkeys" title="9. Hot Keys and Partitioning">
-  <h3>Hot keys don't get fixed by more cache nodes</h3>
-  <p>Worth being explicit, because it's the first thing everyone tries. A cache cluster distributes keys by hashing them — consistent hashing, usually — which means <code>user:celebrity</code> maps to exactly one node. Adding nodes changes which node. It does not change how many. You can triple your cluster and that one node is still absorbing 100% of the traffic for that key while the other nodes idle. The fixes are different in kind:</p>
+  <p><strong>Hot keys don't get fixed by more cache nodes.</strong> Worth being explicit, because it's the first thing everyone tries. A cache cluster distributes keys by hashing them — consistent hashing, usually — which means <code>user:celebrity</code> maps to exactly one node. Adding nodes changes which node. It does not change how many. You can triple your cluster and that one node is still absorbing 100% of the traffic for that key while the other nodes idle. The fixes are different in kind:</p>
   <ul class="tight">
     <li><strong>Key splitting</strong> — write the same value under <code>user:celebrity#0</code> … <code>#7</code>, and have readers pick a suffix at random. Eight keys hash to (probably) eight nodes and the load divides. You pay for it in invalidation: a write now has to clear all eight.</li>
     <li><strong>A client-local tier</strong> — a small in-process cache in front of the shared one, holding the top few hundred keys for a second or two. A one-second local TTL on a key read 8,000 times a second turns 8,000 remote reads into one. The cost is a second of extra staleness and the fact that every instance can now disagree.</li>
