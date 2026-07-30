@@ -233,11 +233,14 @@
     cursor: pointer;
     list-style: none;
     outline: none;
-    padding: 18px 0;
+    padding: 16px 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
     user-select: none;
+  }
+  details.sec-collapse[open] summary {
+    padding-bottom: 8px;
   }
   details.sec-collapse summary::-webkit-details-marker {
     display: none;
@@ -264,7 +267,10 @@
     transform: rotate(-135deg);
   }
   .sec-content {
-    padding: 8px 0 28px 0;
+    padding: 4px 0 24px 0;
+  }
+  .sec-content > :first-child {
+    margin-top: 0;
   }
 </style>
 <script src="components.js" defer></script>
