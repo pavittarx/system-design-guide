@@ -1314,7 +1314,6 @@ def update_user(user_id, fields):
   </script>
 
 
-  <h3>Probabilistic Early Expiration (XFetch)</h3>
   <h3>Probabilistic early expiration (XFetch)</h3>
   <p>This is the mathematically elegant answer to the hot-key case, and it requires no locks or coordination. Instead of waiting for a key to expire and risking a stampede of misses, XFetch forces one lucky request to refresh the cache <em>before</em> it actually expires.</p>
   
