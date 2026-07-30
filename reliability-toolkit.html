@@ -14,8 +14,8 @@
   .kicker{text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:var(--accent);font-weight:700;margin-bottom:10px;}
   h1{font-size:2.05rem;line-height:1.15;margin:0 0 12px;letter-spacing:-.02em;}
   .lede{color:var(--muted);font-size:1.12rem;margin:0;}
-  h2{font-size:1.5rem;margin:44px 0 14px;letter-spacing:-.01em;padding-top:8px;scroll-margin-top:20px;}
-  h3{font-size:1.16rem;margin:26px 0 8px;}
+  h2 { font-size: 1.5rem; margin: 48px 0 16px; letter-spacing: -0.015em; padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 65px; width: 100%; }
+  h3 { font-size: 1.18rem; margin: 32px 0 10px; font-weight: 600; }
   p{margin:12px 0;} a{color:var(--accent);text-decoration:none;} a:hover{text-decoration:underline;}
   code{background:var(--code-bg);border:1px solid var(--border);padding:1px 6px;border-radius:6px;font-size:.86em;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
   nav.toc{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:8px;}
@@ -63,10 +63,121 @@
   pre{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.6;margin:18px 0;}
   pre code{background:none;border:none;padding:0;font-size:1em;}
   .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
+
+  /* Sticky Top Header */
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+  .header-inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+  }
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+  }
+  .breadcrumbs a {
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .breadcrumbs a:hover {
+    color: var(--accent);
+  }
+  .breadcrumbs .sep {
+    color: var(--border);
+    font-weight: 300;
+  }
+  .breadcrumbs .curr {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .toc-jump a {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  /* Scroll Progress Indicator */
+  .progress-bar {
+    height: 3px;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.08s ease-out;
+  }
+
+  /* Collapsible Sections */
+  details.sec-collapse {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  details.sec-collapse summary {
+    cursor: pointer;
+    list-style: none;
+    outline: none;
+    padding: 18px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  details.sec-collapse summary::-webkit-details-marker {
+    display: none;
+  }
+  details.sec-collapse summary h2 {
+    margin: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+    font-size: 1.45rem;
+    flex-grow: 1;
+  }
+  details.sec-collapse summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+    transition: transform 0.2s ease;
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+  details.sec-collapse[open] summary::after {
+    transform: rotate(-135deg);
+  }
+  .sec-content {
+    padding: 8px 0 28px 0;
+  }
+
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="sticky-header">
+  <div class="header-inner">
+    <div class="breadcrumbs">
+      <a href="index.html">System Design Guide</a>
+      <span class="sep">/</span>
+      <span class="curr">5. Reliability Toolkit</span>
+    </div>
+    <div class="toc-jump">
+      <a href="#top">Back to Top</a>
+    </div>
+  </div>
+  <div class="progress-bar"></div>
+</div>
+<div class="wrap" id="top">
 
   <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
   <header class="hero">
@@ -95,28 +206,46 @@
       <li><a href="#arithmetic">Do the arithmetic</a></li>
       <li><a href="#gotchas">The gotchas that actually bite</a></li>
       <li><a href="#chaos">Testing with chaos</a></li>
-      <li><a href="#examples">Real-world examples</a></li>
       <li><a href="#recap">Recap in 60 seconds</a></li>
-      <li><a href="#check">Check yourself</a></li>
     </ol>
   </nav>
 
-  <h2 id="truth">1. The uncomfortable truth</h2>
+<details class="sec-collapse" id="truth">
+  <summary><h2>1. The uncomfortable truth</h2></summary>
+  <div class="sec-content">
   <p>At scale, something is always broken. A disk somewhere is dying, a network link is flapping, a deploy is misbehaving, a dependency is having a bad day. You cannot engineer failure away — with enough machines, the rare becomes the constant. So the goal shifts from "don't fail" to <strong>"fail small, fail contained, and keep serving what you still can."</strong> This is <em>resilience</em>, and it's a set of specific, learnable moves.</p>
   <div class="note key">
     <span class="label">Two numbers worth knowing</span>
     <strong>Availability</strong> is often quoted in nines. "Three nines" (99.9%) is ~8.76 hours of downtime a year (about 8h 46m); "four nines" (99.99%) is ~52 minutes; "five nines" is ~5 minutes. Each extra nine costs roughly an order of magnitude more effort — which is why "how many nines do we actually need?" is a business question, not just an engineering one.
   </div>
 
-  <h2 id="redundancy">2. Redundancy &amp; failover</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="redundancy">
+  <summary><h2>2. Redundancy &amp; failover</h2></summary>
+  <div class="sec-content">
   <p>The foundation: never have exactly one of anything critical. Two servers, replicated databases, multiple availability zones. When one dies, another takes over — <strong>failover</strong>. The <a href="load-balancing.html">load balancing guide</a> covered the mechanism and the <a href="database-scaling.html">database scaling guide</a> covered the replica side of it; the principle here is broader: <em>a single point of failure is a scheduled outage you haven't been told the date of yet.</em></p>
   <p>The subtlety is that failover itself must be tested. A backup that has never been failed-over to is not a backup — it's a hope. Plenty of outages are made worse by a standby that turned out to be misconfigured, out of date, or, memorably, also on fire.</p>
 
-  <h2 id="timeouts">3. Timeouts: the first and cheapest defense</h2>
+
+  <div class="note wild" style="margin-top: 18px;">
+    <span class="label">◈ In the wild · AWS S3 2017 Outage</span>
+    On February 28, 2017, an engineer running a debugging tool typed a command that deleted far more S3 indexing servers than intended in the us-east-1 region. S3 went down for hours, which broke thousands of downstream sites and other AWS services that hard-depended on it. It highlighted the blast-radius ceiling: when services compose as hard dependencies, their availability drops to the product of all inputs.
+  </div>
+
+  </div>
+</details>
+<details class="sec-collapse" id="timeouts">
+  <summary><h2>3. Timeouts: the first and cheapest defense</h2></summary>
+  <div class="sec-content">
   <p>Go back to the cold open. The root sin was <em>waiting forever</em> for a slow service. A call with no timeout is a promise to hang indefinitely — and hung threads are the fuel of every cascade.</p>
   <p>A timeout says: "if you haven't answered in 2 seconds, I'm giving up and moving on." It converts an unbounded hang into a fast, catchable failure you can handle. It's one line of code and it's the highest-value <em>cheap</em> habit in this whole guide. The catch is picking the number: too short and you kill healthy-but-busy calls; too long and you're back to hanging. Base it on real latency percentiles (p99), not vibes.</p>
 
-  <h2 id="retries">4. Retries — and the storm they can summon</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="retries">
+  <summary><h2>4. Retries — and the storm they can summon</h2></summary>
+  <div class="sec-content">
   <p>Transient failures (a blip, a brief network drop) often succeed on a second try, so retrying is smart. Retrying <em>naively</em> is how you turn a small problem into an outage.</p>
   <div class="note war">
     <span class="label">War story · the retry storm</span>
@@ -125,7 +254,47 @@
   <p>The fix is <strong>exponential backoff with jitter</strong>: wait 1s, then 2s, then 4s before each retry (back off), and add a random wobble (jitter) so a thousand clients don't all retry in lockstep and re-synchronize the stampede. Also cap the number of retries, and don't retry things that aren't retryable (a <code>400 Bad Request</code> will be just as wrong the second time). Notice this only works because of <strong>idempotency</strong> from the <a href="message-queues.html">queues guide</a> — retrying a non-idempotent action is how you double-charge someone.</p>
   <p>Backoff and jitter fix retry <em>timing</em>. They do nothing about retry <em>volume</em>, which is the half that actually kills you — see <a href="#gotchas">retry budgets</a> below.</p>
 
-  <h2 id="breakers">5. Circuit breakers</h2>
+
+  <div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
+    <svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+      <!-- Title -->
+      <text x="20" y="25" fill="var(--text)" font-size="12" font-weight="700">Naive Retries vs. Backoff &amp; Jitter</text>
+      
+      <!-- Naive Retries (Left Chart) -->
+      <text x="20" y="55" fill="var(--danger)" font-size="11" font-weight="600">Naive Retries (Sync Storm)</text>
+      <!-- Axes -->
+      <line x1="40" y1="70" x2="40" y2="170" stroke="var(--border)" stroke-width="1.5" />
+      <line x1="40" y1="170" x2="320" y2="170" stroke="var(--border)" stroke-width="1.5" />
+      <text x="35" y="80" fill="var(--muted)" font-size="8" text-anchor="end">Load</text>
+      <text x="315" y="182" fill="var(--muted)" font-size="8" text-anchor="end">Time</text>
+      <!-- Storm line -->
+      <path d="M 40,160 L 80,160 L 85,80 L 115,80 L 120,75 L 150,75 L 155,70 L 300,70" fill="none" stroke="var(--danger)" stroke-width="2.5" />
+      <text x="180" y="100" fill="var(--danger)" font-size="9" font-weight="600">Saturated (100% CPU)</text>
+      
+      <!-- Backoff + Jitter (Right Chart) -->
+      <text x="400" y="55" fill="var(--accent-2)" font-size="11" font-weight="600">Exponential Backoff + Jitter (Load Dispersion)</text>
+      <!-- Axes -->
+      <line x1="420" y1="70" x2="420" y2="170" stroke="var(--border)" stroke-width="1.5" />
+      <line x1="420" y1="170" x2="700" y2="170" stroke="var(--border)" stroke-width="1.5" />
+      <text x="415" y="80" fill="var(--muted)" font-size="8" text-anchor="end">Load</text>
+      <text x="695" y="182" fill="var(--muted)" font-size="8" text-anchor="end">Time</text>
+      <!-- Backoff graph -->
+      <path d="M 420,160 L 460,160 L 465,95 L 490,120 L 520,135 L 560,145 L 610,152 L 680,155" fill="none" stroke="var(--accent-2)" stroke-width="2.5" />
+      <text x="540" y="110" fill="var(--accent-2)" font-size="9" font-weight="600">DB CPU decays to normal</text>
+    </svg>
+  </div>
+
+
+  <details class="q">
+    <summary>Check yourself: You add retries and the outage gets worse. Why?</summary>
+    <div class="a">Because retries are a load multiplier, and you applied one to a system whose problem was load. If the dependency is saturated rather than blipping, every retry is extra work aimed at the thing that's already failing to keep up. Two specific traps: retries configured at several layers multiply rather than add — three at the client, gateway and service is 27 attempts at the bottom — and backoff with jitter only spreads that volume over time, it doesn't reduce it. The missing piece is a retry budget that caps retries at a small fraction of live traffic and empties itself when there are no successes to refill it, so retries switch themselves off during exactly the broad outage where they'd do the most damage.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="breakers">
+  <summary><h2>5. Circuit breakers</h2></summary>
+  <div class="sec-content">
   <p>Named after the one in your house. If a service is clearly down, why keep calling it — failing slowly, tying up threads — every single time? A circuit breaker <em>trips</em> after it sees enough failures and then <strong>fails instantly</strong> for a while, without even attempting the call.</p>
   <div class="stack">
     <div class="layer"><div class="idx">✓</div><div class="body"><h4>Closed</h4><p>Calls flow normally. Failures are counted.</p></div><div class="speed">healthy</div></div>
@@ -140,11 +309,94 @@
     Netflix built and open-sourced <a href="https://github.com/Netflix/Hystrix/wiki">Hystrix</a>, the library that did more than anything else to popularise the circuit-breaker pattern in microservices. It wraps each call to a dependency, trips open once that dependency's error rate crosses a threshold, and then sheds load fast instead of piling more attempts onto a service that's already struggling. Netflix has since retired Hystrix in favour of newer libraries like resilience4j, but the pattern it spread is now everywhere.
   </div>
 
-  <h2 id="bulkheads">6. Bulkheads &amp; load shedding</h2>
+
+  <div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
+    <svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+      <!-- CLOSED State -->
+      <rect x="20" y="60" width="160" height="70" rx="8" fill="var(--panel-2)" stroke="var(--accent-2)" stroke-width="2.5" />
+      <circle cx="45" cy="95" r="12" fill="var(--accent-2)" opacity="0.2" />
+      <circle cx="45" cy="95" r="6" fill="var(--accent-2)" />
+      <text x="75" y="99" fill="var(--text)" font-size="13" font-weight="700">CLOSED</text>
+      <text x="35" y="118" fill="var(--muted)" font-size="9">Traffic flows. Failures counted.</text>
+      
+      <!-- OPEN State -->
+      <rect x="280" y="60" width="160" height="70" rx="8" fill="var(--panel-2)" stroke="var(--danger)" stroke-width="2.5" />
+      <circle cx="305" cy="95" r="12" fill="var(--danger)" opacity="0.2" />
+      <circle cx="305" cy="95" r="6" fill="var(--danger)" />
+      <text x="335" y="99" fill="var(--text)" font-size="13" font-weight="700">OPEN</text>
+      <text x="295" y="118" fill="var(--muted)" font-size="9">Fail fast. Return fallback.</text>
+      
+      <!-- HALF-OPEN State -->
+      <rect x="540" y="60" width="160" height="70" rx="8" fill="var(--panel-2)" stroke="var(--warn)" stroke-width="2.5" />
+      <circle cx="565" cy="95" r="12" fill="var(--warn)" opacity="0.2" />
+      <circle cx="565" cy="95" r="6" fill="var(--warn)" />
+      <text x="595" y="99" fill="var(--text)" font-size="13" font-weight="700">HALF-OPEN</text>
+      <text x="555" y="118" fill="var(--muted)" font-size="9">Trickle probe requests.</text>
+      
+      <!-- Transitions -->
+      <!-- Closed -> Open -->
+      <path d="M 180,85 H 280" fill="none" stroke="var(--danger)" stroke-width="1.5" marker-end="url(#arrow-red)" />
+      <text x="230" y="77" fill="var(--danger)" font-size="9" text-anchor="middle" font-weight="600">Error threshold crossed</text>
+      
+      <!-- Open -> Half-Open -->
+      <path d="M 440,95 H 540" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrow-grey)" />
+      <text x="490" y="87" fill="var(--muted)" font-size="9" text-anchor="middle">Cooldown expires</text>
+      
+      <!-- Half-Open -> Open (Failure) -->
+      <path d="M 540,110 C 440,150 280,150 280,130" fill="none" stroke="var(--danger)" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arrow-red)" />
+      <text x="410" y="152" fill="var(--danger)" font-size="9" text-anchor="middle">Probe fails</text>
+      
+      <!-- Half-Open -> Closed (Success) -->
+      <path d="M 620,130 C 620,190 100,190 100,130" fill="none" stroke="var(--accent-2)" stroke-width="1.5" marker-end="url(#arrow-green)" />
+      <text x="360" y="187" fill="var(--accent-2)" font-size="9" text-anchor="middle" font-weight="600">Probe succeeds</text>
+      
+      <!-- Marker definitions -->
+      <defs>
+        <marker id="arrow-red" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--danger)" />
+        </marker>
+        <marker id="arrow-grey" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--muted)" />
+        </marker>
+        <marker id="arrow-green" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--accent-2)" />
+        </marker>
+      </defs>
+    </svg>
+  </div>
+
+
+  <details class="q">
+    <summary>Check yourself: There was clearly a dependency outage, but your circuit breaker never tripped. Name two plausible reasons.</summary>
+    <div class="a">Most likely it was a gray failure — a 5% error rate, or responses that were slow but successful — and a breaker watching for a 50% error rate on explicit errors will never see it. That's the fix too: count timeouts and slow responses as failures, not just non-2xx. The other common causes are a threshold or window set too loose to trigger inside the incident's duration, and a breaker scoped per-instance across a large fleet, where each instance sees too few failures individually to cross its own threshold even though the aggregate picture is obvious. Breakers fail silently in the wrong direction, which is why "did it trip?" belongs on the postmortem checklist.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="bulkheads">
+  <summary><h2>6. Bulkheads &amp; load shedding</h2></summary>
+  <div class="sec-content">
   <p><strong>Bulkheads</strong> — named after a ship's watertight compartments. Isolate resources so a flood in one area can't sink the whole vessel. If calls to the flaky recommendations service get their own limited thread pool, they can exhaust <em>that</em> pool without stealing threads from checkout. One feature browns out; the ship stays afloat.</p>
   <p><strong>Load shedding</strong> — when you're truly overwhelmed, it's better to serve <em>most</em> requests well than <em>all</em> requests badly. So deliberately reject some traffic at the door (return a quick "try again in a moment") to keep the system from collapsing entirely. Counterintuitive but vital: sometimes saying "no" fast is the most reliable thing you can do. Shedding lives next door to the health checks and connection draining in the <a href="load-balancing.html">load balancing guide</a> — same idea, applied at the door rather than at the pool.</p>
 
-  <h2 id="degrade">7. Graceful degradation</h2>
+
+  <div class="note key">
+    <span class="label">🛠️ Hands-On Lab: Build a Concurrency-Limiting Middleware</span>
+    <p>Build this mini-project to implement active request limits and load shedding (protecting server thread/memory pool):</p>
+    <ul class="tight" style="margin-top: 8px; font-size: 0.95rem;">
+      <li><strong>1. The Slow Endpoint:</strong> Write an HTTP server in Go or Node.js with a CPU-bound slow route `/hash` that computes a bcrypt password hash (simulated 200ms latency).</li>
+      <li><strong>2. Concurrency-Limiting Gate:</strong> Implement a middleware that tracks active in-flight requests using a counter. Set a hard limit of <strong>10 concurrent requests</strong>.</li>
+      <li><strong>3. Load Shedding:</strong> If a request arrives and the counter is at 10, reject the request immediately with an HTTP status code <code>503 Service Unavailable</code> or <code>429 Too Many Requests</code>.</li>
+      <li><strong>4. Run the Load Test:</strong> Use <code>k6</code> to hit the route with <strong>50 concurrent virtual users</strong>. Observe that while some requests get rejected, the p99 latency for successfully served requests remains flat around 200ms. Remove the limiter, run the test again, and watch p99 grow infinitely as requests queue up.</li>
+    </ul>
+    <p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Add this middleware benchmarking demo to your portfolio to prove you understand overload protection.</p>
+  </div>
+
+  </div>
+</details>
+<details class="sec-collapse" id="degrade">
+  <summary><h2>7. Graceful degradation</h2></summary>
+  <div class="sec-content">
   <p>When a non-essential dependency fails, don't take the whole page with it — shed the feature, keep the core. The recommendations engine is down? Show a generic "popular items" list, or nothing, but <em>still let people check out.</em> The search ranking service died? Fall back to plain results. Users forgive a missing sidebar; they don't forgive a white screen.</p>
   <div class="note key">
     <span class="label">The mindset</span>
@@ -152,7 +404,11 @@
   </div>
   <p>Notice what you're actually doing when you serve stale prices from a cache because the pricing service is down: you're trading correctness for availability, one feature at a time. That's the choice from the <a href="consistency-cap.html">consistency and CAP guide</a>, made concrete. Graceful degradation isn't a separate topic from consistency — it's the AP branch, chosen deliberately and scoped to the parts of the product where slightly-wrong beats not-there. Checkout totals get the other answer.</p>
 
-  <h2 id="which-wall">8. Which wall stops which flood</h2>
+  </div>
+</details>
+<details class="sec-collapse" id="which-wall">
+  <summary><h2>8. Which wall stops which flood</h2></summary>
+  <div class="sec-content">
   <p>Everything above is a toolbox, and a toolbox is where reliability advice usually stops. But nobody is ever handed a ticket that says "cascading failure, please apply patterns." You get a graph that's the wrong shape and four minutes to decide. The question that matters is narrower: <strong>which flood am I looking at, and which wall stops that one?</strong> Reach for the wrong tool and you'll spend the outage carefully tuning something that was never the problem.</p>
 
   <div class="table-scroll">
@@ -198,7 +454,17 @@
     <strong>A circuit breaker does nothing about too much load.</strong> It only knows "is this dependency answering?" — and during an overload, everything is answering, just slowly and to too many people. <strong>Load shedding does nothing about a slow dependency.</strong> It throws away work at your front door while your threads stay parked on someone else's port. Same-looking dashboards, opposite floods, different walls. The tell is where the waiting is happening: if your threads are blocked on outbound calls it's the first, if they're blocked on inbound queue depth it's the second.
   </div>
 
-  <h2 id="arithmetic">9. Do the arithmetic</h2>
+
+  <details class="q">
+    <summary>Check yourself: Recommendations has slowed to 4 seconds and your whole site is now failing, including endpoints that never call it. Do you shed load?</summary>
+    <div class="a">No — you'd be treating the wrong flood. Shedding helps when there's more work than machine; here there's plenty of machine, and it's all parked on blocked threads waiting for an outbound call. Rejecting your own callers frees nothing. The right walls are a tight timeout (the concurrency you're spending on that call is throughput × timeout), a bulkhead so recommendations can only ever occupy its own small pool, a breaker that counts timeouts — not just errors — as failures, and a fallback so the page still renders. The general tell: threads blocked on outbound calls means dependency trouble, threads blocked on inbound queue depth means overload.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="arithmetic">
+  <summary><h2>9. Do the arithmetic</h2></summary>
+  <div class="sec-content">
   <p>Cascading failure gets described in metaphors — dominoes, floods, avalanches — which makes it feel like weather. It isn't. It's a multiplication you can do on a napkin, and the reason a cascade is so fast is that the multiplier is large.</p>
 
   <h3>Little's Law, and why a slow dependency kills every endpoint</h3>
@@ -252,7 +518,17 @@ compare: three nines on its own
     Not "how many dependencies do I have" but <strong>"how many <em>hard</em> dependencies do I have"</strong> — the ones with no fallback, where their bad day is definitionally your bad day. Count them. That count is your availability ceiling, and the useful reliability work is nearly always moving items off that list rather than making each one slightly better.
   </div>
 
-  <h2 id="gotchas">10. The gotchas that actually bite</h2>
+
+  <details class="q">
+    <summary>Check yourself: "Our service is 99.99% available and it depends on four services that are each 99.9%." What's wrong with that sentence?</summary>
+    <div class="a">Availability composes by multiplication, so four hard dependencies at three nines put your ceiling at 0.999⁴ ≈ 99.6% — around 35 hours a year — before your own code contributes a single bug. You cannot be an order of magnitude more available than your inputs. The sentence is only rescuable if those four aren't <em>hard</em> dependencies: if each one has a timeout and a designed fallback, its outage becomes a degraded response rather than yours, and it drops out of the product entirely. That's the real point — the fix isn't making four services better, it's moving them off the hard-dependency list.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="gotchas">
+  <summary><h2>10. The gotchas that actually bite</h2></summary>
+  <div class="sec-content">
   <p>The five walls are the part that fits on a slide. What follows is the part that shows up in postmortems.</p>
 
   <h3>Retry budgets: backoff controls timing, not volume</h3>
@@ -308,7 +584,28 @@ compare: three nines on its own
   </div>
   <p>Which is the honest argument for the next section. <a href="#chaos">Chaos engineering</a> isn't about breaking things for sport — it's the mechanism that moves a recovery path from the "only runs in emergencies" column to the "runs every Tuesday" column. That's the entire value proposition.</p>
 
-  <h2 id="chaos">11. Testing with chaos</h2>
+
+  <div class="note wild" style="margin-top: 18px;">
+    <span class="label">◈ In the wild · Knight Capital rollback</span>
+    In 2012, trading firm Knight Capital deployed new logic to 8 server instances, but one server didn't receive the update due to a manual deploy mismatch. The old code remained active, leading to automated stock purchases that lost the firm $440M in 45 minutes. This incident highlighted the necessity of automated rollbacks, deployment validation, and peer outlier detection.
+  </div>
+
+
+  <details class="q">
+    <summary>Check yourself: The dependency recovered ten minutes ago and your service is still down. What's happening, and what do you do?</summary>
+    <div class="a">This is a metastable failure: the outage created its own load — a backlog of client retries plus caches that went cold while you were unavailable — and that load alone is now enough to keep you down. The original trigger is irrelevant; you're stuck in a feedback loop it started. Waiting will not fix it, because nothing in the loop decays on its own. You escape by actively removing load: shed aggressively, drop or drain the retry backlog, and if necessary take traffic to zero and reintroduce it in slices so caches can refill against a survivable request rate. Yes, that means deliberately taking down something already down — which is why it should be a written, pre-approved procedure rather than a judgement call at 3 a.m.</div>
+  </details>
+
+  <details class="q">
+    <summary>Check yourself: The auth service is down. Do you fail open or fail closed?</summary>
+    <div class="a">There is no engineering answer — it's a product decision about which risk the business prefers, and it must be made per feature rather than per system. Failing open on a session check for a "recently viewed" widget costs nothing; failing open on the admin panel or a payment authorisation is how you end up explaining yourself to a regulator. Failing closed on everything is safer and may still be the wrong answer if it means zero revenue for the duration. The engineering obligation is to surface the choice to someone with the authority to make it, in advance, and to build the switch so it can actually be flipped per feature during an incident — not to guess at 3 a.m.</div>
+  </details>
+
+  </div>
+</details>
+<details class="sec-collapse" id="chaos">
+  <summary><h2>11. Testing with chaos</h2></summary>
+  <div class="sec-content">
   <p>Here's the punchline to all of the above: <strong>a failure path you've never triggered probably doesn't work.</strong> Backups you don't restore, failovers you don't rehearse, circuit breakers you've never watched trip — they're all theories until tested. So the boldest teams break things <em>on purpose</em>, in production, during business hours, to prove the safety nets hold.</p>
   <div class="note wild">
     <span class="label">◈ In the wild · Netflix Chaos Monkey</span>
@@ -316,26 +613,11 @@ compare: three nines on its own
   </div>
   <p>Netflix pioneered this with <strong>Chaos Monkey</strong>, a tool that randomly kills live servers to force engineers to build systems that don't care when a server dies. If a random instance vanishing is a non-event, then a real one dying at 3 AM is also a non-event — and everyone sleeps. Chaos engineering is just the discipline of finding your weaknesses before they find you.</p>
 
-  <h2 id="examples">12. Real-world examples</h2>
-
-  <div class="note war">
-    <span class="label">War story · $440 million in 45 minutes</span>
-    In 2012, trading firm <strong>Knight Capital</strong> deployed new code to its servers — but one of eight servers didn't get the update and started running old, repurposed logic. In about <strong>45 minutes</strong>, it fired millions of unintended orders into the market and lost roughly <strong>$440 million</strong>, near-fatally wounding the company. The killers weren't exotic: an inconsistent deploy, no kill switch, and no fast way to detect and stop a misbehaving node. Reliability isn't only about staying up — it's about being able to <em>stop</em> fast when something goes wrong.
   </div>
-
-  <div class="note war">
-    <span class="label">War story · the typo that broke the internet</span>
-    On February 28, 2017, an AWS engineer debugging <strong>S3</strong> in the us-east-1 region ran a command with a <strong>typo</strong>, accidentally removing far more capacity than intended. S3 went down for hours and took a huge slice of the internet with it — sites, smart-home gadgets, even other AWS services that secretly depended on it. Lessons the industry absorbed: guardrails on dangerous commands, blast-radius limits, and not letting one region become a single point of failure for everyone.
-  </div>
-
-  <p><strong>Netflix, the reliability obsessives</strong> — the Hystrix and Chaos Monkey stories above are two faces of a single philosophy. Their whole architecture assumes dependencies will fail and degrades around them, which is why a struggling microservice usually means a slightly worse row of recommendations, not a dead app.</p>
-
-  <div class="note key">
-    <span class="label">The one-liner to remember</span>
-    You can't stop things from failing — you can only stop failures from spreading. Timeouts, retries-with-backoff, circuit breakers, bulkheads, and graceful degradation are the five walls that keep one crack from sinking the ship. Then test them by breaking things on purpose.
-  </div>
-
-  <h2 id="recap">13. Recap in 60 seconds</h2>
+</details>
+<details class="sec-collapse" id="recap">
+  <summary><h2>12. Recap in 60 seconds</h2></summary>
+  <div class="sec-content">
   <div class="recap">
     <ul>
       <li><strong>Redundancy</strong> — answers "one machine died." Useless until you've actually failed over to the spare.</li>
@@ -376,39 +658,8 @@ compare: three nines on its own
     The availability rows are arithmetic — they're true regardless of what you're building. Everything below them is a <strong>starting point to measure against, not a benchmark to hit.</strong> A batch job and a payment API have no business sharing a timeout, and anyone who quotes you a universally correct retry count is quoting you a number they didn't measure.
   </div>
 
-  <h2 id="check">14. Check yourself</h2>
-  <p>If you can answer these without scrolling up, you own the material.</p>
-
-  <details class="q">
-    <summary>The dependency recovered ten minutes ago and your service is still down. What's happening, and what do you do?</summary>
-    <div class="a">This is a metastable failure: the outage created its own load — a backlog of client retries plus caches that went cold while you were unavailable — and that load alone is now enough to keep you down. The original trigger is irrelevant; you're stuck in a feedback loop it started. Waiting will not fix it, because nothing in the loop decays on its own. You escape by actively removing load: shed aggressively, drop or drain the retry backlog, and if necessary take traffic to zero and reintroduce it in slices so caches can refill against a survivable request rate. Yes, that means deliberately taking down something already down — which is why it should be a written, pre-approved procedure rather than a judgement call at 3 a.m.</div>
-  </details>
-
-  <details class="q">
-    <summary>You add retries and the outage gets worse. Why?</summary>
-    <div class="a">Because retries are a load multiplier, and you applied one to a system whose problem was load. If the dependency is saturated rather than blipping, every retry is extra work aimed at the thing that's already failing to keep up. Two specific traps: retries configured at several layers multiply rather than add — three at the client, gateway and service is 27 attempts at the bottom — and backoff with jitter only spreads that volume over time, it doesn't reduce it. The missing piece is a retry budget that caps retries at a small fraction of live traffic and empties itself when there are no successes to refill it, so retries switch themselves off during exactly the broad outage where they'd do the most damage.</div>
-  </details>
-
-  <details class="q">
-    <summary>"Our service is 99.99% available and it depends on four services that are each 99.9%." What's wrong with that sentence?</summary>
-    <div class="a">Availability composes by multiplication, so four hard dependencies at three nines put your ceiling at 0.999⁴ ≈ 99.6% — around 35 hours a year — before your own code contributes a single bug. You cannot be an order of magnitude more available than your inputs. The sentence is only rescuable if those four aren't <em>hard</em> dependencies: if each one has a timeout and a designed fallback, its outage becomes a degraded response rather than yours, and it drops out of the product entirely. That's the real point — the fix isn't making four services better, it's moving them off the hard-dependency list.</div>
-  </details>
-
-  <details class="q">
-    <summary>Recommendations has slowed to 4 seconds and your whole site is now failing, including endpoints that never call it. Do you shed load?</summary>
-    <div class="a">No — you'd be treating the wrong flood. Shedding helps when there's more work than machine; here there's plenty of machine, and it's all parked on blocked threads waiting for an outbound call. Rejecting your own callers frees nothing. The right walls are a tight timeout (the concurrency you're spending on that call is throughput × timeout), a bulkhead so recommendations can only ever occupy its own small pool, a breaker that counts timeouts — not just errors — as failures, and a fallback so the page still renders. The general tell: threads blocked on outbound calls means dependency trouble, threads blocked on inbound queue depth means overload.</div>
-  </details>
-
-  <details class="q">
-    <summary>There was clearly a dependency outage, but your circuit breaker never tripped. Name two plausible reasons.</summary>
-    <div class="a">Most likely it was a gray failure — a 5% error rate, or responses that were slow but successful — and a breaker watching for a 50% error rate on explicit errors will never see it. That's the fix too: count timeouts and slow responses as failures, not just non-2xx. The other common causes are a threshold or window set too loose to trigger inside the incident's duration, and a breaker scoped per-instance across a large fleet, where each instance sees too few failures individually to cross its own threshold even though the aggregate picture is obvious. Breakers fail silently in the wrong direction, which is why "did it trip?" belongs on the postmortem checklist.</div>
-  </details>
-
-  <details class="q">
-    <summary>The auth service is down. Do you fail open or fail closed?</summary>
-    <div class="a">There is no engineering answer — it's a product decision about which risk the business prefers, and it must be made per feature rather than per system. Failing open on a session check for a "recently viewed" widget costs nothing; failing open on the admin panel or a payment authorisation is how you end up explaining yourself to a regulator. Failing closed on everything is safer and may still be the wrong answer if it means zero revenue for the duration. The engineering obligation is to surface the choice to someone with the authority to make it, in advance, and to build the switch so it can actually be flipped per feature during an incident — not to guess at 3 a.m.</div>
-  </details>
-
+  </div>
+</details>
   <hr>
   <p class="footer">
     Part of <em>System Design Basics</em>. Sources:
@@ -420,5 +671,81 @@ compare: three nines on its own
     <a href="https://principlesofchaos.org/">Principles of Chaos Engineering</a>
   </p>
 </div>
+
+<script>
+  // Restore open states from localStorage
+  document.querySelectorAll('details.sec-collapse').forEach(details => {
+    const id = details.id;
+    const storedState = localStorage.getItem(`sec-open-${id}`);
+    if (storedState !== null) {
+      details.open = storedState === 'true';
+    } else {
+      details.open = false; // Collapsed by default
+    }
+    
+    // Listen for toggle events to save state
+    details.addEventListener('toggle', () => {
+      localStorage.setItem(`sec-open-${id}`, details.open);
+    });
+  });
+
+  // Restore scroll position
+  const storedScroll = localStorage.getItem('sec-scroll-pos');
+  if (storedScroll !== null && !window.location.hash) {
+    setTimeout(() => {
+      window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
+    }, 100);
+  }
+
+  // Save scroll position on scroll (debounced)
+  let scrollTimeout;
+  window.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+      localStorage.setItem('sec-scroll-pos', window.scrollY);
+    }, 150);
+  });
+
+  // Auto-expand details elements when targeted by a hash link
+  function handleHashChange() {
+    const hash = window.location.hash;
+    if (hash) {
+      const target = document.querySelector(hash);
+      if (target) {
+        let parent = target.closest('details');
+        while (parent) {
+          parent.open = true;
+          parent = parent.parentElement.closest('details');
+        }
+        setTimeout(() => {
+          target.scrollIntoView({ behavior: 'smooth' });
+        }, 100);
+      }
+    }
+  }
+  window.addEventListener('hashchange', handleHashChange);
+  window.addEventListener('DOMContentLoaded', handleHashChange);
+
+  // Update scroll progress bar dynamically
+  const progressBar = document.querySelector('.progress-bar');
+  function updateProgress() {
+    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+    if (scrollHeight > 0) {
+      const progress = (window.scrollY / scrollHeight) * 100;
+      progressBar.style.width = `${progress}%`;
+    } else {
+      progressBar.style.width = '0%';
+    }
+  }
+  window.addEventListener('scroll', updateProgress);
+  window.addEventListener('resize', updateProgress);
+  document.querySelectorAll('details').forEach(d => {
+    d.addEventListener('toggle', () => {
+      setTimeout(updateProgress, 60);
+    });
+  });
+  updateProgress();
+</script>
+
 </body>
 </html>
