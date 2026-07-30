@@ -4,182 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Message Queues &amp; Async — A Practical Guide</title>
-<style>
-  :root{--bg:#0f1115;--panel:#171a21;--panel-2:#1d212a;--text:#e7e9ee;--muted:#9aa3b2;--accent:#5b9dff;--accent-2:#7ee0c0;--warn:#ffcf70;--danger:#ff8a8a;--border:#262b36;--code-bg:#12151b;--radius:14px;--maxw:820px;}
-  @media (prefers-color-scheme: light){:root{--bg:#f6f7f9;--panel:#ffffff;--panel-2:#f0f2f5;--text:#1a1d24;--muted:#5a6472;--accent:#2f6bd6;--accent-2:#16916f;--warn:#9a6b00;--danger:#b23b3b;--border:#e2e5ea;--code-bg:#f1f3f6;}}
-  *{box-sizing:border-box;} html{scroll-behavior:smooth;}
-  body{margin:0;background:var(--bg);color:var(--text);font:17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;}
-  .wrap{max-width:var(--maxw);margin:0 auto;padding:32px 20px 80px;}
-  header.hero{padding:20px 0 8px;border-bottom:1px solid var(--border);margin-bottom:24px;}
-  .kicker{text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:var(--accent);font-weight:700;margin-bottom:10px;}
-  h1{font-size:2.05rem;line-height:1.15;margin:0 0 12px;letter-spacing:-.02em;}
-  .lede{color:var(--muted);font-size:1.12rem;margin:0;}
-  h2 { font-size: 1.5rem; margin: 48px 0 16px; letter-spacing: -0.015em; padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 65px; width: 100%; }
-  h3 { font-size: 1.18rem; margin: 32px 0 10px; font-weight: 600; }
-  p{margin:12px 0;} a{color:var(--accent);text-decoration:none;} a:hover{text-decoration:underline;}
-  code{background:var(--code-bg);border:1px solid var(--border);padding:1px 6px;border-radius:6px;font-size:.86em;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
-  nav.toc{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:8px;}
-  nav.toc strong{display:block;font-size:.8rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:10px;}
-  nav.toc ol{margin:0;padding-left:20px;columns:2;column-gap:28px;} nav.toc li{margin:5px 0;break-inside:avoid;}
-  @media (max-width:560px){nav.toc ol{columns:1;} h1{font-size:1.7rem;}}
-  .note{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;padding:12px 16px;margin:18px 0;}
-  .note.warn{border-left-color:var(--warn);} .note.key{border-left-color:var(--accent-2);} .note.war{border-left-color:var(--danger);}
-.note.wild{border-left-color:var(--accent-2);}
-.note.wild .label{color:var(--accent-2);}
-  .note .label{font-weight:700;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:block;margin-bottom:4px;}
-  .coldopen{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--danger);border-radius:12px;padding:16px 18px;margin:22px 0;}
-  .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
-  .coldopen p{margin:8px 0 0;}
-  .stack{margin:20px 0;}
-  .layer{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:8px 0;}
-  .layer .idx{flex:0 0 34px;height:34px;border-radius:9px;display:grid;place-items:center;font-weight:700;background:var(--panel-2);color:var(--accent);font-size:.95rem;}
-  .layer .body h4{margin:0 0 2px;font-size:1rem;} .layer .body p{margin:0;font-size:.9rem;color:var(--muted);}
-  .layer .speed{margin-left:auto;font-size:.78rem;color:var(--accent-2);font-weight:600;white-space:nowrap;}
-  .arrow{text-align:center;color:var(--muted);font-size:.8rem;margin:-2px 0;}
-  .table-scroll{overflow-x:auto;margin:18px 0;border:1px solid var(--border);border-radius:12px;}
-  table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:560px;}
-  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:top;}
-  th{background:var(--panel-2);font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);}
-  tr:last-child td{border-bottom:none;} td strong{color:var(--text);}
-  .cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0;}
-  @media (max-width:560px){.cards{grid-template-columns:1fr;}}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;}
-  .card h4{margin:0 0 6px;font-size:1rem;} .card p{margin:0;font-size:.9rem;color:var(--muted);}
-  hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
-  .footer{color:var(--muted);font-size:.85rem;} .footer a{color:var(--muted);text-decoration:underline;}
-  ul.tight li,ol.tight li{margin:6px 0;}
-  .series{font-size:.8rem;color:var(--muted);margin-top:6px;}
-  /* --- retention + worked-example layer --- */
-  details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
-  details.q summary{cursor:pointer;font-weight:600;list-style:none;}
-  details.q summary::-webkit-details-marker{display:none;}
-  details.q summary::before{content:"▸ ";color:var(--accent);}
-  details.q[open] summary::before{content:"▾ ";}
-  details.q .a{margin:10px 0 0;color:var(--muted);font-size:.95rem;}
-  .recap{background:var(--panel-2);border:1px solid var(--border);border-radius:12px;padding:6px 18px 14px;margin:18px 0;}
-  .recap ul{padding-left:18px;margin:10px 0;} .recap li{margin:7px 0;font-size:.95rem;}
-  .trace{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:18px 0;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;line-height:1.75;overflow-x:auto;white-space:pre;}
-  .trace b{color:var(--accent);font-weight:600;} .trace .bad{color:var(--danger);} .trace .good{color:var(--accent-2);}
-  pre{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.6;margin:18px 0;}
-  pre code{background:none;border:none;padding:0;font-size:1em;}
-  .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
-
-  /* Sticky Top Header */
-  .sticky-header {
-    position: sticky;
-    top: 0;
-    left: 0;
-    width: 100%;
-    background: color-mix(in srgb, var(--bg) 92%, transparent);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
-    z-index: 100;
-  }
-  .header-inner {
-    max-width: var(--maxw);
-    margin: 0 auto;
-    padding: 10px 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.82rem;
-  }
-  .breadcrumbs {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--muted);
-  }
-  .breadcrumbs a {
-    color: var(--muted);
-    font-weight: 500;
-  }
-  .breadcrumbs a:hover {
-    color: var(--accent);
-  }
-  .breadcrumbs .sep {
-    color: var(--border);
-    font-weight: 300;
-  }
-  .breadcrumbs .curr {
-    color: var(--text);
-    font-weight: 600;
-  }
-  .toc-jump a {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  /* Scroll Progress Indicator */
-  .progress-bar {
-    height: 3px;
-    background: var(--accent);
-    width: 0%;
-    transition: width 0.08s ease-out;
-  }
-
-  /* Collapsible Sections */
-  details.sec-collapse {
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 0;
-  }
-  details.sec-collapse summary {
-    cursor: pointer;
-    list-style: none;
-    outline: none;
-    padding: 18px 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    user-select: none;
-  }
-  details.sec-collapse summary::-webkit-details-marker {
-    display: none;
-  }
-  details.sec-collapse summary h2 {
-    margin: 0;
-    border-bottom: none;
-    padding-bottom: 0;
-    font-size: 1.45rem;
-    flex-grow: 1;
-  }
-  details.sec-collapse summary::after {
-    content: "";
-    width: 8px;
-    height: 8px;
-    border-right: 2px solid var(--muted);
-    border-bottom: 2px solid var(--muted);
-    transform: rotate(45deg);
-    transition: transform 0.2s ease;
-    margin-right: 12px;
-    flex-shrink: 0;
-  }
-  details.sec-collapse[open] summary::after {
-    transform: rotate(-135deg);
-  }
-  .sec-content {
-    padding: 8px 0 28px 0;
-  }
-
-</style>
+<link rel="stylesheet" href="styles.css">
+<script src="components.js" defer></script>
 </head>
 <body>
-<div class="sticky-header">
-  <div class="header-inner">
-    <div class="breadcrumbs">
-      <a href="index.html">System Design Guide</a>
-      <span class="sep">/</span>
-      <span class="curr">4. Message Queues</span>
-    </div>
-    <div class="toc-jump">
-      <a href="#top">Back to Top</a>
-    </div>
-  </div>
-  <div class="progress-bar"></div>
-</div>
+<sys-header current="4. Message Queues"></sys-header>
 <div class="wrap" id="top">
 
-  <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
+  <p class="backlink"><a href="index.html">← All guides</a></p>
   <header class="hero">
     <div class="kicker">System Design Basics · 4 of 12</div>
     <h1>Message Queues &amp; Async Processing</h1>
@@ -192,7 +24,7 @@
     <p>Black Friday. A user clicks "Buy." Behind that one click, your code synchronously charges the card, generates an invoice PDF, emails a receipt, updates the warehouse, pings the analytics service, and posts to Slack. The user stares at a spinner for 11 seconds because the email server is having a slow day. Multiply by 50,000 concurrent shoppers and the whole site seizes — not because buying is hard, but because you insisted on doing <em>everything</em> before saying "thanks for your order." A queue is how you hand off the boring parts and reply instantly.</p>
   </div>
 
-  <nav class="toc">
+  <nav class="toc" id="toc-top">
     <strong>Contents</strong>
     <ol>
       <li><a href="#sync">Synchronous vs. async</a></li>
@@ -210,23 +42,18 @@
     </ol>
   </nav>
 
-<details class="sec-collapse" id="sync">
-  <summary><h2>1. Synchronous vs. asynchronous</h2></summary>
-  <div class="sec-content">
+<sys-collapse id="sync" title="1. Synchronous vs. asynchronous">
   <p><strong>Synchronous</strong> is a phone call: you both have to be on the line at the same time, and you wait for the answer. <strong>Asynchronous</strong> is a text message: you send it and get on with your life; the other side handles it when they can.</p>
   <p>Lots of work has no business being synchronous. The user doesn't need to <em>watch</em> their receipt email get sent — they just need to know the order went through. So do the essential bit inline (record the order, take the money), drop everything else onto a queue, and return "success" immediately. The slow, non-urgent work happens in the background.</p>
 
 
-  <div class="note wild" style="margin-top: 18px;">
+  <div class="note wild">
     <span class="label">◈ In the wild · E-Commerce Checkout</span>
     When you click "Buy" on Amazon or Shopify, the instant "Order confirmed!" is a fast asynchronous hand-off. The email generation, warehouse inventory booking, and credit card settlement details are queued, allowing the client interface to load instantly.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="queue">
-  <summary><h2>2. The queue as a shock absorber</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="queue" title="2. The queue as a shock absorber">
   <p>A message queue is a durable line that work waits in. Producers add messages to one end; consumers take them off the other and do the work. Its magic trick is <strong>decoupling in both time and speed.</strong></p>
   <div class="stack">
     <div class="layer"><div class="idx">P</div><div class="body"><h4>Producer</h4><p>Drops a "send receipt" message and moves on instantly.</p></div></div>
@@ -246,11 +73,8 @@
     Kafka was built at LinkedIn around 2010 for exactly this reason. Dozens of services each needing data from dozens of others had become an explosion of point-to-point wiring — <em>N</em> systems to <em>M</em> systems is <em>N&times;M</em> brittle pipelines. Kafka replaced that web with one <strong>durable, append-only log</strong> every system publishes to and reads from at its own pace: the shock absorber turned into a company-wide backbone. It decoupled producers from consumers so cleanly that they open-sourced it in 2011, and much of the industry now runs its event backbone on it.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="parts">
-  <summary><h2>3. Producers, consumers, and two shapes of delivery</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="parts" title="3. Producers, consumers, and two shapes of delivery">
   <p>Beyond the basic queue, there are two classic patterns, and knowing which you want saves a lot of confusion:</p>
   <div class="cards">
     <div class="card"><h4>Work queue (point-to-point)</h4><p>Each message goes to <em>exactly one</em> consumer. Ten workers share the load; a receipt gets emailed once. This is task distribution.</p></div>
@@ -259,8 +83,7 @@
   <p>Pub/sub is the backbone of <strong>event-driven architecture</strong>: services announce that something happened and don't care who's listening. New feature? Subscribe to the existing event stream — no need to touch the producer. It's how big systems add capabilities without everything having to know about everything.</p>
 
 
-  <div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
-    <svg viewBox="0 0 760 260" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+  <svg viewBox="0 0 760 260" width="100%" height="auto" class="diagram">
       <!-- Point-to-Point Section -->
       <text x="20" y="30" fill="var(--text)" font-size="14" font-weight="700">Point-to-Point (Work Queue)</text>
       <text x="20" y="50" fill="var(--muted)" font-size="11">Each message is processed by exactly one worker.</text>
@@ -324,13 +147,9 @@
         </marker>
       </defs>
     </svg>
-  </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="delivery">
-  <summary><h2>4. Delivery guarantees: the three honesties</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="delivery" title="4. Delivery guarantees: the three honesties">
   <p>Networks fail, consumers crash mid-task. So every queue has to answer: if things go wrong, how hard do we try to deliver? There are three honest answers, and physics won't let you have a perfect fourth.</p>
   <div class="table-scroll">
   <table>
@@ -352,11 +171,8 @@
     This is exactly how WhatsApp delivers to a phone that's switched off: the server doesn't fail and doesn't wait — it holds the message in an in-memory queue and keeps retrying until the device reconnects and <em>acks</em> receipt, then deletes it. Those two grey ticks (✓✓) are literally that ack. In early 2014 the design moved roughly <strong>50 billion messages a day</strong> for 450 million users on around 550 servers, run by a team of <strong>32 engineers</strong> — on Erlang and a sharded in-memory <a href="https://newsletter.systemdesign.one/p/whatsapp-engineering">Mnesia store that tracked every in-flight message</a>. At-least-once-until-acked, at planetary scale.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="idem">
-  <summary><h2>5. Idempotency: the survival skill</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="idem" title="5. Idempotency: the survival skill">
   <p>Idempotent means: <strong>doing it twice has the same effect as doing it once.</strong> Pressing an elevator button five times doesn't summon five elevators. This single property is what makes at-least-once delivery safe, and it's worth internalizing because it shows up everywhere in distributed systems.</p>
   <p>The classic horror is a payment consumer that gets the same "charge $50" message twice (because the first ack got lost) and charges the customer $100. The fix: give each message a unique ID and record which IDs you've already processed. See a repeat? Skip it. Now the retry that would've double-charged is a shrug.</p>
   <p>That's the idea. The obvious way to write it is wrong.</p>
@@ -409,16 +225,12 @@
   </div>
 
 
-  <details class="q">
-    <summary>Check yourself: You add a processed-IDs table and the double charges stop. A month later, a handful of payments silently never happen at all. What did the fix introduce?</summary>
-    <div class="a">A claim with no way to expire. The consumer inserted the ID, then crashed before completing the charge, so the row now says "handled" for work that never ran — and every redelivery bounces off it and acks. You traded a loud failure for a silent one. The claim row needs a status and a lease so a stale claim can be taken over, or the claim and the work need to commit in one transaction; where the side effect is external, the provider's idempotency key is what lets you safely retry instead of guessing.</div>
-  </details>
+  <sys-question q="Check yourself: You add a processed-IDs table and the double charges stop. A month later, a handful of payments silently never happen at all. What did the fix introduce?">
+    A claim with no way to expire. The consumer inserted the ID, then crashed before completing the charge, so the row now says "handled" for work that never ran — and every redelivery bounces off it and acks. You traded a loud failure for a silent one. The claim row needs a status and a lease so a stale claim can be taken over, or the claim and the work need to commit in one transaction; where the side effect is external, the provider's idempotency key is what lets you safely retry instead of guessing.
+  </sys-question>
 
-  </div>
-</details>
-<details class="sec-collapse" id="visibility">
-  <summary><h2>6. Visibility timeouts: the bug that duplicates your work</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="visibility" title="6. Visibility timeouts: the bug that duplicates your work">
   <p>This is the most common queue bug in production, and it hides because nothing in your code is wrong.</p>
   <p>When a consumer takes a message, the broker doesn't delete it — it makes it <strong>invisible</strong> for N seconds (SQS calls this the visibility timeout; other brokers call it an ack deadline or ack timeout). If your ack arrives within N, the message is removed. If it doesn't, the broker assumes you died and hands the same message to another consumer. It has no way to tell "crashed" from "still working."</p>
   <p>So if a job takes longer than N, the queue delivers it again <em>while the first consumer is still running it</em>. That is not a stray duplicate from a lost ack; it is genuine, guaranteed concurrent processing of the same message, and it's the scenario the race in section 5 was drawn for. Worse: if the job is slow for <em>everyone</em>, every redelivery also times out, and the message loops forever — redelivered, re-processed, never completed, burning capacity that the rest of the queue needed. A backlog that grows while your consumers are visibly busy is usually this.</p>
@@ -429,30 +241,22 @@
   </ul>
 
 
-  <details class="q">
-    <summary>Check yourself: The same job runs three times. The logs show no errors and no retries. What's the first setting you check?</summary>
-    <div class="a">The visibility timeout (or ack deadline) against your actual p99 processing time. No errors is the tell: nothing failed, the broker simply decided you'd died because you hadn't acked in time and gave the message to someone else — twice. Three executions of a job that takes just over the timeout is the classic signature. Fix the timeout, then heartbeat the job so its length stops being a guess, and check the receive count on the message to confirm — it's the number nobody thinks to look at.</div>
-  </details>
+  <sys-question q="Check yourself: The same job runs three times. The logs show no errors and no retries. What's the first setting you check?">
+    The visibility timeout (or ack deadline) against your actual p99 processing time. No errors is the tell: nothing failed, the broker simply decided you'd died because you hadn't acked in time and gave the message to someone else — twice. Three executions of a job that takes just over the timeout is the classic signature. Fix the timeout, then heartbeat the job so its length stops being a guess, and check the receive count on the message to confirm — it's the number nobody thinks to look at.
+  </sys-question>
 
-  </div>
-</details>
-<details class="sec-collapse" id="order">
-  <summary><h2>7. Ordering &amp; the dead-letter queue</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="order" title="7. Ordering &amp;amp; the dead-letter queue">
   <p><strong>Ordering.</strong> Many queues don't guarantee messages come out in the order they went in — especially once you have multiple consumers racing. If order matters ("account created" must precede "account updated"), you either use a queue that preserves order within a partition (Kafka does, keyed by e.g. user ID) or design so order doesn't matter. Assuming global ordering you don't have is a top-tier source of Heisenbugs.</p>
   <p><strong>Dead-letter queue (DLQ).</strong> What about a message that <em>can't</em> be processed — malformed data, a bug, a permanent failure? Without a plan, your consumer retries it forever, blocking everything behind it (a "poison message"). The fix is a DLQ: after N failed attempts, shunt the message to a separate queue for humans to inspect later. It's the inbox of things that went wrong, and checking it occasionally will teach you a lot about your own system.</p>
 
 
-  <details class="q">
-    <summary>Check yourself: Kafka guarantees ordering, so why did your "account created" and "account updated" events arrive backwards?</summary>
-    <div class="a">Because the guarantee is per-partition, and those two events almost certainly landed in different partitions — either they were produced with no key (round-robin) or with different keys. Ordering only holds for messages that share a partition, so anything that must be ordered relative to each other has to share a partition key: here, the account ID. The corollary is that your key choice <em>is</em> your ordering design, and it also decides your blast radius when one message gets stuck.</div>
-  </details>
+  <sys-question q="Check yourself: Kafka guarantees ordering, so why did your &quot;account created&quot; and &quot;account updated&quot; events arrive backwards?">
+    Because the guarantee is per-partition, and those two events almost certainly landed in different partitions — either they were produced with no key (round-robin) or with different keys. Ordering only holds for messages that share a partition, so anything that must be ordered relative to each other has to share a partition key: here, the account ID. The corollary is that your key choice <em>is</em> your ordering design, and it also decides your blast radius when one message gets stuck.
+  </sys-question>
 
-  </div>
-</details>
-<details class="sec-collapse" id="outbox">
-  <summary><h2>8. The dual-write problem and the transactional outbox</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="outbox" title="8. The dual-write problem and the transactional outbox">
   <p>Here's a line of code that appears in almost every service that uses a queue, and it's a bug:</p>
   <pre><code>db.insert(order)               # write 1
 queue.publish(order_placed)    # write 2
@@ -473,29 +277,25 @@ COMMIT;
   </div>
 
 
-  <div class="note key">
+  <div class="lab">
     <span class="label">🛠️ Hands-On Lab: Build a Transactional Outbox Worker</span>
-    <p>Build this mini-project to implement atomicity between business databases and message brokers:</p>
-    <ul class="tight" style="margin-top: 8px; font-size: 0.95rem;">
+    <p class="lab-intro">Build this mini-project to implement atomicity between business databases and message brokers:</p>
+    <ul class="tight">
       <li><strong>1. The Database Schema:</strong> Spin up a Postgres database in Docker. Create an <code>orders</code> table and an <code>outbox_events</code> table. The <code>outbox_events</code> table should have fields: <code>id (UUID)</code>, <code>event_type (VARCHAR)</code>, <code>payload (JSONB)</code>, and <code>status (VARCHAR, default 'PENDING')</code>.</li>
       <li><strong>2. The Atomic Endpoint:</strong> Write an API server with a POST endpoint `/checkout`. Inside a single database transaction, insert an order row AND insert an event row with type <code>'order_placed'</code>.</li>
       <li><strong>3. The Publisher Daemon (Relay):</strong> Write a background program that polls the <code>outbox_events</code> table for <code>status = 'PENDING'</code> rows every 500ms. For each row, publish the event payload to a local message broker (like SQS or RabbitMQ), then mark the database event row status as <code>'PUBLISHED'</code>.</li>
       <li><strong>4. Simulate Failures:</strong> Under a load test, force your broker connection to drop (e.g. stop the RabbitMQ Docker container), verify that transactions still commit successfully, and watch events queue up safely inside the database outbox. Restart RabbitMQ and verify that all queued events are delivered to consumers with zero loss.</li>
     </ul>
-    <p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Put this project on your portfolio as a benchmark of high-reliability distributed outbox design.</p>
+    <p class="lab-note">💡 Put this project on your portfolio as a benchmark of high-reliability distributed outbox design.</p>
   </div>
 
 
-  <details class="q">
-    <summary>Check yourself: Your service records the order correctly, but roughly once a week the confirmation email never sends. No exception, no DLQ entry. What's the architectural fix?</summary>
-    <div class="a">This is the dual-write problem: the database commit and the queue publish are two separate writes, and once a week the process dies or the broker call fails in the gap between them. There's no exception because there's nobody left to catch it, and no DLQ entry because the message was never published. The fix is the transactional outbox — write the event to an outbox table inside the same transaction as the order, and let a relay publish it. Retrying the publish in a catch block only shrinks the window; it doesn't close it.</div>
-  </details>
+  <sys-question q="Check yourself: Your service records the order correctly, but roughly once a week the confirmation email never sends. No exception, no DLQ entry. What's the architectural fix?">
+    This is the dual-write problem: the database commit and the queue publish are two separate writes, and once a week the process dies or the broker call fails in the gap between them. There's no exception because there's nobody left to catch it, and no DLQ entry because the message was never published. The fix is the transactional outbox — write the event to an outbox table inside the same transaction as the order, and let a relay publish it. Retrying the publish in a catch block only shrinks the window; it doesn't close it.
+  </sys-question>
 
-  </div>
-</details>
-<details class="sec-collapse" id="gotchas">
-  <summary><h2>9. Operational gotchas that bite in year two</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="gotchas" title="9. Operational gotchas that bite in year two">
   <p>None of these show up in the tutorial. All of them show up in the incident review.</p>
 
   <h3>Head-of-line blocking</h3>
@@ -520,16 +320,12 @@ COMMIT;
   <p>A dead-letter queue you don't monitor is not a safety net — it's a slower, quieter way to lose data, with the added insult that you'll discover it during a customer complaint about an order from three weeks ago. A DLQ needs two things to actually be a safety net: an <strong>alert on arrival rate</strong> (non-zero should be interesting; a spike should page someone), and a <strong>documented, rehearsed replay path</strong> — how a human moves messages back to the main queue after the bug is fixed, and what happens if the replayed message is a duplicate. If the answer to that last part is "we've never tried," you don't have a DLQ, you have a landfill.</p>
 
 
-  <details class="q">
-    <summary>Check yourself: Consumers are healthy, CPU is low, lag is basically zero — but one customer's exports have been pending for two hours. Which number would have caught it?</summary>
-    <div class="a">Oldest message age. Lag and depth are aggregates, and an aggregate over dozens of partitions will happily average away one partition that is completely stuck — a consumer that died without rebalancing, or a poison message at the head blocking everything behind it. Oldest message age is the only one of the four that can't be diluted by healthy traffic, which is exactly why it's worth paging on separately. High age with low lag is nearly always head-of-line blocking in one partition.</div>
-  </details>
+  <sys-question q="Check yourself: Consumers are healthy, CPU is low, lag is basically zero — but one customer's exports have been pending for two hours. Which number would have caught it?">
+    Oldest message age. Lag and depth are aggregates, and an aggregate over dozens of partitions will happily average away one partition that is completely stuck — a consumer that died without rebalancing, or a poison message at the head blocking everything behind it. Oldest message age is the only one of the four that can't be diluted by healthy traffic, which is exactly why it's worth paging on separately. High age with low lag is nearly always head-of-line blocking in one partition.
+  </sys-question>
 
-  </div>
-</details>
-<details class="sec-collapse" id="numbers">
-  <summary><h2>10. Four numbers that describe any queue</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="numbers" title="10. Four numbers that describe any queue">
   <p>Every queue's health fits in four numbers. Learn what each one means when it moves and you can debug most queue incidents from the dashboard.</p>
   <ul class="tight">
     <li><strong>Consumer lag</strong> — <em>are we falling behind?</em> The one that matters. Rising lag means arrival rate has overtaken drain rate; nothing else on this list is urgent while this one is flat.</li>
@@ -556,16 +352,12 @@ COMMIT;
   </div>
 
 
-  <details class="q">
-    <summary>Check yourself: You doubled your consumers to clear a 2-million-message backlog. Six hours later it's barely moved. What's the arithmetic?</summary>
-    <div class="a">Only the capacity <em>above</em> the arrival rate does any draining: the backlog falls at N·C − A, not at N·C. If you were previously right at the edge, doubling might take you from "keeping up" to "keeping up plus a little," and a little divided into two million is a very long time. Work out the surplus explicitly before you scale — and check that C itself hasn't dropped, because a saturated downstream dependency means the extra consumers are just queueing somewhere else.</div>
-  </details>
+  <sys-question q="Check yourself: You doubled your consumers to clear a 2-million-message backlog. Six hours later it's barely moved. What's the arithmetic?">
+    Only the capacity <em>above</em> the arrival rate does any draining: the backlog falls at N·C − A, not at N·C. If you were previously right at the edge, doubling might take you from "keeping up" to "keeping up plus a little," and a little divided into two million is a very long time. Work out the surplus explicitly before you scale — and check that C itself hasn't dropped, because a saturated downstream dependency means the extra consumers are just queueing somewhere else.
+  </sys-question>
 
-  </div>
-</details>
-<details class="sec-collapse" id="tools">
-  <summary><h2>11. Kafka vs. RabbitMQ vs. SQS</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="tools" title="11. Kafka vs. RabbitMQ vs. SQS">
   <p>Three tools you'll hear constantly. They're less interchangeable than they look:</p>
   <div class="cards">
     <div class="card"><h4>Apache Kafka</h4><p>A distributed <em>log</em>, not a traditional queue. Messages are kept (even after reading) and replayed. Insane throughput; great for event streaming, analytics pipelines, and "many consumers, same stream." Heavier to operate.</p></div>
@@ -575,8 +367,7 @@ COMMIT;
   </div>
 
 
-  <div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
-    <svg viewBox="0 0 760 280" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+  <svg viewBox="0 0 760 280" width="100%" height="auto" class="diagram">
       <!-- Title -->
       <text x="20" y="30" fill="var(--text)" font-size="14" font-weight="700">Log-Structured Partitioned Queue (Kafka-Style)</text>
       <text x="20" y="50" fill="var(--muted)" font-size="11">Each partition is an append-only log. Consumers track progress via numeric offsets.</text>
@@ -634,19 +425,15 @@ COMMIT;
         </marker>
       </defs>
     </svg>
-  </div>
 
 
-  <div class="note wild" style="margin-top: 18px;">
+  <div class="note wild">
     <span class="label">◈ In the wild · Uber Dispatch System</span>
     Uber's real-time matching system handles tens of thousands of GPS updates, ride bookings, and dispatch signals. Location events are emitted asynchronously into a partitioned queue structure. This ensures driver matching processes run decoupled in the background, preventing a spike in GPS updates from seizing the user app's critical path.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="recap">
-  <summary><h2>12. Recap in 60 seconds</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="recap" title="12. Recap in 60 seconds">
   <div class="recap">
     <ul>
       <li><strong>Async is a choice about waiting, not about work.</strong> Do the essential bit inline, queue the rest, answer the user now.</li>
@@ -667,8 +454,7 @@ COMMIT;
     </ul>
   </div>
 
-  </div>
-</details>
+  </sys-collapse>
   <hr>
   <p class="footer">
     Part of <em>System Design Basics</em>. Sources:
@@ -678,80 +464,6 @@ COMMIT;
   </p>
 </div>
 
-<script>
-  // Restore open states from localStorage
-  document.querySelectorAll('details.sec-collapse').forEach(details => {
-    const id = details.id;
-    const storedState = localStorage.getItem(`sec-open-${id}`);
-    if (storedState !== null) {
-      details.open = storedState === 'true';
-    } else {
-      details.open = false; // Collapsed by default
-    }
-    
-    // Listen for toggle events to save state
-    details.addEventListener('toggle', () => {
-      localStorage.setItem(`sec-open-${id}`, details.open);
-    });
-  });
-
-  // Restore scroll position
-  const storedScroll = localStorage.getItem('sec-scroll-pos');
-  if (storedScroll !== null && !window.location.hash) {
-    setTimeout(() => {
-      window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
-    }, 100);
-  }
-
-  // Save scroll position on scroll (debounced)
-  let scrollTimeout;
-  window.addEventListener('scroll', () => {
-    clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
-      localStorage.setItem('sec-scroll-pos', window.scrollY);
-    }, 150);
-  });
-
-  // Auto-expand details elements when targeted by a hash link
-  function handleHashChange() {
-    const hash = window.location.hash;
-    if (hash) {
-      const target = document.querySelector(hash);
-      if (target) {
-        let parent = target.closest('details');
-        while (parent) {
-          parent.open = true;
-          parent = parent.parentElement.closest('details');
-        }
-        setTimeout(() => {
-          target.scrollIntoView({ behavior: 'smooth' });
-        }, 100);
-      }
-    }
-  }
-  window.addEventListener('hashchange', handleHashChange);
-  window.addEventListener('DOMContentLoaded', handleHashChange);
-
-  // Update scroll progress bar dynamically
-  const progressBar = document.querySelector('.progress-bar');
-  function updateProgress() {
-    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
-    if (scrollHeight > 0) {
-      const progress = (window.scrollY / scrollHeight) * 100;
-      progressBar.style.width = `${progress}%`;
-    } else {
-      progressBar.style.width = '0%';
-    }
-  }
-  window.addEventListener('scroll', updateProgress);
-  window.addEventListener('resize', updateProgress);
-  document.querySelectorAll('details').forEach(d => {
-    d.addEventListener('toggle', () => {
-      setTimeout(updateProgress, 60);
-    });
-  });
-  updateProgress();
-</script>
 
 </body>
 </html>

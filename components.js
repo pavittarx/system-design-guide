@@ -54,13 +54,19 @@ class SysCollapse extends HTMLElement {
       </details>
     `;
 
+    // The id now lives on the inner <details>. Leaving it on the host too would
+    // make #id resolve to the host, whose closest('details') is null — so hash
+    // links (the TOC) would scroll to a section without opening it.
+    this.removeAttribute('id');
+
     const details = this.querySelector('details');
     const storedState = localStorage.getItem(`sec-open-${id}`);
-    
+
     if (storedState !== null) {
       details.open = storedState === 'true';
     } else {
-      details.open = false;
+      // The hub wants its sections open on arrival; guides start collapsed.
+      details.open = this.hasAttribute('open');
     }
 
     details.addEventListener('toggle', () => {
@@ -87,30 +93,10 @@ class SysQuestion extends HTMLElement {
   }
 }
 
-// 4. Global Footer Component
-class SysFooter extends HTMLElement {
-  connectedCallback() {
-    this.innerHTML = `
-      <hr>
-      <p class="footer">
-        Part of <em>System Design Basics</em>. Sources:
-        <a href="https://docs.aws.amazon.com/whitepapers/latest/database-caching-strategies-using-redis/caching-patterns.html">AWS — Database Caching Strategies Using Redis</a> ·
-        <a href="https://redis.io/blog/how-to-tame-the-thundering-herd-problem/">Redis — Taming the Thundering Herd</a> ·
-        <a href="https://accreditly.io/articles/the-practical-guide-to-http-caching-headers-cache-control-etag-and-304s">Accreditly — HTTP Caching Headers</a> ·
-        <a href="https://blog.bytebytego.com/p/a-crash-course-in-caching-final-part">ByteByteGo — A Crash Course in Caching</a> ·
-        <a href="https://read.engineerscodex.com/p/how-facebook-scaled-memcached">Scaling Memcache at Facebook</a> ·
-        <a href="https://openconnect.netflix.com/">Netflix Open Connect</a> ·
-        <a href="https://www.prisma.io/dataguide/managing-databases/introduction-database-caching">Prisma — Database Caching</a>
-      </p>
-    `;
-  }
-}
-
 // Register Custom Elements
 customElements.define('sys-header', SysHeader);
 customElements.define('sys-collapse', SysCollapse);
 customElements.define('sys-question', SysQuestion);
-customElements.define('sys-footer', SysFooter);
 
 // --- Global Page Actions: Scroll Restoration & Hash Routing ---
 

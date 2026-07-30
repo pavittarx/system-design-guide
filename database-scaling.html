@@ -4,229 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Scaling Databases — A Practical Guide</title>
-<style>
-  :root {
-    --bg: #0f1115;
-    --panel: #171a21;
-    --panel-2: #1d212a;
-    --text: #e7e9ee;
-    --muted: #9aa3b2;
-    --accent: #5b9dff;
-    --accent-2: #7ee0c0;
-    --warn: #ffcf70;
-    --danger: #ff8a8a;
-    --border: #262b36;
-    --code-bg: #12151b;
-    --radius: 14px;
-    --maxw: 820px;
-  }
-  @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --panel-2: #f0f2f5;
-      --text: #1a1d24;
-      --muted: #5a6472;
-      --accent: #2f6bd6;
-      --accent-2: #16916f;
-      --warn: #9a6b00;
-      --danger: #b23b3b;
-      --border: #e2e5ea;
-      --code-bg: #f1f3f6;
-    }
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 17px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
-  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 32px 20px 80px; }
-  header.hero { padding: 20px 0 8px; border-bottom: 1px solid var(--border); margin-bottom: 28px; }
-  .kicker { text-transform: uppercase; letter-spacing: 0.14em; font-size: 12px; color: var(--accent); font-weight: 700; margin-bottom: 10px; }
-  h1 { font-size: 2.05rem; line-height: 1.15; margin: 0 0 12px; letter-spacing: -0.02em; }
-  .lede { color: var(--muted); font-size: 1.12rem; margin: 0; }
-  h2 { font-size: 1.5rem; margin: 48px 0 16px; letter-spacing: -0.015em; padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 65px; }
-  h3 { font-size: 1.18rem; margin: 32px 0 10px; font-weight: 600; }
-  p { margin: 12px 0; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  code { background: var(--code-bg); border: 1px solid var(--border); padding: 1px 6px; border-radius: 6px; font-size: 0.86em; font-family: "SF Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace; }
-  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-size: 0.85rem; font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; line-height: 1.5; }
-  pre code { background: none; border: none; padding: 0; }
-  nav.toc { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 8px; }
-  nav.toc strong { display:block; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 10px; }
-  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 28px; }
-  nav.toc li { margin: 5px 0; break-inside: avoid; }
-  @media (max-width: 560px){ nav.toc ol { columns: 1; } h1 { font-size: 1.7rem; } }
-  .note { border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 10px 10px 0; padding: 12px 16px; margin: 18px 0; }
-  .note.warn { border-left-color: var(--warn); }
-  .note.key { border-left-color: var(--accent-2); }
-  .note.wild { border-left-color: var(--accent-2); }
-  .note.wild .label { color: var(--accent-2); }
-  .note .label { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); display:block; margin-bottom: 4px; }
-  .stack { margin: 20px 0; }
-  .layer { display: flex; align-items: center; gap: 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin: 8px 0; position: relative; }
-  .layer .idx { flex: 0 0 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; background: var(--panel-2); color: var(--accent); font-size: 0.95rem; }
-  .layer .body h4 { margin: 0 0 2px; font-size: 1rem; }
-  .layer .body p { margin: 0; font-size: 0.9rem; color: var(--muted); }
-  .layer .speed { margin-left: auto; font-size: 0.78rem; color: var(--accent-2); font-weight: 600; white-space: nowrap; }
-  .arrow { text-align: center; color: var(--muted); font-size: 0.8rem; margin: -2px 0; }
-  .table-scroll { overflow-x: auto; margin: 18px 0; border: 1px solid var(--border); border-radius: 12px; }
-  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 560px; }
-  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { background: var(--panel-2); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-  tr:last-child td { border-bottom: none; }
-  td strong { color: var(--text); }
-  .pill { display:inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
-  .pill.good { background: rgba(126,224,192,0.16); color: var(--accent-2); }
-  .pill.bad { background: rgba(255,138,138,0.16); color: var(--danger); }
-  .pill.mid { background: rgba(255,207,112,0.16); color: var(--warn); }
-  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
-  @media (max-width: 560px){ .cards { grid-template-columns: 1fr; } }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-  .card h4 { margin: 0 0 6px; font-size: 1rem; }
-  .card p { margin: 0; font-size: 0.9rem; color: var(--muted); }
-  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
-  .footer { color: var(--muted); font-size: 0.85rem; }
-  .footer a { color: var(--muted); text-decoration: underline; }
-  ul.tight li, ol.tight li { margin: 6px 0; }
-  .series { font-size: .8rem; color: var(--muted); margin-top: 6px; }
-  .coldopen { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--danger); border-radius: 12px; padding: 16px 18px; margin: 22px 0; }
-  .coldopen .tag { font-family: "SF Mono", ui-monospace, Menlo, monospace; color: var(--danger); font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
-  .coldopen p { margin: 8px 0 0; }
-  /* --- retention + worked-example layer --- */
-  details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
-  details.q summary{cursor:pointer;font-weight:600;list-style:none;}
-  details.q summary::-webkit-details-marker{display:none;}
-  details.q summary::before{content:"▸ ";color:var(--accent);}
-  details.q[open] summary::before{content:"▾ ";}
-  details.q .a{margin:10px 0 0;color:var(--muted);font-size:.95rem;}
-  .recap{background:var(--panel-2);border:1px solid var(--border);border-radius:12px;padding:6px 18px 14px;margin:18px 0;}
-  .recap ul{padding-left:18px;margin:10px 0;} .recap li{margin:7px 0;font-size:.95rem;}
-  .trace{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:18px 0;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;line-height:1.75;overflow-x:auto;white-space:pre;}
-  .trace b{color:var(--accent);font-weight:600;} .trace .bad{color:var(--danger);} .trace .good{color:var(--accent-2);}
-  pre{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.6;margin:18px 0;}
-  pre code{background:none;border:none;padding:0;font-size:1em;}
-  .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
-
-  /* Sticky Top Header */
-  .sticky-header {
-    position: sticky;
-    top: 0;
-    left: 0;
-    width: 100%;
-    background: color-mix(in srgb, var(--bg) 92%, transparent);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
-    z-index: 100;
-  }
-  .header-inner {
-    max-width: var(--maxw);
-    margin: 0 auto;
-    padding: 10px 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.82rem;
-  }
-  .breadcrumbs {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--muted);
-  }
-  .breadcrumbs a {
-    color: var(--muted);
-    font-weight: 500;
-  }
-  .breadcrumbs a:hover {
-    color: var(--accent);
-  }
-  .breadcrumbs .sep {
-    color: var(--border);
-    font-weight: 300;
-  }
-  .breadcrumbs .curr {
-    color: var(--text);
-    font-weight: 600;
-  }
-  .toc-jump a {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  /* Scroll Progress Indicator */
-  .progress-bar {
-    height: 3px;
-    background: var(--accent);
-    width: 0%;
-    transition: width 0.08s ease-out;
-  }
-
-  /* Collapsible Sections */
-  details.sec-collapse {
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 0;
-  }
-  details.sec-collapse summary {
-    cursor: pointer;
-    list-style: none;
-    outline: none;
-    padding: 18px 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    user-select: none;
-  }
-  details.sec-collapse summary::-webkit-details-marker {
-    display: none;
-  }
-  details.sec-collapse summary h2 {
-    margin: 0;
-    border-bottom: none;
-    padding-bottom: 0;
-    font-size: 1.45rem;
-    flex-grow: 1;
-  }
-  details.sec-collapse summary::after {
-    content: "";
-    width: 8px;
-    height: 8px;
-    border-right: 2px solid var(--muted);
-    border-bottom: 2px solid var(--muted);
-    transform: rotate(45deg);
-    transition: transform 0.2s ease;
-    margin-right: 12px;
-    flex-shrink: 0;
-  }
-  details.sec-collapse[open] summary::after {
-    transform: rotate(-135deg);
-  }
-  .sec-content {
-    padding: 8px 0 28px 0;
-  }
-
-</style>
+<link rel="stylesheet" href="styles.css">
+<script src="components.js" defer></script>
 </head>
 <body>
-<div class="sticky-header">
-  <div class="header-inner">
-    <div class="breadcrumbs">
-      <a href="index.html">System Design Guide</a>
-      <span class="sep">/</span>
-      <span class="curr">2. Database Scaling</span>
-    </div>
-    <div class="toc-jump">
-      <a href="#toc-top">Jump to Contents</a>
-    </div>
-  </div>
-  <div class="progress-bar"></div>
-</div>
+<sys-header current="2. Database Scaling"></sys-header>
 <div class="wrap">
 
-  <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
+  <p class="backlink"><a href="index.html">← All guides</a></p>
   <header class="hero">
     <div class="kicker">System Design Basics · 2 of 12</div>
     <h1>Scaling Databases</h1>
@@ -261,9 +46,7 @@
     </ol>
   </nav>
 
-<details class="sec-collapse" id="why">
-  <summary><h2>1. Why the database breaks first</h2></summary>
-  <div class="sec-content">
+<sys-collapse id="why" title="1. Why the database breaks first">
   <p>You can add app servers behind a <a href="load-balancing.html">load balancer</a> almost endlessly — they're stateless and interchangeable. The database is different: it holds <em>state</em>, and there's usually one authoritative copy that every write must go through. That makes it the natural bottleneck.</p>
   <p>Two pressures build up, and they need different fixes:</p>
   <ul class="tight">
@@ -275,11 +58,8 @@
     Every rung up this ladder adds complexity and new failure modes. So climb it <strong>only as far as your load actually forces you to</strong> — and no further. Most applications never need sharding. Diagnose whether you're read-bound or write-bound first; it decides which rung you need. The next section is how you actually do that.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="diagnose">
-  <summary><h2>2. Diagnose first: read-bound or write-bound?</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="diagnose" title="2. Diagnose first: read-bound or write-bound?">
   <p>"The database is slow" is not a diagnosis, and the two pressures send you to completely different rungs. Worse, the wrong answer is expensive in a specific way: if you're write-bound and you add read replicas, you have not just failed to help — you've added machines that each replay <em>every single write</em>, plus a replication stream to monitor and a new failure mode. You made it worse and you paid for the privilege.</p>
   <p>Here is a triage you can genuinely run on a Monday morning. Five signals, in order of how quickly they answer the question.</p>
 
@@ -326,11 +106,8 @@
     Sometimes you are neither. If the database's own CPU, I/O, and lock waits are all unremarkable but your application's latency is terrible, the bottleneck is in front of the database — connection-pool queueing, an N+1 loop issuing 400 tiny queries per request, or a missing timeout letting one slow endpoint hold every connection. That's the cold open at the top of this page, and no rung of this ladder fixes it. See <a href="#gotchas">the gotchas</a>.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="rule-zero">
-  <summary><h2>3. Rule zero: make one box faster before you add boxes</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="rule-zero" title="3. Rule zero: make one box faster before you add boxes">
   <p>Before any distributed anything, exhaust the cheap wins on a single database. They routinely buy 10–100× and cost a fraction of the complexity.</p>
   <div class="cards">
     <div class="card"><h4>Indexing</h4><p>The single biggest lever. An index lets the DB jump to the rows it needs instead of scanning the whole table. Most "the database is slow" problems are really "this query has no usable index."</p></div>
@@ -342,18 +119,14 @@
     <span class="label">Do this first, always</span>
     A well-indexed query on a single beefy box beats a poorly-designed sharded cluster every time. Sharding a slow query just gives you many slow queries.
 
-  <details class="q">
-    <summary>Check yourself: Your p99 doubled after you raised the connection pool from 20 to 200. Throughput didn't change. Why?</summary>
-    <div class="a">Because 20 was already more than enough, and 200 doesn't create parallelism the database can use. Concurrency = throughput × latency, so 2,000 queries/second at 4 ms each is only 8 queries genuinely in flight. Past the point where the database can execute work in parallel — bounded by cores, disk queue depth, and lock contention — extra connections just interleave the same work into more slices, adding context switches and (in Postgres, where each connection is a process) real scheduler overhead. Total throughput stays flat while every individual query takes longer, which is exactly the shape of a p99 that doubles for no visible reason. The bigger loss is that the queue moved from your application, where you can time it out and shed it, into the database, where you can't.</div>
-  </details>
+  <sys-question q="Check yourself: Your p99 doubled after you raised the connection pool from 20 to 200. Throughput didn't change. Why?">
+    Because 20 was already more than enough, and 200 doesn't create parallelism the database can use. Concurrency = throughput × latency, so 2,000 queries/second at 4 ms each is only 8 queries genuinely in flight. Past the point where the database can execute work in parallel — bounded by cores, disk queue depth, and lock contention — extra connections just interleave the same work into more slices, adding context switches and (in Postgres, where each connection is a process) real scheduler overhead. Total throughput stays flat while every individual query takes longer, which is exactly the shape of a p99 that doubles for no visible reason. The bigger loss is that the queue moved from your application, where you can time it out and shed it, into the database, where you can't.
+  </sys-question>
 
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="worked-index">
-  <summary><h2>4. Worked example: the index that isn't used</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="worked-index" title="4. Worked example: the index that isn't used">
   <p>"We have an index on that" is one of the most confidently wrong sentences in software. Having an index and <em>using</em> an index are separate facts, and only one of them makes queries fast. Here are the two ways it goes wrong, both of which look completely fine in code review.</p>
 
   <h3>Case 1: the composite index and the leftmost prefix</h3>
@@ -401,13 +174,10 @@ SELECT * FROM users WHERE lower(email) = 'ada@example.com';</code></pre>
     Never reason about index usage from first principles — run <code>EXPLAIN (ANALYZE, BUFFERS)</code> and read what the planner actually chose. Two things to watch for. First, <code>EXPLAIN</code> alone gives estimates; <code>ANALYZE</code> executes the query and gives you real row counts and timings (it also really runs the statement, so wrap writes in a transaction you roll back). Second, on a 5,000-row development table the planner will correctly choose a sequential scan no matter how perfect your index is, because reading the whole thing is genuinely cheaper. Index decisions have to be validated against production-shaped data volumes, or you're testing the wrong database.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="replicas">
-  <summary><h2>5. Read replicas &amp; replication</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="replicas" title="5. Read replicas &amp;amp; replication">
 
-  <svg viewBox="0 0 800 240" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+  <svg viewBox="0 0 800 240" class="diagram" xmlns="http://www.w3.org/2000/svg">
     <style>
       .node-bg { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; rx: 8; }
       .arrow-line { stroke: var(--muted); stroke-width: 2; fill: none; }
@@ -494,19 +264,15 @@ SELECT * FROM users WHERE lower(email) = 'ada@example.com';</code></pre>
 
   <p>Replicas scale reads, add read capacity cheaply, and give you a failover target — but they do <strong>nothing</strong> for write throughput or total data size. When those are the problem, you have to split the data itself.</p>
 
-  <details class="q">
-    <summary>Check yourself: Reads are slow. You add three read replicas. Nothing improves. What did you get wrong?</summary>
-    <div class="a">Almost certainly the diagnosis. A replica runs the same schema and the same query plan as the primary, so if the query is doing a sequential scan over 40 million rows, you have just bought three more machines to do that badly in parallel. Replicas add read <em>capacity</em>; they do nothing about work per query. Check rows examined per row returned before you check anything else. The other common answer is route mapping: traffic still goes to the primary because nothing routes it, or the queries sit inside transactions, which most routers pin to the primary by default.</div>
-  </details>
+  <sys-question q="Check yourself: Reads are slow. You add three read replicas. Nothing improves. What did you get wrong?">
+    Almost certainly the diagnosis. A replica runs the same schema and the same query plan as the primary, so if the query is doing a sequential scan over 40 million rows, you have just bought three more machines to do that badly in parallel. Replicas add read <em>capacity</em>; they do nothing about work per query. Check rows examined per row returned before you check anything else. The other common answer is route mapping: traffic still goes to the primary because nothing routes it, or the queries sit inside transactions, which most routers pin to the primary by default.
+  </sys-question>
 
 
-  </div>
-</details>
-<details class="sec-collapse" id="partition">
-  <summary><h2>6. Partitioning: splitting a table</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="partition" title="6. Partitioning: splitting a table">
 
-  <svg viewBox="0 0 800 280" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+  <svg viewBox="0 0 800 280" class="diagram" xmlns="http://www.w3.org/2000/svg">
     <style>
       .part-box { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; rx: 6; }
       .lbl-bold { font-family: -apple-system, sans-serif; font-size: 13px; font-weight: bold; fill: var(--text); }
@@ -571,11 +337,8 @@ SELECT * FROM users WHERE lower(email) = 'ada@example.com';</code></pre>
   </ul>
   <p>Horizontal partitioning within one server helps with table size, index bloat, and lifecycle management (drop last year's partition instantly). But it's still one machine's CPU and IOPS. When you need to spread rows across <em>separate machines</em>, horizontal partitioning becomes <strong>sharding</strong>.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="sharding">
-  <summary><h2>7. Sharding: splitting across machines</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="sharding" title="7. Sharding: splitting across machines">
 
   <div class="note wild">
     <span class="label">◈ In the wild · Figma</span>
@@ -617,11 +380,8 @@ SELECT * FROM users WHERE lower(email) = 'ada@example.com';</code></pre>
   </div>
   <p>One assumption underneath all of this deserves saying out loud: sharding presumes your application tier is stateless, so that any app server can talk to any shard and be replaced at will. If your app servers are still holding per-user state in local memory, fix that first — see the <a href="load-balancing.html">Load Balancing guide</a>. A sharded database behind sticky, stateful app servers is two hard problems wearing one trench coat.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="worked-shard">
-  <summary><h2>8. Worked example: picking a shard key, as arithmetic</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="worked-shard" title="8. Worked example: picking a shard key, as arithmetic">
   <p>Shard-key choice is usually taught as a list of strategies. It's better understood as arithmetic plus a short list of queries you refuse to make slow. Let's do it properly on a Slack-shaped product: <strong>workspaces</strong> contain <strong>channels</strong>, channels contain <strong>messages</strong>, and everything a user does is scoped to one workspace at a time.</p>
 
   <h3>Step 1: the numbers</h3>
@@ -695,10 +455,9 @@ SELECT * FROM users WHERE lower(email) = 'ada@example.com';</code></pre>
     <li><strong>Cross-workspace search becomes a fan-out.</strong> Any query that isn't scoped to one workspace — global admin search, "which workspaces use this integration", usage analytics, compliance export across an enterprise grid of 40 linked workspaces — now touches every shard and waits for the slowest one. The usual answer isn't to make that fast on the shards; it's to stop asking the shards. Push those into a dedicated search index or an analytics warehouse fed by change-data-capture, and let the sharded store answer only the workspace-scoped questions it's shaped for.</li>
     <li><strong>Rebalancing is now a real activity.</strong> Because the distribution is uneven and changes as customers grow, you will move logical shards between machines on purpose, periodically, forever. That's the trade for keeping the hot path single-shard, and it's the right trade — but it's a job someone owns, not a config value.</li>
 
-  <details class="q">
-    <summary>Check yourself: You shard by <code>user_id</code>. One customer's shared service account generates most of their API traffic and melts the shard it lands on. What should you have done?</summary>
-    <div class="a">Hashing distributes <em>keys</em> evenly, not <em>load per key</em> — a single hot key always lands on exactly one shard no matter how good your hash is, so no hashing scheme was ever going to save you here. Hot keys need their own mechanism: a directory-style mapping so that key can be pinned to a dedicated shard, a second-level key to split it, or request coalescing and caching in front so the shard sees one query instead of a thousand. And there's a second mistake underneath: in a tenant-scoped product, <code>user_id</code> scatters each customer's data across every shard, so all your tenant-scoped queries were already fanning out. The tenant boundary was the shard key.</div>
-  </details>
+  <sys-question q="Check yourself: You shard by &lt;code&gt;user_id&lt;/code&gt;. One customer's shared service account generates most of their API traffic and melts the shard it lands on. What should you have done?">
+    Hashing distributes <em>keys</em> evenly, not <em>load per key</em> — a single hot key always lands on exactly one shard no matter how good your hash is, so no hashing scheme was ever going to save you here. Hot keys need their own mechanism: a directory-style mapping so that key can be pinned to a dedicated shard, a second-level key to split it, or request coalescing and caching in front so the shard sees one query instead of a thousand. And there's a second mistake underneath: in a tenant-scoped product, <code>user_id</code> scatters each customer's data across every shard, so all your tenant-scoped queries were already fanning out. The tenant boundary was the shard key.
+  </sys-question>
 
   </ul>
   <div class="note key">
@@ -706,11 +465,8 @@ SELECT * FROM users WHERE lower(email) = 'ada@example.com';</code></pre>
     Pick the shard key that matches the boundary your product already draws around data. If almost every request is scoped to one workspace, one tenant, or one account, then that is your shard key — because it turns "distributed database" back into "a lot of small ordinary databases" for the 99% of queries that stay inside the boundary. Even distribution is a nice-to-have. Keeping the hot query on one shard is the requirement. Slack's own move onto Vitess used workspace as the dominant sharding key for exactly this reason.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="avoid">
-  <summary><h2>9. Avoiding the query entirely</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="avoid" title="9. Avoiding the query entirely">
   <p>The cheapest query is the one you never run. Several techniques reduce database load without splitting it:</p>
   <ul class="tight">
     <li><strong>Caching</strong> — put Redis/Memcached in front of the DB so hot reads never reach it. Often the highest-leverage move before you shard, and the rung immediately before replicas — see the <a href="understanding-caching.html">Caching guide</a>.</li>
@@ -720,11 +476,8 @@ SELECT * FROM users WHERE lower(email) = 'ada@example.com';</code></pre>
     <li><strong>Write buffering</strong> — put a queue between the request and the database so bursts are absorbed and writes arrive batched and steady instead of spiky. It converts a peak-throughput problem into a latency-budget problem, which is a much easier problem. Again: the <a href="message-queues.html">Message Queues guide</a>.</li>
   </ul>
 
-  </div>
-</details>
-<details class="sec-collapse" id="cap">
-  <summary><h2>10. CAP &amp; consistency: the trade-off underneath</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="cap" title="10. CAP &amp;amp; consistency: the trade-off underneath">
   <p>The moment your data lives on more than one node, the <strong>CAP theorem</strong> applies: when a network partition splits your nodes, you must choose between <strong>Consistency</strong> (every read sees the latest write) and <strong>Availability</strong> (every request still gets an answer). You can't have both during a partition.</p>
   <p>In practice this shows up as a spectrum you tune per workload:</p>
   <ul class="tight">
@@ -733,11 +486,8 @@ SELECT * FROM users WHERE lower(email) = 'ada@example.com';</code></pre>
   </ul>
   <p>Replication lag, quorum reads/writes, and "tunable consistency" in databases like Cassandra are all just knobs on this one dial. The <a href="consistency-cap.html">Consistency &amp; CAP guide</a> takes this apart properly, including why "CP" and "AP" are less binary than the theorem makes them sound.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="managed">
-  <summary><h2>11. Distributed SQL &amp; NoSQL: scaling as a built-in</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="managed" title="11. Distributed SQL &amp;amp; NoSQL: scaling as a built-in">
   <p>Instead of bolting sharding onto a single-node database, you can adopt an engine designed to scale horizontally from the start:</p>
   <div class="cards">
     <div class="card"><h4>Distributed / NewSQL</h4><p>Spanner, CockroachDB, TiDB, YugabyteDB — SQL and transactions, but data auto-shards and replicates across nodes. You get horizontal scale without hand-rolling a shard router.</p></div>
@@ -746,11 +496,8 @@ SELECT * FROM users WHERE lower(email) = 'ada@example.com';</code></pre>
     <div class="card"><h4>The trade-off</h4><p>These solve distribution for you, but impose their data model and consistency rules. You trade freedom and familiarity for scale that "just works."</p></div>
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="gotchas">
-  <summary><h2>12. The gotchas that bite later</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="gotchas" title="12. The gotchas that bite later">
   <p>None of these appear in the architecture diagram. All of them show up in the incident channel.</p>
 
   <h3>Connection pool sizing is Little's Law, not a vibe</h3>
@@ -800,10 +547,9 @@ LIMIT  20;</code></pre>
   <p>Combine those triggers and you get the defining property: <strong>lag is worst exactly when load is highest.</strong> Which means read-after-write bugs are invisible in development, invisible in staging, invisible in production at 4 AM — and appear for a fraction of users at peak, unreproducibly, in the exact window when you have the least attention to spare.</p>
   <p>Two real fixes. The simple one is a <strong>sticky primary window</strong>: after a user writes, route that user's reads to the primary for a few seconds. Cheap to implement, costs a little primary capacity, and covers the overwhelming majority of cases. The precise one is a <strong>version token</strong>: capture the write's position in the log at commit time — an LSN from <code>pg_current_wal_lsn()</code>, or a GTID in MySQL — carry it in the session or a cookie, and have the read path either wait for the replica to reach that position (<code>WAIT_FOR_EXECUTED_GTID_SET</code>, or comparing against <code>pg_last_wal_replay_lsn()</code>) or fall back to the primary if it hasn't. One more operational note: monitor lag in <em>bytes</em> of log distance as well as seconds. "Seconds behind" reports a cheerful zero on an idle system and is a lagging indicator on a busy one.</p>
 
-  <details class="q">
-    <summary>Check yourself: A read-your-writes bug affects about 2% of users, only at peak, and has never once reproduced in staging. Where do you look?</summary>
-    <div class="a">Replication lag, and the reason it hides is that lag isn't a constant — it's near zero until it spikes, and it spikes under exactly the conditions you can't recreate: heavy write volume, a backfill flooding the log, a long analytical query on the replica blocking replay. Staging has no load, so staging has no lag, so staging has no bug. Fix it structurally rather than by chasing it: give each user a sticky window that routes their reads to the primary for a few seconds after they write, or carry a version token (a Postgres LSN, a MySQL GTID) captured at commit and make the read path wait for the replica to reach it or fall back to the primary.</div>
-  </details>
+  <sys-question q="Check yourself: A read-your-writes bug affects about 2% of users, only at peak, and has never once reproduced in staging. Where do you look?">
+    Replication lag, and the reason it hides is that lag isn't a constant — it's near zero until it spikes, and it spikes under exactly the conditions you can't recreate: heavy write volume, a backfill flooding the log, a long analytical query on the replica blocking replay. Staging has no load, so staging has no lag, so staging has no bug. Fix it structurally rather than by chasing it: give each user a sticky window that routes their reads to the primary for a few seconds after they write, or carry a version token (a Postgres LSN, a MySQL GTID) captured at commit and make the read path wait for the replica to reach it or fall back to the primary.
+  </sys-question>
 
 
   <h3>The bills that arrive later</h3>
@@ -824,13 +570,10 @@ LIMIT  20;</code></pre>
     <span class="label">The pattern across both</span>
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="ladder">
-  <summary><h2>13. The scaling ladder — where to start</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="ladder" title="13. The scaling ladder — where to start">
 
-  <svg viewBox="0 0 800 240" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+  <svg viewBox="0 0 800 240" class="diagram" xmlns="http://www.w3.org/2000/svg">
     <style>
       .rung-bg { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; rx: 8; }
       .rung-arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; }
@@ -909,11 +652,8 @@ LIMIT  20;</code></pre>
   </div>
   <p>The best database architecture is the simplest one that meets your load and freshness needs. Add a rung only when the metrics — query latency, replica lag, CPU/IOPS saturation, write throughput — actually demand it.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="recap">
-  <summary><h2>14. Recap in 60 seconds</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="recap" title="14. Recap in 60 seconds">
   <div class="recap">
     <ul>
       <li><strong>Rung 0 — Measure.</strong> Read/write mix from the engine's own counters, which p99 moved, rows examined per row returned. <em>Climb only on evidence;</em> the answer decides everything after this.</li>
@@ -957,8 +697,7 @@ LIMIT  20;</code></pre>
     Every rung of this ladder trades a simple problem for a harder one, so make each rung earn its place with a measurement. In practice, most "we need to shard" turns out to be one missing index, one unbounded query, and a connection pool sized by superstition.
   </div>
 
-  </div>
-</details>
+  </sys-collapse>
   <hr>
   <p class="footer">
     Part of <em>System Design Basics</em>. Sources:
@@ -971,82 +710,6 @@ LIMIT  20;</code></pre>
   </p>
 </div>
 
-<script>
-  // Restore open states from localStorage
-  document.querySelectorAll('details.sec-collapse').forEach(details => {
-    const id = details.id;
-    const storedState = localStorage.getItem(`sec-open-${id}`);
-    if (storedState !== null) {
-      details.open = storedState === 'true';
-    } else {
-      // Collapsed by default
-      details.open = false;
-    }
-    
-    // Listen for toggle events to save state
-    details.addEventListener('toggle', () => {
-      localStorage.setItem(`sec-open-${id}`, details.open);
-    });
-  });
-
-  // Restore scroll position
-  const storedScroll = localStorage.getItem('sec-scroll-pos');
-  if (storedScroll !== null && !window.location.hash) {
-    setTimeout(() => {
-      window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
-    }, 100);
-  }
-
-  // Save scroll position on scroll (debounced)
-  let scrollTimeout;
-  window.addEventListener('scroll', () => {
-    clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
-      localStorage.setItem('sec-scroll-pos', window.scrollY);
-    }, 150);
-  });
-
-  // Auto-expand details elements when targeted by a hash link
-  function handleHashChange() {
-    const hash = window.location.hash;
-    if (hash) {
-      const target = document.querySelector(hash);
-      if (target) {
-        let parent = target.closest('details');
-        while (parent) {
-          parent.open = true;
-          parent = parent.parentElement.closest('details');
-        }
-        setTimeout(() => {
-          target.scrollIntoView({ behavior: 'smooth' });
-        }, 100);
-      }
-    }
-  }
-  window.addEventListener('hashchange', handleHashChange);
-  window.addEventListener('DOMContentLoaded', handleHashChange);
-
-  // Update scroll progress bar dynamically
-  const progressBar = document.querySelector('.progress-bar');
-  function updateProgress() {
-    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
-    if (scrollHeight > 0) {
-      const progress = (window.scrollY / scrollHeight) * 100;
-      progressBar.style.width = `${progress}%`;
-    } else {
-      progressBar.style.width = '0%';
-    }
-  }
-  window.addEventListener('scroll', updateProgress);
-  window.addEventListener('resize', updateProgress);
-  document.querySelectorAll('details').forEach(d => {
-    d.addEventListener('toggle', () => {
-      setTimeout(updateProgress, 60);
-    });
-  });
-  updateProgress();
-
-</script>
 
 </body>
 </html>

@@ -4,182 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Load Balancing — A Practical Guide</title>
-<style>
-  :root{--bg:#0f1115;--panel:#171a21;--panel-2:#1d212a;--text:#e7e9ee;--muted:#9aa3b2;--accent:#5b9dff;--accent-2:#7ee0c0;--warn:#ffcf70;--danger:#ff8a8a;--border:#262b36;--code-bg:#12151b;--radius:14px;--maxw:820px;}
-  @media (prefers-color-scheme: light){:root{--bg:#f6f7f9;--panel:#ffffff;--panel-2:#f0f2f5;--text:#1a1d24;--muted:#5a6472;--accent:#2f6bd6;--accent-2:#16916f;--warn:#9a6b00;--danger:#b23b3b;--border:#e2e5ea;--code-bg:#f1f3f6;}}
-  *{box-sizing:border-box;} html{scroll-behavior:smooth;}
-  body{margin:0;background:var(--bg);color:var(--text);font:17px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased;}
-  .wrap{max-width:var(--maxw);margin:0 auto;padding:32px 20px 80px;}
-  header.hero{padding:20px 0 8px;border-bottom:1px solid var(--border);margin-bottom:24px;}
-  .kicker{text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:var(--accent);font-weight:700;margin-bottom:10px;}
-  h1{font-size:2.05rem;line-height:1.15;margin:0 0 12px;letter-spacing:-.02em;}
-  .lede{color:var(--muted);font-size:1.12rem;margin:0;}
-  h2 { font-size: 1.5rem; margin: 48px 0 16px; letter-spacing: -0.015em; padding-bottom: 8px; border-bottom: 1px solid var(--border); scroll-margin-top: 65px; }
-  h3 { font-size: 1.18rem; margin: 32px 0 10px; font-weight: 600; }
-  p{margin:12px 0;} a{color:var(--accent);text-decoration:none;} a:hover{text-decoration:underline;}
-  code{background:var(--code-bg);border:1px solid var(--border);padding:1px 6px;border-radius:6px;font-size:.86em;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
-  nav.toc{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:8px;}
-  nav.toc strong{display:block;font-size:.8rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin-bottom:10px;}
-  nav.toc ol{margin:0;padding-left:20px;columns:2;column-gap:28px;} nav.toc li{margin:5px 0;break-inside:avoid;}
-  @media (max-width:560px){nav.toc ol{columns:1;} h1{font-size:1.7rem;}}
-  .note{border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0;padding:12px 16px;margin:18px 0;}
-  .note.warn{border-left-color:var(--warn);} .note.key{border-left-color:var(--accent-2);} .note.war{border-left-color:var(--danger);}
-  .note.wild{border-left-color:var(--accent-2);}
-  .note.wild .label{color:var(--accent-2);}
-  .note .label{font-weight:700;font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);display:block;margin-bottom:4px;}
-  .coldopen{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--danger);border-radius:12px;padding:16px 18px;margin:22px 0;}
-  .coldopen .tag{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--danger);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:700;}
-  .coldopen p{margin:8px 0 0;}
-  .stack{margin:20px 0;}
-  .layer{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:8px 0;}
-  .layer .idx{flex:0 0 34px;height:34px;border-radius:9px;display:grid;place-items:center;font-weight:700;background:var(--panel-2);color:var(--accent);font-size:.95rem;}
-  .layer .body h4{margin:0 0 2px;font-size:1rem;} .layer .body p{margin:0;font-size:.9rem;color:var(--muted);}
-  .layer .speed{margin-left:auto;font-size:.78rem;color:var(--accent-2);font-weight:600;white-space:nowrap;}
-  .arrow{text-align:center;color:var(--muted);font-size:.8rem;margin:-2px 0;}
-  .table-scroll{overflow-x:auto;margin:18px 0;border:1px solid var(--border);border-radius:12px;}
-  table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:560px;}
-  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:top;}
-  th{background:var(--panel-2);font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);}
-  tr:last-child td{border-bottom:none;} td strong{color:var(--text);}
-  .cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:18px 0;}
-  @media (max-width:560px){.cards{grid-template-columns:1fr;}}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;}
-  .card h4{margin:0 0 6px;font-size:1rem;} .card p{margin:0;font-size:.9rem;color:var(--muted);}
-  hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
-  .footer{color:var(--muted);font-size:.85rem;} .footer a{color:var(--muted);text-decoration:underline;}
-  ul.tight li,ol.tight li{margin:6px 0;}
-  .series{font-size:.8rem;color:var(--muted);margin-top:6px;}
-  /* --- retention + worked-example layer --- */
-  details.q{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin:10px 0;}
-  details.q summary{cursor:pointer;font-weight:600;list-style:none;}
-  details.q summary::-webkit-details-marker{display:none;}
-  details.q summary::before{content:"▸ ";color:var(--accent);}
-  details.q[open] summary::before{content:"▾ ";}
-  details.q .a{margin:10px 0 0;color:var(--muted);font-size:.95rem;}
-  .recap{background:var(--panel-2);border:1px solid var(--border);border-radius:12px;padding:6px 18px 14px;margin:18px 0;}
-  .recap ul{padding-left:18px;margin:10px 0;} .recap li{margin:7px 0;font-size:.95rem;}
-  .trace{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin:18px 0;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.8rem;line-height:1.75;overflow-x:auto;white-space:pre;}
-  .trace b{color:var(--accent);font-weight:600;} .trace .bad{color:var(--danger);} .trace .good{color:var(--accent-2);}
-  pre{background:var(--code-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;overflow-x:auto;font-size:.84rem;line-height:1.6;margin:18px 0;}
-  pre code{background:none;border:none;padding:0;font-size:1em;}
-  .num-table td:first-child{font-family:"SF Mono",ui-monospace,Menlo,monospace;color:var(--accent-2);white-space:nowrap;}
-
-  /* Sticky Top Header */
-  .sticky-header {
-    position: sticky;
-    top: 0;
-    left: 0;
-    width: 100%;
-    background: color-mix(in srgb, var(--bg) 92%, transparent);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
-    z-index: 100;
-  }
-  .header-inner {
-    max-width: var(--maxw);
-    margin: 0 auto;
-    padding: 10px 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.82rem;
-  }
-  .breadcrumbs {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: var(--muted);
-  }
-  .breadcrumbs a {
-    color: var(--muted);
-    font-weight: 500;
-  }
-  .breadcrumbs a:hover {
-    color: var(--accent);
-  }
-  .breadcrumbs .sep {
-    color: var(--border);
-    font-weight: 300;
-  }
-  .breadcrumbs .curr {
-    color: var(--text);
-    font-weight: 600;
-  }
-  .toc-jump a {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  /* Scroll Progress Indicator */
-  .progress-bar {
-    height: 3px;
-    background: var(--accent);
-    width: 0%;
-    transition: width 0.08s ease-out;
-  }
-
-  /* Collapsible Sections */
-  details.sec-collapse {
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 0;
-  }
-  details.sec-collapse summary {
-    cursor: pointer;
-    list-style: none;
-    outline: none;
-    padding: 18px 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    user-select: none;
-  }
-  details.sec-collapse summary::-webkit-details-marker {
-    display: none;
-  }
-  details.sec-collapse summary h2 {
-    margin: 0;
-    border-bottom: none;
-    padding-bottom: 0;
-    font-size: 1.45rem;
-    flex-grow: 1;
-  }
-  details.sec-collapse summary::after {
-    content: "";
-    width: 8px;
-    height: 8px;
-    border-right: 2px solid var(--muted);
-    border-bottom: 2px solid var(--muted);
-    transform: rotate(45deg);
-    transition: transform 0.2s ease;
-    margin-right: 12px;
-    flex-shrink: 0;
-  }
-  details.sec-collapse[open] summary::after {
-    transform: rotate(-135deg);
-  }
-  .sec-content {
-    padding: 8px 0 28px 0;
-  }
-
-</style>
+<link rel="stylesheet" href="styles.css">
+<script src="components.js" defer></script>
 </head>
 <body>
-<div class="sticky-header">
-  <div class="header-inner">
-    <div class="breadcrumbs">
-      <a href="index.html">System Design Guide</a>
-      <span class="sep">/</span>
-      <span class="curr">3. Load Balancing</span>
-    </div>
-    <div class="toc-jump">
-      <a href="#toc-top">Jump to Contents</a>
-    </div>
-  </div>
-  <div class="progress-bar"></div>
-</div>
+<sys-header current="3. Load Balancing"></sys-header>
 <div class="wrap">
 
-  <p style="margin:0 0 14px;font-size:.85rem;"><a href="index.html" style="color:var(--muted);">← All guides</a></p>
+  <p class="backlink"><a href="index.html">← All guides</a></p>
   <header class="hero">
     <div class="kicker">System Design Basics · 3 of 12</div>
     <h1>Load Balancing</h1>
@@ -211,17 +43,12 @@
     </ol>
   </nav>
 
-<details class="sec-collapse" id="why">
-  <summary><h2>1. Why one server isn't enough</h2></summary>
-  <div class="sec-content">
+<sys-collapse id="why" title="1. Why one server isn't enough">
   <p>A single server has a ceiling: finite CPU, memory, and network. You can buy a bigger one (<em>vertical scaling</em>), but that ladder runs out — and a single anything is a single point of failure. The moment it reboots, your whole product is offline.</p>
   <p>The alternative is <strong>horizontal scaling</strong>: run many identical servers and split the work between them. It scales almost linearly and survives individual deaths. But it raises one immediate question — when a request arrives, <em>which</em> server should handle it? Answering that, well and instantly, millions of times a second, is the entire job of a load balancer.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="what">
-  <summary><h2>2. The load balancer, explained</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="what" title="2. The load balancer, explained">
 
   <div class="note wild">
     <span class="label">◈ In the wild · Anycast + DNS at the Edge</span>
@@ -238,13 +65,10 @@
   </div>
   <p>Because that one address is now itself a single point of failure, real deployments run the load balancer <em>redundantly</em> too (multiple LBs, DNS-level distribution, or a cloud service that handles this for you). Turtles, but only a couple deep.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="l4l7">
-  <summary><h2>3. L4 vs L7: two places to make the decision</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="l4l7" title="3. L4 vs L7: two places to make the decision">
 
-  <svg viewBox="0 0 800 280" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+  <svg viewBox="0 0 800 280" class="diagram" xmlns="http://www.w3.org/2000/svg">
     <style>
       .box-bg { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; rx: 8; }
       .lbl-bold { font-family: -apple-system, sans-serif; font-size: 13px; font-weight: bold; fill: var(--text); }
@@ -322,17 +146,13 @@
   </div>
   <p>Most modern web setups use L7 (Nginx, HAProxy, Envoy, AWS ALB) because content-aware routing is worth the tiny overhead. Reach for L4 (AWS NLB) when you need raw throughput or you're balancing non-HTTP traffic.</p>
 
-  <details class="q">
-    <summary>Check yourself: Your dashboard shows connections evenly spread across ten backends. One of them is at 90% CPU and the others are idle. What's happening?</summary>
-    <div class="a">You're balancing connections, not requests — an L4 hop in front of long-lived clients, and almost certainly HTTP/2 or gRPC, where one connection carries many concurrent streams. The connection counts are even and meaningless; the work behind them is not. Balance at L7 so the decision happens per request, or cap connection age so clients are periodically forced to reconnect and re-balance. Watch requests and in-flight count per backend, never connection count.</div>
-  </details>
+  <sys-question q="Check yourself: Your dashboard shows connections evenly spread across ten backends. One of them is at 90% CPU and the others are idle. What's happening?">
+    You're balancing connections, not requests — an L4 hop in front of long-lived clients, and almost certainly HTTP/2 or gRPC, where one connection carries many concurrent streams. The connection counts are even and meaningless; the work behind them is not. Balance at L7 so the decision happens per request, or cap connection age so clients are periodically forced to reconnect and re-balance. Watch requests and in-flight count per backend, never connection count.
+  </sys-question>
 
 
-  </div>
-</details>
-<details class="sec-collapse" id="pick-a-layer">
-  <summary><h2>4. Which layer do you actually need?</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="pick-a-layer" title="4. Which layer do you actually need?">
   <p>The two-card summary is fine for a whiteboard and useless when you're staring at a Terraform file. So here it is as a decision table. Find the thing you need in the left column; the right column is what it costs you.</p>
   <div class="table-scroll">
   <table>
@@ -351,13 +171,10 @@
   </div>
   <p>The short version: <strong>if it's HTTP and you have opinions about it, go L7.</strong> Go L4 when you need protocol neutrality, source-IP fidelity for free, or throughput at a price per request that L7 can't touch. And note that "L4 or L7" isn't exclusive — a very common shape is an L4 balancer at the edge fronting a tier of L7 proxies, which is how you get anycast-scale ingress and content routing at the same time.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="algos">
-  <summary><h2>5. The algorithms: how it picks</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="algos" title="5. The algorithms: how it picks">
 
-  <svg viewBox="0 0 800 280" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+  <svg viewBox="0 0 800 280" class="diagram" xmlns="http://www.w3.org/2000/svg">
     <style>
       .ring-circle { fill: none; stroke: var(--border); stroke-width: 4; }
       .node-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2.5; }
@@ -436,11 +253,8 @@
     Maglev is Google's own software network load balancer — it runs on ordinary commodity servers rather than dedicated hardware, and fronts a large share of Google's incoming traffic. It leans on exactly the idea above: consistent hashing chooses the backend, but Maglev pairs it with per-connection tracking, so growing or shrinking the fleet reshuffles only a small fraction of connections while every packet of a given flow still lands on the same backend. It's a good illustration of why the "minimal reshuffling" property is worth the extra machinery at scale (<a href="https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/">Google's Maglev paper</a>).
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="health">
-  <summary><h2>6. Health checks &amp; failover</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="health" title="6. Health checks &amp;amp; failover">
 
   <div class="note wild">
     <span class="label">◈ In the wild · The health check endpoint</span>
@@ -460,11 +274,8 @@
     Health checks that are too aggressive, or that hit a shared dependency, can <em>cause</em> the overload they're meant to detect — thousands of checks hammering one database. And if a check flaps, servers yo-yo in and out of rotation. Tune the interval and thresholds.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="sticky">
-  <summary><h2>7. Sticky sessions &amp; the case for statelessness</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="sticky" title="7. Sticky sessions &amp;amp; the case for statelessness">
   <p>Here's a trap. Say a user logs in and their session lives in <em>that specific server's</em> memory. Now the load balancer's next request from them lands on a different server, which has never heard of them. Suddenly they're logged out. Rude.</p>
   <p>Two ways out:</p>
   <ul class="tight">
@@ -476,20 +287,14 @@
     Statelessness is <em>why</em> caching and horizontal scaling exist as a pair. Move session state into a shared cache (<a href="understanding-caching.html">Caching guide</a>) and your app servers become disposable clones a load balancer can shuffle freely. It also cashes out one layer down: every sharding and read-replica scheme in <a href="database-scaling.html">the Database Scaling guide</a> quietly assumes the app tier is stateless, because a shard map only works if any app server can be pointed at any shard. Fast, scalable, resilient — all unlocked by refusing to remember anything locally.
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="auto">
-  <summary><h2>8. Autoscaling: the fleet that breathes</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="auto" title="8. Autoscaling: the fleet that breathes">
   <p>Once servers are stateless and disposable, you can add and remove them automatically based on load. Traffic climbs at lunchtime → spin up five more servers → the load balancer folds them into rotation as their health checks pass. Traffic drops at 2 AM → scale back down and stop paying for idle machines.</p>
   <p>The catch is <strong>cold starts</strong> (new servers boot with empty caches and briefly run slow — see <a href="understanding-caching.html">the Caching guide</a>) and the lag between "we're overloaded" and "new capacity is ready." Good autoscaling scales up <em>early</em> on a leading signal, and down <em>slowly</em> so a brief dip doesn't kill servers you'll want back in five minutes.</p>
   <p>And be clear-eyed about what autoscaling is for. It absorbs the shape of a normal day — the lunchtime ramp, the Monday morning wall, the marketing email. It does not save you from a fleet collapsing in real time, because a new instance needs minutes and a collapse needs seconds. That's a different tool, and it's in <a href="#death-spiral">the death spiral</a> below.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="gotchas">
-  <summary><h2>9. The gotchas nobody diagrams</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="gotchas" title="9. The gotchas nobody diagrams">
   <p>Everything above is the version that fits on a slide. What follows is the version that pages you. Each of these is a real production failure mode with a specific setting attached to it.</p>
 
   <h3 id="draining">Connection draining, or: why every deploy has an error spike</h3>
@@ -539,11 +344,8 @@
   <p>Autoscaling cannot save you here and it's worth being precise about why. A scale-up needs a metric window (tens of seconds), then an instance boot, then application start, then cache warm, then enough consecutive passing health checks to be added. Minutes, at best. The collapse runs in seconds. By the time the new capacity is ready there's nothing left to relieve.</p>
   <p>The only thing that operates on the right timescale is <strong>refusing work</strong>. Load shedding: when the queue is longer than you can serve inside your latency budget, return <code>503</code> to the excess immediately rather than accepting everything and serving none of it. Per-instance concurrency limits: a hard cap on in-flight requests, so an instance degrades predictably instead of falling over. Both trade visible errors for a surviving fleet, which is a trade people resist right up until the first time they watch the alternative. Details in <a href="reliability-toolkit.html">the Reliability guide</a>.</p>
 
-  </div>
-</details>
-<details class="sec-collapse" id="cascade">
-  <summary><h2>10. Anatomy of a cascade: 03:14 to 03:19</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="cascade" title="10. Anatomy of a cascade: 03:14 to 03:19">
   <p>Back to the launch that worked too well. Here is what actually happened between the moment the graph went vertical and the moment it came back — every step of it a mechanism from the sections above. Six instances, round robin, health check every 10 seconds with an unhealthy threshold of 3. Each instance tops out around 2,800 requests per second.</p>
   <div class="trace"><b>03:14:02</b>  6 instances · round robin · all green
           offered 12,400 rps · p99 240ms · cpu 74%
@@ -632,11 +434,8 @@
   <div class="note key">
   </div>
 
-  </div>
-</details>
-<details class="sec-collapse" id="recap">
-  <summary><h2>11. Recap in 60 seconds</h2></summary>
-  <div class="sec-content">
+  </sys-collapse>
+<sys-collapse id="recap" title="11. Recap in 60 seconds">
   <div class="recap">
     <ul>
       <li><strong>The job</strong> is to answer "which backend?" correctly, instantly, millions of times a second — and to notice when the answer stops being a backend at all.</li>
@@ -677,8 +476,7 @@
 
 
 
-  </div>
-</details>
+  </sys-collapse>
   <hr>
   <p class="footer">
     Part of <em>System Design Basics</em>. Sources:
@@ -688,82 +486,6 @@
   </p>
 </div>
 
-<script>
-  // Restore open states from localStorage
-  document.querySelectorAll('details.sec-collapse').forEach(details => {
-    const id = details.id;
-    const storedState = localStorage.getItem(`sec-open-${id}`);
-    if (storedState !== null) {
-      details.open = storedState === 'true';
-    } else {
-      // Collapsed by default
-      details.open = false;
-    }
-    
-    // Listen for toggle events to save state
-    details.addEventListener('toggle', () => {
-      localStorage.setItem(`sec-open-${id}`, details.open);
-    });
-  });
-
-  // Restore scroll position
-  const storedScroll = localStorage.getItem('sec-scroll-pos');
-  if (storedScroll !== null && !window.location.hash) {
-    setTimeout(() => {
-      window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
-    }, 100);
-  }
-
-  // Save scroll position on scroll (debounced)
-  let scrollTimeout;
-  window.addEventListener('scroll', () => {
-    clearTimeout(scrollTimeout);
-    scrollTimeout = setTimeout(() => {
-      localStorage.setItem('sec-scroll-pos', window.scrollY);
-    }, 150);
-  });
-
-  // Auto-expand details elements when targeted by a hash link
-  function handleHashChange() {
-    const hash = window.location.hash;
-    if (hash) {
-      const target = document.querySelector(hash);
-      if (target) {
-        let parent = target.closest('details');
-        while (parent) {
-          parent.open = true;
-          parent = parent.parentElement.closest('details');
-        }
-        setTimeout(() => {
-          target.scrollIntoView({ behavior: 'smooth' });
-        }, 100);
-      }
-    }
-  }
-  window.addEventListener('hashchange', handleHashChange);
-  window.addEventListener('DOMContentLoaded', handleHashChange);
-
-  // Update scroll progress bar dynamically
-  const progressBar = document.querySelector('.progress-bar');
-  function updateProgress() {
-    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
-    if (scrollHeight > 0) {
-      const progress = (window.scrollY / scrollHeight) * 100;
-      progressBar.style.width = `${progress}%`;
-    } else {
-      progressBar.style.width = '0%';
-    }
-  }
-  window.addEventListener('scroll', updateProgress);
-  window.addEventListener('resize', updateProgress);
-  document.querySelectorAll('details').forEach(d => {
-    d.addEventListener('toggle', () => {
-      setTimeout(updateProgress, 60);
-    });
-  });
-  updateProgress();
-
-</script>
 
 </body>
 </html>

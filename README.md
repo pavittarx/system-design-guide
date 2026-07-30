@@ -17,7 +17,7 @@ A seven-part illustrated field guide to how real systems get fast, hold their da
 | 6 | Consistency & the CAP Theorem | `consistency-cap.html` |
 | 7 | Design the Checkout (capstone) | `design-the-checkout.html` |
 
-All pages are self-contained static HTML (inline CSS, no build step, no dependencies), responsive, and adapt automatically to light/dark mode.
+All pages are static HTML with no build step and no third-party dependencies, responsive, and adapt automatically to light/dark mode. They share one stylesheet, `styles.css` — the single source of truth for design tokens (colour, radius scale, spacing) and the component vocabulary. Page-specific rules stay in that page's own `<style>` block.
 
 ## Publish to GitHub Pages
 
