@@ -987,7 +987,7 @@ def update_user(user_id, fields):
   <p><code>db.query_one</code> returns <code>None</code> for a user that doesn't exist. <code>json.dumps(None)</code> is the string <code>"null"</code>, which gets cached for a full hour and is indistinguishable from a real value. So a user created one second after somebody looked them up stays invisible for an hour. Flip the code the other way — only cache when <code>user is not None</code> — and you get the opposite failure, <strong>cache penetration</strong>: every request for a non-existent ID misses the cache and hits the database, forever, which is a free denial-of-service for anyone who can guess URLs.</p>
   <p>The answer is to cache negatives <em>deliberately</em>, with their own short TTL and a sentinel you can tell apart from real data. (While you are in there: <code>if cached:</code> is also wrong — an empty cached value is falsy, so a legitimately-empty entry is treated as a miss on every read. Test <code>is not None</code>.)</p>
 
-  <h3>Cache key versioning</h3>
+  <h3>5. Schema/key versioning during deploys</h3>
   <p>Prefix every key with a schema version: <code>v3:user:123</code>. You will not appreciate why until the deploy where you add a field to the serialised shape, and every instance running the old code starts reading objects that have it while every instance running the new code reads objects that don't. Without a version prefix your options are (a) flush the cache, which is the cold-start outage described below, or (b) write defensive deserialisation forever. With one, you bump <code>v3</code> to <code>v4</code>, the new code writes and reads new keys, the old keys are read by nobody and quietly age out under their own TTL or get evicted by LRU. It costs six characters per key.</p>
 
 
