@@ -111,16 +111,11 @@
     font-weight: 600;
   }
   /* Scroll Progress Indicator */
-  @keyframes scroll-progress {
-    from { width: 0%; }
-    to { width: 100%; }
-  }
   .progress-bar {
     height: 3px;
     background: var(--accent);
-    animation: scroll-progress auto linear;
-    animation-timeline: scroll();
     width: 0%;
+    transition: width 0.08s ease-out;
   }
 
   /* Collapsible Sections */
@@ -747,6 +742,27 @@
   }
   window.addEventListener('hashchange', handleHashChange);
   window.addEventListener('DOMContentLoaded', handleHashChange);
+
+  // Update scroll progress bar dynamically
+  const progressBar = document.querySelector('.progress-bar');
+  function updateProgress() {
+    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+    if (scrollHeight > 0) {
+      const progress = (window.scrollY / scrollHeight) * 100;
+      progressBar.style.width = `${progress}%`;
+    } else {
+      progressBar.style.width = '0%';
+    }
+  }
+  window.addEventListener('scroll', updateProgress);
+  window.addEventListener('resize', updateProgress);
+  document.querySelectorAll('details').forEach(d => {
+    d.addEventListener('toggle', () => {
+      setTimeout(updateProgress, 60);
+    });
+  });
+  updateProgress();
+
 </script>
 
 </body>
