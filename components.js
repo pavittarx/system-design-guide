@@ -1,5 +1,18 @@
 // Google Antigravity - System Design Guide Web Components
 
+// Persisted UI state is per-page. Section ids are not unique across the site —
+// `recap` exists on all twelve guides, `gotchas` on nine — so an unscoped key
+// would carry one page's open sections, and its scroll position, onto another.
+const PAGE_KEY = (location.pathname.split('/').pop() || 'index.html');
+const stateKey = (name) => `sdg:${PAGE_KEY}:${name}`;
+
+// Drop the previous site-wide keys so stale cross-page state doesn't linger.
+try {
+  Object.keys(localStorage)
+    .filter((k) => k === 'sec-scroll-pos' || k.startsWith('sec-open-'))
+    .forEach((k) => localStorage.removeItem(k));
+} catch (e) { /* storage unavailable (private mode, file:// in some browsers) */ }
+
 // 1. Sticky Header Component with Scroll Progress Bar
 class SysHeader extends HTMLElement {
   connectedCallback() {
@@ -60,7 +73,7 @@ class SysCollapse extends HTMLElement {
     this.removeAttribute('id');
 
     const details = this.querySelector('details');
-    const storedState = localStorage.getItem(`sec-open-${id}`);
+    const storedState = localStorage.getItem(stateKey(`sec-open:${id}`));
 
     if (storedState !== null) {
       details.open = storedState === 'true';
@@ -70,7 +83,7 @@ class SysCollapse extends HTMLElement {
     }
 
     details.addEventListener('toggle', () => {
-      localStorage.setItem(`sec-open-${id}`, details.open);
+      localStorage.setItem(stateKey(`sec-open:${id}`), details.open);
       if (window.updateProgress) {
         setTimeout(window.updateProgress, 60);
       }
@@ -101,7 +114,7 @@ customElements.define('sys-question', SysQuestion);
 // --- Global Page Actions: Scroll Restoration & Hash Routing ---
 
 // Restore scroll position
-const storedScroll = localStorage.getItem('sec-scroll-pos');
+const storedScroll = localStorage.getItem(stateKey('scroll'));
 if (storedScroll !== null && !window.location.hash) {
   setTimeout(() => {
     window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
@@ -113,7 +126,7 @@ let scrollTimeout;
 window.addEventListener('scroll', () => {
   clearTimeout(scrollTimeout);
   scrollTimeout = setTimeout(() => {
-    localStorage.setItem('sec-scroll-pos', window.scrollY);
+    localStorage.setItem(stateKey('scroll'), window.scrollY);
   }, 150);
 });
 
