@@ -1036,7 +1036,10 @@ def update_user(user_id, fields):
 <sys-collapse id="eviction" title="6. Expiration &amp; Eviction: keeping the cache lean">
   <p>A cache has finite memory, so it must decide what to drop.</p>
   <p><strong>Expiration (TTL)</strong> gives every entry a time-to-live; after it lapses, the entry is refetched. TTL is the simplest correctness tool — it bounds how stale data can get without any explicit invalidation. Short TTL = fresher but more misses; long TTL = faster but staler.</p>
-  <div style="font-size:0.88rem;color:var(--accent-2);margin: -8px 0 16px 0;line-height:1.4;"><strong>◈ In the wild:</strong> DNS (domain name resolution) is the world's largest example of TTL-based caching. When a website owner updates a DNS record, resolvers worldwide continue serving the old IP address from their caches until the record's TTL lapses. This is why DNS changes "take time to propagate" and represent eventual consistency in action.</div>
+  <div class="note wild">
+    <span class="label">◈ In the wild · DNS</span>
+    DNS (domain name resolution) is the world's largest example of TTL-based caching. When a website owner updates a DNS record, resolvers worldwide continue serving the old IP address from their caches until the record's TTL lapses. This is why DNS changes "take time to propagate" and represent eventual consistency in action.
+  </div>
   <p><strong>Eviction policies</strong> decide what to drop when memory is full:</p>
   <ul class="tight">
     <li><strong>LRU (Least Recently Used)</strong> — drop what's gone unused longest. The default sweet spot for most workloads.</li>
