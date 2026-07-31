@@ -1,0 +1,60 @@
+---
+// src/components/diagrams/DiagramLoadBalancing2.astro
+---
+
+<svg viewBox="0 0 800 280" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+<style>
+      .ring-circle { fill: none; stroke: var(--border); stroke-width: 4; }
+      .node-dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2.5; }
+      .key-dot { fill: var(--warn); stroke: var(--bg); stroke-width: 1.5; }
+      .arrow-curve { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 3 3; fill: none; }
+      .lbl-bold { font-family: -apple-system, sans-serif; font-size: 13px; font-weight: bold; fill: var(--text); }
+      .lbl-norm { font-family: -apple-system, sans-serif; font-size: 12px; fill: var(--muted); }
+      .lbl-small { font-family: -apple-system, sans-serif; font-size: 11px; fill: var(--muted); }
+    </style>
+<rect width="100%" height="100%" fill="var(--panel)" rx="14" />
+
+    
+<g transform="translate(400, 140)">
+<circle cx="0" cy="0" r="90" class="ring-circle" />
+<text x="0" y="6" class="lbl-bold" text-anchor="middle">Consistent Hash Ring</text>
+      
+      
+      
+<circle cx="90" cy="0" r="10" class="node-dot" style="fill: var(--accent);" />
+<text x="125" y="4" class="lbl-bold" text-anchor="start">Server A</text>
+
+      
+<circle cx="-45" cy="78" r="10" class="node-dot" style="fill: var(--accent-2);" />
+<text x="-55" y="105" class="lbl-bold" text-anchor="middle">Server B</text>
+
+      
+<circle cx="-45" cy="-78" r="10" class="node-dot" style="fill: var(--warn);" />
+<text x="-55" y="-100" class="lbl-bold" text-anchor="middle">Server C</text>
+
+      
+      
+<circle cx="64" cy="64" r="6" class="key-dot" />
+<text x="80" y="80" class="lbl-norm">Key 1</text>
+<path d="M 55 55 A 77 77 0 0 1 -30 70" class="arrow-curve" marker-end="url(#arr-ring)" />
+<text x="15" y="85" class="lbl-small">routes to Server B</text>
+
+      
+<circle cx="-90" cy="0" r="6" class="key-dot" />
+<text x="-135" y="4" class="lbl-norm" text-anchor="end">Key 2</text>
+<path d="M -80 -10 A 77 77 0 0 1 -50 -60" class="arrow-curve" marker-end="url(#arr-ring)" />
+<text x="-120" y="-35" class="lbl-small">routes to Server C</text>
+
+      
+<circle cx="45" cy="-78" r="6" class="key-dot" />
+<text x="60" y="-95" class="lbl-norm">Key 3</text>
+<path d="M 55 -65 A 77 77 0 0 1 80 -20" class="arrow-curve" marker-end="url(#arr-ring)" />
+<text x="110" y="-50" class="lbl-small">routes to Server A</text>
+</g>
+
+<defs>
+<marker id="arr-ring" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--muted)" />
+</marker>
+</defs>
+</svg>

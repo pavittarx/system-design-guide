@@ -1,0 +1,108 @@
+---
+// src/components/Collapse.astro
+interface Props {
+  id: string;
+  title: string;
+  open?: boolean;
+}
+
+const { id, title, open = false } = Astro.props;
+---
+
+<details class="sec-collapse" id={id} open={open} data-sec-id={id}>
+  <summary>
+    <h2>{title}</h2>
+  </summary>
+  <div class="sec-content">
+    <slot />
+  </div>
+</details>
+
+<script>
+  // Restore and sync collapsible details state with localStorage
+  const collapses = document.querySelectorAll<HTMLDetailsElement>('details.sec-collapse');
+  collapses.forEach((details) => {
+    const id = details.getAttribute('data-sec-id') || details.id;
+    if (!id) return;
+
+    // Restore state if saved
+    const storedState = localStorage.getItem(`sec-open-${id}`);
+    if (storedState !== null) {
+      details.open = storedState === 'true';
+    }
+
+    // Listen for toggle to save state
+    details.addEventListener('toggle', () => {
+      localStorage.setItem(`sec-open-${id}`, String(details.open));
+      
+      // Update progress bar if custom scroll handler exists
+      // @ts-ignore
+      if (window.updateProgress) {
+        // @ts-ignore
+        setTimeout(window.updateProgress, 60);
+      }
+    });
+  });
+</script>
+
+<style>
+  details.sec-collapse {
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  
+  details.sec-collapse summary {
+    cursor: pointer;
+    list-style: none;
+    outline: none;
+    padding: 18px 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+  }
+  
+  details.sec-collapse summary::-webkit-details-marker {
+    display: none;
+  }
+  
+  details.sec-collapse summary h2 {
+    margin: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+    font-size: 1.45rem;
+    flex-grow: 1;
+  }
+  
+  details.sec-collapse summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+    transition: transform 0.2s ease;
+    margin-right: 12px;
+    flex-shrink: 0;
+  }
+  
+  details.sec-collapse[open] summary::after {
+    transform: rotate(-135deg);
+  }
+  
+  .sec-content {
+    padding: 8px 0 28px 0;
+  }
+
+  /* The padding above stops the first child's top margin from collapsing away,
+     leaving a ~28px gap under the summary on expand. Zero it — whatever the
+     first child is (paragraph, Note, Table, Stack), the padding is the only
+     spacing wanted there. Same for the last child against the bottom padding. */
+  .sec-content > :global(:first-child) {
+    margin-top: 0;
+  }
+
+  .sec-content > :global(:last-child) {
+    margin-bottom: 0;
+  }
+</style>

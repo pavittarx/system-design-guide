@@ -1,0 +1,67 @@
+---
+// src/components/diagrams/DiagramUnderstandingCaching2.astro
+---
+
+<svg viewBox="0 0 800 340" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+<style>
+      .box { fill: var(--panel-2); stroke: var(--border); stroke-width: 2; rx: 8; }
+      .box.active { stroke: var(--accent); fill: color-mix(in srgb, var(--accent) 5%, var(--panel-2)); }
+      .box.accent { stroke: var(--accent-2); fill: color-mix(in srgb, var(--accent-2) 5%, var(--panel-2)); }
+      .flow-line { stroke: var(--border); stroke-width: 2; fill: none; }
+      .flow-line.accent { stroke: var(--accent); }
+      .flow-line.accent-2 { stroke: var(--accent-2); }
+      .flow-line.danger { stroke: var(--danger); }
+      .lbl-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 15px; font-weight: bold; fill: var(--text); }
+      .lbl-text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 12px; fill: var(--text); }
+      .lbl-muted { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; fill: var(--muted); }
+    
+  
+
+</style>
+<rect width="100%" height="100%" fill="var(--panel)" rx="14" />
+<g transform="translate(10, 10)">
+<text x="180" y="30" class="lbl-title" text-anchor="middle">Read Flow (Lazy Loading)</text>
+<rect x="130" y="60" width="100" height="50" class="box active" />
+<text x="180" y="90" class="lbl-text" text-anchor="middle" font-weight="bold">Application</text>
+<path d="M 180 110 L 180 150" class="flow-line accent" marker-end="url(#arrow)" />
+<text x="190" y="135" class="lbl-muted">1. Check cache</text>
+<rect x="120" y="150" width="120" height="50" class="box accent" />
+<text x="180" y="175" class="lbl-text" text-anchor="middle">Cache (Redis)</text>
+<text x="180" y="190" class="lbl-muted" text-anchor="middle">user:123</text>
+<path d="M 120 175 L 40 175 L 40 85 L 130 85" class="flow-line accent-2" stroke-dasharray="3" marker-end="url(#arrow-hit)" />
+<text x="45" y="155" class="lbl-text" fill="var(--accent-2)" font-weight="bold">HIT: Return data</text>
+<path d="M 180 200 L 180 250" class="flow-line danger" marker-end="url(#arrow-danger)" />
+<text x="190" y="230" class="lbl-text" fill="var(--danger)">MISS: Query DB</text>
+<rect x="130" y="250" width="100" height="50" class="box" style="stroke: var(--warn);" />
+<text x="180" y="280" class="lbl-text" text-anchor="middle">Database</text>
+<path d="M 230 275 L 290 275 L 290 175 L 240 175" class="flow-line accent" marker-end="url(#arrow)" />
+<text x="300" y="235" class="lbl-muted">3. Write to Cache</text>
+<text x="300" y="250" class="lbl-muted">(User returned to App)</text>
+</g>
+<g transform="translate(420, 10)">
+<text x="180" y="30" class="lbl-title" text-anchor="middle">Write Flow (Invalidate)</text>
+<rect x="130" y="60" width="100" height="50" class="box active" />
+<text x="180" y="90" class="lbl-text" text-anchor="middle" font-weight="bold">Application</text>
+<path d="M 150 110 L 150 250" class="flow-line accent" marker-end="url(#arrow)" />
+<text x="50" y="180" class="lbl-text" text-anchor="middle" font-weight="bold">1. Update DB</text>
+<rect x="100" y="250" width="100" height="50" class="box" style="stroke: var(--warn);" />
+<text x="150" y="280" class="lbl-text" text-anchor="middle">Database</text>
+<path d="M 210 110 L 210 150" class="flow-line danger" marker-end="url(#arrow-danger)" />
+<text x="280" y="135" class="lbl-text" fill="var(--danger)" text-anchor="middle" font-weight="bold">2. Delete cache key</text>
+<rect x="160" y="150" width="100" height="50" class="box accent" />
+<text x="210" y="180" class="lbl-text" text-anchor="middle">Cache (Redis)</text>
+<text x="180" y="220" class="lbl-muted" text-anchor="middle">Prevents stale writes</text>
+<text x="180" y="235" class="lbl-muted" text-anchor="middle">from racing to cache</text>
+</g>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--accent)" />
+</marker>
+<marker id="arrow-hit" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--accent-2)" />
+</marker>
+<marker id="arrow-danger" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--danger)" />
+</marker>
+</defs>
+</svg>

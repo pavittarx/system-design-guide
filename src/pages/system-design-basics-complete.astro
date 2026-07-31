@@ -1,0 +1,58 @@
+---
+// src/pages/system-design-basics-complete.astro
+import MainLayout from '../layouts/MainLayout.astro';
+import Header from '../components/Header.astro';
+import { Content as CachingContent } from './guides/understanding-caching.mdx';
+import { Content as DBContent } from './guides/database-scaling.mdx';
+import { Content as LBContent } from './guides/load-balancing.mdx';
+import { Content as MQContent } from './guides/message-queues.mdx';
+import { Content as ReliabilityContent } from './guides/reliability-toolkit.mdx';
+import { Content as ConsistencyContent } from './guides/consistency-cap.mdx';
+import { Content as CheckoutContent } from './guides/design-the-checkout.mdx';
+
+const baseUrl = import.meta.env.BASE_URL;
+---
+
+<MainLayout title="System Design Basics — The Complete Guide" description="The combined seven core guides of System Design Basics in a single offline-friendly page.">
+  <Header slot="header" current="Complete Guide" />
+  
+  <div class="complete-container">
+    <div class="savehint-container">
+      <div class="savehint">
+        🌐 This is the single-page version containing the seven core guides. You can save, print, or read it offline.
+        <a href={baseUrl} style="margin-left: 10px; font-weight: 600;">← Back to Hub</a>
+      </div>
+    </div>
+
+    <CachingContent />
+    <DBContent />
+    <LBContent />
+    <MQContent />
+    <ReliabilityContent />
+    <ConsistencyContent />
+    <CheckoutContent />
+  </div>
+</MainLayout>
+
+<style>
+  .savehint-container {
+    max-width: var(--maxw);
+    margin: 20px auto 0;
+    padding: 0 20px;
+  }
+</style>
+
+<style is:global>
+  /* In the combined single-page version, hide the individual sticky headers so they don't stack or conflict */
+  .complete-container .sticky-header {
+    display: none !important;
+  }
+  .sticky-header ~ .sticky-header {
+    display: none !important;
+  }
+  
+  /* Strip the individual guides' back-links if any are present */
+  .complete-container .wrap > p:first-child a[href="index.html"] {
+    display: none !important;
+  }
+</style>

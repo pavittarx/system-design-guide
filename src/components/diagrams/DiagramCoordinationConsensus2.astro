@@ -1,0 +1,23 @@
+---
+// src/components/diagrams/DiagramCoordinationConsensus2.astro
+---
+
+<svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+<text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Fencing Tokens preventing Split Brain Corruption</text>
+<line x1="120" y1="50" x2="680" y2="50" stroke="var(--border)" stroke-width="2" />
+<text x="690" y="54" fill="var(--muted)" font-size="10">Time</text>
+<circle cx="150" cy="50" r="6" fill="var(--accent)" />
+<text x="150" y="35" fill="var(--accent)" font-size="9" text-anchor="middle">Client A Lock (Token: 33)</text>
+<rect x="180" y="60" width="150" height="15" fill="var(--danger)" rx="3" opacity="0.3" />
+<text x="255" y="71" fill="var(--danger)" font-size="9" font-weight="600" text-anchor="middle">Stop-The-World GC Pause (17s)</text>
+<circle cx="280" cy="50" r="6" fill="var(--accent-2)" />
+<text x="280" y="35" fill="var(--accent-2)" font-size="9" text-anchor="middle">Client B Lock (Token: 34)</text>
+<circle cx="380" cy="50" r="6" fill="var(--accent-2)" />
+<text x="380" y="35" fill="var(--accent-2)" font-size="9" text-anchor="middle">B Writes (Token 34)</text>
+<circle cx="480" cy="50" r="6" fill="var(--danger)" />
+<text x="480" y="35" fill="var(--danger)" font-size="9" text-anchor="middle">A Writes (Token 33)</text>
+<rect x="520" y="90" width="200" height="50" rx="4" fill="var(--panel-2)" stroke="var(--danger)" stroke-width="1.5" />
+<text x="620" y="112" fill="var(--danger)" font-size="10" font-weight="700" text-anchor="middle">REJECTED BY STORAGE</text>
+<text x="620" y="128" fill="var(--text)" font-size="9" text-anchor="middle">Token 33 is less than current (34)</text>
+<path d="M 480,56 L 520,105" stroke="var(--danger)" stroke-width="1" stroke-dasharray="3,3" />
+</svg>

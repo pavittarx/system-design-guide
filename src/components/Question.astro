@@ -1,0 +1,50 @@
+---
+// src/components/Question.astro
+interface Props {
+  q: string;
+}
+
+const { q } = Astro.props;
+---
+
+<details class="q">
+  <summary>{q}</summary>
+  <div class="a">
+    <slot />
+  </div>
+</details>
+
+<style>
+  details.q {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin: 10px 0;
+  }
+  
+  details.q summary {
+    cursor: pointer;
+    font-weight: 600;
+    list-style: none;
+  }
+  
+  details.q summary::-webkit-details-marker {
+    display: none;
+  }
+  
+  details.q summary::before {
+    content: "▸ ";
+    color: var(--accent);
+  }
+  
+  details.q[open] summary::before {
+    content: "▾ ";
+  }
+  
+  details.q .a {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+</style>

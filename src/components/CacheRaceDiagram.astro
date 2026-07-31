@@ -1,0 +1,61 @@
+---
+// src/components/CacheRaceDiagram.astro
+---
+
+<svg viewBox="0 0 800 280" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .lane-bg { fill: var(--panel-2); stroke: var(--border); stroke-width: 1; }
+    .timeline-line { stroke: var(--border); stroke-width: 2; fill: none; }
+    .time-arrow { fill: var(--muted); }
+    .event-box { rx: 6; stroke-width: 1.5; }
+    .event-box.reader { fill: color-mix(in srgb, var(--accent) 15%, var(--panel)); stroke: var(--accent); }
+    .event-box.writer { fill: color-mix(in srgb, var(--warn) 15%, var(--panel)); stroke: var(--warn); }
+    .event-box.danger { fill: color-mix(in srgb, var(--danger) 15%, var(--panel)); stroke: var(--danger); }
+    .txt-lbl { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 13px; font-weight: bold; fill: var(--text); }
+    .txt-time { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; fill: var(--muted); }
+    .txt-detail { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 12px; fill: var(--text); }
+    .txt-detail.bold { font-weight: bold; }
+    .txt-code { font-family: "SF Mono", ui-monospace, monospace; font-size: 11px; fill: var(--text); }
+    .pause-line { stroke: var(--danger); stroke-width: 2; stroke-dasharray: 4 2; fill: none; }
+  </style>
+  <rect width="100%" height="100%" fill="var(--panel)" rx="14" />
+  <line x1="50" y1="240" x2="750" y2="240" class="timeline-line" marker-end="url(#arrow-time)" />
+  <text x="750" y="255" class="txt-time" text-anchor="end">Time ──></text>
+  <line x1="50" y1="130" x2="780" y2="130" style="stroke: var(--border); stroke-width: 1; stroke-dasharray: 4;" />
+  <text x="20" y="75" class="txt-lbl" fill="var(--accent)">Reader</text>
+  <text x="20" y="185" class="txt-lbl" fill="var(--warn)">Writer</text>
+  <g transform="translate(80, 30)">
+    <rect width="140" height="70" class="event-box reader" />
+    <text x="10" y="25" class="txt-detail bold">1. Cache Miss</text>
+    <text x="10" y="45" class="txt-code">GET user:42 -> None</text>
+    <text x="10" y="60" class="txt-detail">Reads DB (Ada)</text>
+  </g>
+  <g transform="translate(230, 45)">
+    <rect x="0" y="-10" width="360" height="60" rx="6" style="fill: rgba(255,138,138,0.05); stroke: var(--danger); stroke-width: 1; stroke-dasharray: 3 3;" />
+    <path d="M 10 20 Q 90 0 180 20 T 350 20" class="pause-line" />
+    <text x="180" y="45" class="txt-lbl" fill="var(--danger)" text-anchor="middle">CPU Pause / GC Pause / Latency Spike</text>
+  </g>
+  <g transform="translate(260, 150)">
+    <rect width="160" height="70" class="event-box writer" />
+    <text x="10" y="25" class="txt-detail bold">2. Database Update</text>
+    <text x="10" y="45" class="txt-code">DB UPDATE name='Grace'</text>
+    <text x="10" y="60" class="txt-detail">Data changes in DB</text>
+  </g>
+  <g transform="translate(435, 150)">
+    <rect width="150" height="70" class="event-box danger" />
+    <text x="10" y="25" class="txt-detail bold" fill="var(--danger)">3. Delete Cache Key</text>
+    <text x="10" y="45" class="txt-code">DEL user:42</text>
+    <text x="10" y="60" class="txt-detail">No-op (key was empty)</text>
+  </g>
+  <g transform="translate(600, 30)">
+    <rect width="175" height="70" class="event-box danger" />
+    <text x="10" y="25" class="txt-detail bold" fill="var(--danger)">4. Late Write (Poison)</text>
+    <text x="10" y="45" class="txt-code">SETEX user:42 "Ada"</text>
+    <text x="10" y="60" class="txt-detail" fill="var(--danger)" font-weight="bold">Cache Stale for 60m!</text>
+  </g>
+  <defs>
+    <marker id="arrow-time" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--border)" />
+    </marker>
+  </defs>
+</svg>

@@ -1,0 +1,19 @@
+---
+// src/components/diagrams/DiagramApiGateways1.astro
+---
+
+<svg viewBox="0 0 760 240" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+<text x="20" y="25" fill="var(--danger)" font-size="12" font-weight="700">Offset Pagination Drift (Page Shift on Insert)</text>
+<rect x="20" y="45" width="220" height="25" rx="4" fill="var(--panel-2)" stroke="var(--border)" />
+<text x="35" y="61" fill="var(--text)" font-size="10">Page 1: [Item 1, Item 2, Item 3]</text>
+<text x="20" y="95" fill="var(--danger)" font-size="9" font-weight="600">New Item 0 inserted at top</text>
+<rect x="20" y="110" width="220" height="25" rx="4" fill="var(--panel-2)" stroke="var(--danger)" />
+<text x="35" y="126" fill="var(--text)" font-size="10">Page 2: offset=3 (Item 3 is seen again!)</text>
+<line x1="380" y1="20" x2="380" y2="220" stroke="var(--border)" stroke-width="1" />
+<text x="400" y="25" fill="var(--accent-2)" font-size="12" font-weight="700">Keyset Cursor Pagination (Stable)</text>
+<rect x="400" y="45" width="260" height="25" rx="4" fill="var(--panel-2)" stroke="var(--border)" />
+<text x="415" y="61" fill="var(--text)" font-size="10">Page 1: [Item 1 (ID:100), Item 2 (ID:99)]</text>
+<text x="400" y="95" fill="var(--accent-2)" font-size="9" font-weight="600">New Item 0 (ID:101) inserted at top</text>
+<rect x="400" y="110" width="260" height="25" rx="4" fill="var(--panel-2)" stroke="var(--accent-2)" />
+<text x="415" y="126" fill="var(--text)" font-size="10">Page 2: check ID &lt; 99 (Returns Item 3 stably)</text>
+</svg>

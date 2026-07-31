@@ -1,0 +1,16 @@
+---
+// src/components/Note.astro
+// Callout. `type` picks the accent colour:
+//   (none) neutral · key takeaway · warn caution · war incident · wild in-the-wild
+interface Props {
+  type?: 'key' | 'warn' | 'war' | 'wild';
+  label?: string;
+}
+
+const { type, label } = Astro.props;
+---
+
+<div class:list={['note', type]}>
+  {label && <span class="label">{label}</span>}
+  <slot />
+</div>

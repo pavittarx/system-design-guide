@@ -1,0 +1,28 @@
+---
+// src/components/diagrams/DiagramDesignTheCheckout2.astro
+---
+
+<svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+<text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Transactional Outbox Pattern</text>
+<text x="20" y="55" fill="var(--accent)" font-size="10" font-weight="600">Checkout Request</text>
+<path d="M 100,60 L 150,90" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)" />
+<rect x="160" y="70" width="220" height="100" rx="6" fill="var(--panel-2)" stroke="var(--accent-2)" stroke-width="1.5" />
+<text x="270" y="88" fill="var(--accent-2)" font-size="11" font-weight="600" text-anchor="middle">Single Database Transaction</text>
+<rect x="180" y="102" width="180" height="20" rx="3" fill="var(--panel)" stroke="var(--border)" />
+<text x="270" y="115" fill="var(--text)" font-size="9" text-anchor="middle">INSERT INTO orders</text>
+<rect x="180" y="132" width="180" height="20" rx="3" fill="var(--panel)" stroke="var(--border)" />
+<text x="270" y="145" fill="var(--text)" font-size="9" text-anchor="middle">INSERT INTO outbox_events</text>
+<rect x="440" y="95" width="100" height="50" rx="4" fill="var(--panel-2)" stroke="var(--accent)" />
+<text x="490" y="124" fill="var(--text)" font-size="10" text-anchor="middle">Outbox Relay</text>
+<path d="M 380,120 H 440" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="3,3" />
+<text x="410" y="115" fill="var(--muted)" font-size="8" text-anchor="middle">Reads table</text>
+<rect x="600" y="95" width="120" height="50" rx="4" fill="var(--panel-2)" stroke="var(--border)" />
+<text x="660" y="124" fill="var(--text)" font-size="10" text-anchor="middle">Message Broker</text>
+<path d="M 540,120 H 600" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)" />
+<text x="570" y="115" fill="var(--accent)" font-size="8" text-anchor="middle">Publish</text>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1 L 10 5 L 0 9 z" fill="var(--accent)" />
+</marker>
+</defs>
+</svg>

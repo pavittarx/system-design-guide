@@ -1,0 +1,122 @@
+---
+// src/components/Header.astro
+interface Props {
+  current?: string;
+  tocHref?: string;
+  tocText?: string;
+}
+
+const { current, tocHref = "#top", tocText = "Back to Top" } = Astro.props;
+const baseUrl = import.meta.env.BASE_URL;
+---
+
+<div class="sticky-header">
+  <div class="header-inner">
+    <div class="breadcrumbs">
+      <a href={baseUrl}>System Design Guide</a>
+      {current && (
+        <span class="sep">/</span>
+        <span class="curr">{current}</span>
+      )}
+    </div>
+    <div class="toc-jump">
+      <a href={tocHref}>{tocText}</a>
+    </div>
+  </div>
+  <div class="progress-bar" id="progress"></div>
+</div>
+
+<script>
+  // Fallback for browsers that do not support scroll-driven animations (e.g. Firefox, Safari)
+  if (!CSS.supports('animation-timeline', 'scroll()')) {
+    const progressBar = document.getElementById('progress');
+    if (progressBar) {
+      progressBar.style.animation = 'none';
+      progressBar.style.transform = 'scaleX(0)';
+
+      const updateProgress = () => {
+        const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+        if (scrollHeight > 0) {
+          const progressPercentage = window.scrollY / scrollHeight;
+          progressBar.style.transform = `scaleX(${progressPercentage})`;
+        } else {
+          progressBar.style.transform = 'scaleX(0)';
+        }
+      };
+
+      window.addEventListener('scroll', updateProgress, { passive: true });
+      window.addEventListener('resize', updateProgress);
+      setTimeout(updateProgress, 100);
+    }
+  }
+</script>
+
+<style>
+  .sticky-header {
+    position: sticky;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    z-index: 100;
+  }
+  
+  .header-inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 10px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.82rem;
+  }
+  
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+  }
+  
+  .breadcrumbs a {
+    color: var(--muted);
+    font-weight: 500;
+  }
+  
+  .breadcrumbs a:hover {
+    color: var(--accent);
+  }
+  
+  .breadcrumbs .sep {
+    color: var(--border);
+    font-weight: 300;
+  }
+  
+  .breadcrumbs .curr {
+    color: var(--text);
+    font-weight: 600;
+  }
+  
+  .toc-jump a {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  
+  /* Scroll Progress Indicator with native CSS Scroll-Driven Animations */
+  @keyframes grow-x {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+  
+  .progress-bar {
+    height: 3px;
+    background: var(--accent);
+    width: 100%;
+    transform-origin: left;
+    animation: grow-x linear both;
+    animation-timeline: scroll();
+  }
+</style>

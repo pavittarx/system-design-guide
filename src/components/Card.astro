@@ -1,0 +1,18 @@
+---
+// src/components/Card.astro
+// One cell of a CardGrid. Head it with either a plain `title` or a coloured
+// `pill` (`tone` picks the colour).
+interface Props {
+  title?: string;
+  pill?: string;
+  tone?: 'good' | 'bad' | 'mid';
+}
+
+const { title, pill, tone = 'mid' } = Astro.props;
+---
+
+<div class="card">
+  {pill && <span class:list={['pill', tone]}>{pill}</span>}
+  {title && <h4>{title}</h4>}
+  <slot />
+</div>

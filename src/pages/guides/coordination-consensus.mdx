@@ -1,0 +1,445 @@
+---
+layout: ../../layouts/MainLayout.astro
+title: "Getting Machines to Agree — System Design Basics"
+description: "One machine always knows what it thinks. The trouble starts at two, because now there is a question — and no way to ask it that cannot be lost, delayed, or answered by a ghost."
+chapter: "10"
+current: "10. Coordination"
+series:
+  lead: "A companion to"
+  guides:
+    - { slug: consistency-cap, label: "Consistency & the CAP Theorem" }
+    - reliability-toolkit
+sections:
+  - id: "why"
+    title: "Why agreement is hard"
+  - id: "leader"
+    title: "Leader election, and why you want one"
+  - id: "raft"
+    title: "How Raft actually works"
+  - id: "quorum"
+    title: "Quorums and the odd-number rule"
+  - id: "split"
+    title: "Split brain and fencing"
+  - id: "locks"
+    title: "Distributed locks are a lie you can manage"
+  - id: "leases"
+    title: "Leases: locks with an expiry date"
+  - id: "stores"
+    title: "etcd, ZooKeeper, Consul: what you actually get"
+  - id: "patterns"
+    title: "Patterns built on top"
+  - id: "avoid"
+    title: "How to need less of this"
+  - id: "gotchas"
+    title: "The gotchas that actually bite"
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Question, Recap, Stack, Table } from '../../components';
+import DiagramCoordinationConsensus1 from '../../components/diagrams/DiagramCoordinationConsensus1.astro';
+import DiagramCoordinationConsensus2 from '../../components/diagrams/DiagramCoordinationConsensus2.astro';
+
+<ColdOpen tag="◇ 21 October 2018, GitHub">
+
+Routine maintenance on optical equipment severs the link between GitHub's East Coast data centre and its primary. The partition lasts **43 seconds**. In those 43 seconds, the orchestration layer does exactly what it was designed to do: it promotes a replica in the other site to primary, because the old primary is unreachable and unreachable means dead. Both sites now accept writes. When the link returns, there are two divergent histories of the same database and no automated way to merge them. GitHub spends the next **24 hours and 11 minutes** in degraded service, much of it with humans manually reconciling records. Forty-three seconds of network trouble; a day of consequences. The failure was not the fibre. The failure was that two components independently concluded they were in charge.
+
+</ColdOpen>
+
+<Collapse id="why" title="1. Why agreement is hard">
+
+Ask a single process what the value of `x` is and you get an answer. Ask five processes and you have invented a research problem, because the network between them can do three things to any message: deliver it, lose it, or deliver it much later than you expected. From the sender's point of view those are indistinguishable. You sent a message and got no reply. Did it not arrive? Did it arrive and the reply was lost? Is the other machine dead, or just busy?
+
+<Note type="key" label="The one fact underneath everything in this guide">
+
+In an asynchronous network, **you cannot distinguish a slow node from a dead one.** Not with a better timeout, not with a better heartbeat, not with a smarter algorithm. The information required to tell them apart does not exist at the observer.
+
+</Note>
+
+This is not pedantry. It is the direct cause of the GitHub incident above and of most of the outages in this guide. Every failure detector in every distributed system is a timeout, and every timeout is a guess. Set it short and you declare healthy nodes dead, triggering unnecessary failovers. Set it long and real failures go unnoticed while requests pile up behind a corpse. There is no correct value, only a trade you are making — usually without writing it down.
+
+The theoretical statement of the problem is the **FLP impossibility result** (Fischer, Lynch and Paterson, 1985): in an asynchronous system where even one node may fail by crashing, there is no deterministic algorithm guaranteed to reach consensus. Not "no efficient algorithm" — no algorithm. The proof is that any algorithm can be forced into an indefinitely undecided state by unlucky message timing.
+
+Real systems escape FLP not by being cleverer but by weakening the guarantee. Raft and Paxos are always *safe* — they never produce two conflicting decisions — but they are only *live* when the network behaves for long enough. If messages keep getting delayed at exactly the wrong moments, a Raft cluster can keep holding elections and never elect anyone. It will not be wrong; it will just be stuck. In practice, randomised timeouts make that outcome vanishingly unlikely, which is engineering's usual answer to an impossibility proof: make the bad case rare rather than absent.
+
+<Question q="Check yourself: Why is a perfect failure detector impossible in an asynchronous network?">
+
+Because you cannot distinguish a slow node from a dead one. In an asynchronous system, network delay is unbounded, which means a message or heartbeat might be delayed indefinitely. If you set a timeout, no matter how large, a healthy but slow node (or one experiencing a network partition) might exceed it, causing you to falsely declare it dead. This fundamental limit, formalized by the FLP impossibility result, is why failure detection in distributed systems always requires trading off false positives (unnecessary failovers) against false negatives (slow reaction to real deaths).
+
+</Question>
+
+</Collapse>
+
+<Collapse id="leader" title="2. Leader election, and why you want one">
+
+Coordination among *n* peers is an *n*-way conversation, and *n*-way conversations are where inconsistency lives. The single most effective simplification in distributed systems is to elect one node the leader and route all decisions through it. Now the system is a sequence of decisions made by one machine, which is a problem you already know how to reason about.
+
+Leaders show up everywhere once you look. The primary in a replicated database orders all writes. The controller in a Kafka cluster assigns partitions. The scheduler in Kubernetes decides placements. The coordinator of a sharded system decides who owns which range. In each case, the point is not that the leader is faster — it is that having exactly one writer removes an entire category of conflicts.
+
+<Note type="wild" label="◈ In the wild · Google Chubby">
+
+Most of this pattern traces back to Google's [Chubby](https://research.google/pubs/the-chubby-lock-service-for-loosely-coupled-distributed-systems/), a small, Paxos-backed, strongly consistent store built as a lock service. In practice its dominant use turned out not to be locking at all but leader election and name resolution: systems like GFS and Bigtable elect their primary by racing to acquire a single Chubby lock, and the winner is the leader. It is the direct inspiration for ZooKeeper.
+
+</Note>
+
+<CardGrid>
+  <Card pill="What a leader buys you" tone="good">
+    A single ordering of events. No write conflicts to merge. Simple invariants ("only the leader may do X"). One place to put caches, rate limits, and admission control. Straightforward reasoning during incidents.
+  </Card>
+  <Card pill="What it costs you" tone="bad">
+    A throughput ceiling at one machine. A failover window on every leader death. A new failure mode — two leaders — that is worse than no leader. Extra latency for anyone not co-located with the leader.
+  </Card>
+</CardGrid>
+
+The failover window is the part people underestimate. Between "leader dies" and "new leader is serving", the system is not available for writes. That interval is at minimum the failure-detection timeout plus the election round plus the new leader catching up on any log it was missing. A well-tuned etcd cluster does this in a second or two. A database with a 30-second detection timeout and a large replication backlog can take minutes. Your availability budget from [The Reliability Toolkit](/guides/reliability-toolkit/) has to pay for every one of those windows.
+
+</Collapse>
+
+<Collapse id="raft" title="3. How Raft actually works">
+
+Paxos is the famous one and Raft is the one people actually implement, because Raft was explicitly designed to be understandable. It is worth knowing in outline, because every managed coordination service you will use is running something very close to it.
+
+Every node is in one of three states: **follower**, **candidate**, or **leader**. Time is divided into numbered **terms** — a logical clock that only ever increases, and which is the mechanism that makes stale leaders detectable.
+
+<Stack>
+  <Layer idx="1">**Everyone starts a follower.** Followers do nothing but respond to messages. Each holds a randomised election timeout, typically 150–300 ms.</Layer>
+  <Layer idx="2">**The leader sends heartbeats.** As long as heartbeats arrive, followers reset their timers and stay followers.</Layer>
+  <Layer idx="3">**A timeout means a candidacy.** A follower that hears nothing increments the term, votes for itself, and asks everyone else for a vote.</Layer>
+  <Layer idx="4">**One vote per node per term.** A node grants its vote only if the candidate's log is at least as up to date as its own — this is what stops a node that missed writes from becoming leader.</Layer>
+  <Layer idx="5">**A majority wins.** The candidate that collects *n*/2 + 1 votes becomes leader and immediately starts heartbeating, which suppresses further elections.</Layer>
+  <Layer idx="6">**Split votes resolve by randomness.** If nobody wins, the term ends with no leader, timers fire again at different random times, and the next round almost always succeeds.</Layer>
+</Stack>
+
+Once elected, the leader handles every write as a **log append**. It appends the entry locally, sends it to all followers, and waits for a majority to acknowledge. Once a majority has it, the entry is **committed** — durable regardless of any subsequent failure, because any future leader must have it in order to have won an election. Only then does the leader apply it to the state machine and answer the client.
+
+<Note type="key" label="The two guarantees that make it work">
+
+**Election restriction:** a node cannot win an election unless its log is at least as current as a majority's. So the winner always has every committed entry.
+
+**Term monotonicity:** every message carries a term. A node receiving a message from an older term rejects it; a node receiving a newer term immediately steps down. This is how an isolated ex-leader learns it has been replaced — the moment it can talk to anyone again.
+
+</Note>
+
+That second guarantee is the direct answer to split brain *inside* the consensus group. An old leader partitioned away from the majority will keep believing it is leader, but it can never commit anything, because commits require a majority it does not have. Its writes hang. It is a leader with no power, which is exactly the right failure mode.
+
+<Figure>
+  <DiagramCoordinationConsensus1 />
+</Figure>
+
+</Collapse>
+
+<Collapse id="quorum" title="4. Quorums and the odd-number rule">
+
+A majority of *n* is ⌊*n*/2⌋ + 1. Two majorities of the same set must overlap in at least one member, and that overlap is the entire reason consensus works: any two decisions share a witness, so they cannot contradict each other.
+
+<Table numeric>
+
+| Nodes | Majority | Failures tolerated | Verdict |
+| ----- | -------- | ------------------ | ------- |
+| 1 | 1 | 0 | Not a cluster |
+| 2 | 2 | **0** | Worse than 1 — twice the failure surface, no tolerance |
+| 3 | 2 | 1 | The sensible minimum |
+| 4 | 3 | **1** | Same tolerance as 3, more cost, slower writes |
+| 5 | 3 | 2 | The standard for anything important |
+| 7 | 4 | 3 | Rarely worth the latency |
+
+</Table>
+
+The table explains the odd-number rule that everyone repeats and few justify: **an even cluster gives you nothing an odd one below it doesn't.** Four nodes tolerate exactly as many failures as three while requiring one more acknowledgement per write and adding a node that can itself fail. Going from 3 to 5 is a real upgrade; going from 3 to 4 is paying money to get slower.
+
+Larger is not better in general, either. Every write waits for a majority to acknowledge, so write latency is governed by the *slowest node in the fastest majority*. At five nodes you wait for the third-fastest. At seven you wait for the fourth-fastest, across more machines and probably more distance. Consensus clusters get slower as they get bigger, which is the opposite of the intuition people bring from stateless services in [Load Balancing](/guides/load-balancing/).
+
+This is also where cross-region deployment turns painful. Put five etcd nodes in three continents and every single write costs a cross-ocean round trip to reach a majority — 150 ms or more, per write, forever. The usual answer is to keep the consensus group inside one region (or a few nearby availability zones) and treat other regions as asynchronous consumers of its decisions. When you truly need global consensus, you are in the territory of Spanner and its atomic clocks, discussed in [Consistency & the CAP Theorem](/guides/consistency-cap/).
+
+<Question q="Check yourself: Why are even-numbered cluster sizes (like 4 nodes) almost always a bad design?">
+
+Because a 4-node cluster requires 3 nodes to agree for a majority quorum (4/2 + 1 = 3), meaning it can only tolerate 1 failure (4 - 3 = 1). A 3-node cluster also requires 2 nodes for quorum, allowing it to tolerate 1 failure as well. Therefore, adding the 4th node does not increase the cluster's fault tolerance, but it increases hardware cost, write latency (waiting for 3 ACKs instead of 2), and adds another node that can fail. You pay more to get a slower, less reliable cluster.
+
+</Question>
+
+</Collapse>
+
+<Collapse id="split" title="5. Split brain and fencing">
+
+Split brain is what happened to GitHub: a partition, both sides believing they are authoritative, both sides accepting writes, and afterwards no principled way to merge. Consensus protocols prevent it internally via majority rule. The danger is at the boundary — where a system that *uses* the consensus store acts on what it was told.
+
+Consider the classic sequence, which is subtle enough that it has broken production systems built by careful people:
+
+```trace
+Client A acquires lock                             ++ok, A is the writer++
+Client A begins a long GC pause                    **17 s**
+  ├─ lock lease expires at the store                ~~A no longer holds it — but A doesn't know~~
+  └─ Client B acquires the lock                     ++ok, B is the writer++
+Client B writes to storage                         ++ok++
+Client A wakes up, still believing it holds it
+Client A writes to storage                         ~~← corruption: two writers, B's write clobbered~~
+```
+
+Nothing failed here. The lock service was correct. The network was fine. Client A simply stopped executing for longer than the lease, which a stop-the-world garbage collection, a hypervisor migration, or a heavily oversubscribed host can all cause. When it resumed, its belief about the world was stale, and it had no way to know.
+
+<Note type="key" label="Fencing tokens">
+
+Every time the lock is granted, the store returns a **monotonically increasing number**. The client must pass that number with every write to the protected resource, and the resource must **reject any write whose token is lower than the highest it has already seen**.
+
+In the trace above: A holds token **33**, B is granted token **34**. B writes with 34; storage records 34. A wakes and writes with 33; storage sees 33 &lt; 34 and **rejects it**. The corruption cannot happen, regardless of how long A was asleep.
+
+</Note>
+
+The crucial property is that fencing does not require the client to be correct. It requires the *resource* to check. Any scheme that depends on the paused process noticing it was paused is not a solution, because the entire problem is that it cannot notice. This is the same fencing concept introduced in [Consistency & the CAP Theorem](/guides/consistency-cap/), and it is the single most important idea in this guide.
+
+The other family of mitigations is **STONITH** — "shoot the other node in the head" — where the new leader forcibly powers off or network-isolates the old one before taking over, typically through a management interface or a storage fence. It is heavy-handed and requires infrastructure most teams do not have, but where it exists it converts an ambiguous "probably dead" into a verified "definitely dead", which is a genuinely stronger thing to know.
+
+<Figure>
+  <DiagramCoordinationConsensus2 />
+</Figure>
+
+<Question q="Check yourself: A client acquires a lease, gets paused by garbage collection, and resumes. Explain how fencing tokens protect a backend store from corruption.">
+
+Fencing tokens are monotonically increasing numbers generated by the lock server whenever a lock is acquired. When Client A acquires the lock, it gets token 33. While A is paused, the lease expires and Client B acquires the lock, getting token 34. B successfully writes to the database, which records the last seen token as 34. When A wakes up, it attempts to write using token 33. The database compares 33 with the current token (34), sees that 33 &lt; 34, and rejects the write. This prevents Client A from overwriting B's updates, moving the safety check from the client (which cannot detect its own pauses) to the storage resource itself.
+
+</Question>
+
+</Collapse>
+
+<Collapse id="locks" title="6. Distributed locks are a lie you can manage">
+
+A single-process mutex is a real thing: acquiring it genuinely excludes everyone else, because there is one memory location and one CPU enforcing it. A distributed lock is a message saying you may proceed, sent over a network that can delay it, to a process that can pause after receiving it. It is advice, not enforcement.
+
+So the first question is always: **what breaks if the lock fails?** The answers divide sharply.
+
+<CardGrid>
+  <Card pill="Efficiency locks" tone="mid">
+    "Only one worker should regenerate this cache entry." If two do, you waste some CPU and nothing is wrong. A cheap lock in Redis is fine. Failure is a cost, not a bug.
+  </Card>
+  <Card pill="Correctness locks" tone="bad">
+    "Only one process may write this file / charge this card / advance this counter." If two do, you have corruption or a duplicate charge. Nothing short of consensus plus fencing tokens is adequate.
+  </Card>
+</CardGrid>
+
+Most locks people reach for are efficiency locks wearing correctness clothing, and most of the argument about lock implementations evaporates once you classify yours honestly.
+
+The common Redis pattern is `SET key value NX PX 30000` — set if not exists, with a 30-second expiry — releasing with a Lua script that deletes only if the value still matches your unique token. That last detail matters: a plain `DEL` lets you delete a lock that has already expired and been re-acquired by someone else. Even done correctly, this is a single-node lock, and if that Redis fails over to a replica that had not yet received the write, two clients hold the lock simultaneously. **Redlock**, which acquires across multiple independent Redis nodes, was proposed to address this and was the subject of a well-known critique by Martin Kleppmann: its safety argument depends on bounded clock drift and bounded process pauses, and neither is something you can assume. The practical conclusion is not "Redlock is broken" so much as "if you need the property Redlock is arguing about, you need fencing tokens anyway, and if you have fencing tokens the argument stops mattering."
+
+For correctness locks, use a real consensus store — etcd, ZooKeeper, Consul — and use the sequence number it gives you as a fencing token at the resource. That combination is sound. Anything else is you deciding, hopefully deliberately, that occasional double execution is acceptable.
+
+<Lab
+  title="Build a Distributed Lock with Fencing Tokens"
+  tip="Add this fenced lock simulation to your portfolio to show deep understanding of distributed consistency boundary enforcement."
+>
+
+Build this mini-project to implement safe lease-based mutual exclusion using Redis and PostgreSQL/SQLite:
+
+- **Acquire Lock & Token:** Write a script that acquires a 5-second lease in Redis for a resource name, returning a token generated by an atomic counter (`INCR lock_version:resource_id`).
+
+- **Database Schema:** Create a mock table in SQLite or PostgreSQL:
+
+  ```sql
+  CREATE TABLE resource_state (
+    id INT PRIMARY KEY,
+    data TEXT,
+    last_fencing_token INT DEFAULT 0
+  );
+  ```
+
+- **Enforce Fencing:** Write a function to update the database state that verifies the fencing token. The database must reject the update if the incoming token is smaller than `last_fencing_token`:
+
+  ```python
+  def write_with_fencing(db_conn, resource_id, new_data, token):
+      cursor = db_conn.cursor()
+      # Atomic conditional update
+      cursor.execute("""
+          UPDATE resource_state
+          SET data = ?, last_fencing_token = ?
+          WHERE id = ? AND ? > last_fencing_token
+      """, (new_data, token, resource_id, token))
+      if cursor.rowcount == 0:
+          raise Exception("Write rejected: Outdated fencing token!")
+  ```
+
+- **Simulate the GC Pause:** Spawn Client A (Token 1). Sleep A for 6 seconds to simulate a GC pause. Meanwhile, lease expires and Client B acquires lock (Token 2), writing to database successfully. Client A wakes up, tries to write, and verify that the database throws the fencing error!
+
+</Lab>
+
+<Question q="Check yourself: What's the difference between an efficiency lock and a correctness lock, and why does this distinction change the implementation?">
+
+An efficiency lock exists to avoid doing duplicate work. If the lock fails and two nodes hold it, you burn some CPU. The correct implementation is the cheap one: a Redis `SET NX PX`, no consensus, no fencing, and an accepted small rate of double execution.
+
+A correctness lock exists to protect an invariant — one writer to a file, one charge to a card. If it fails, you have corruption or a customer complaint. It needs a consensus-backed store *and* fencing tokens enforced at the resource, because the lock alone cannot survive a process pause.
+
+The reason the classification matters is that people argue about lock implementations in the abstract and reach for heavy machinery for efficiency locks while shipping correctness locks with none. Decide which one you have first; the implementation follows immediately.
+
+</Question>
+
+</Collapse>
+
+<Collapse id="leases" title="7. Leases: locks with an expiry date">
+
+A lock held by a crashed process is held forever. That single sentence is why almost every practical distributed lock is really a **lease**: a lock with a time limit, which the holder must periodically renew or lose.
+
+Leases turn "detect that the holder died" — impossible, per section 1 — into "wait for the lease to expire" — trivially possible. You have replaced an undecidable question with a timer, and the price is that the timer is a guess, which brings back the pause problem from section 5. Hence: leases *and* fencing tokens, always together.
+
+<Note type="warn" label="Whose clock?">
+
+The lease must be timed by the **store**, not the client. If the client decides when its lease expires, a client whose clock runs slow believes it still holds a lease that the store has already given away.
+
+Even at the store, use a **monotonic clock** for elapsed time, never wall-clock time. NTP steps, leap-second smearing, and VM snapshot restores all move wall clocks backwards, and a clock that jumps backwards extends every lease silently.
+
+</Note>
+
+Choosing the duration is the usual trade in a new costume. A short lease (1–2 s) means fast recovery after a crash but frequent renewals, more load on the store, and a real risk that a brief GC pause loses you a lease you never actually stopped needing. A long lease (30–60 s) is cheap and stable but means a crashed leader blocks progress for up to a minute. Kubernetes' default leader election uses a 15-second lease renewed every 10 — a reasonable middle for control-plane work where a 15-second gap is survivable.
+
+Note that a lease is exactly what a Raft leader has, made explicit. The heartbeat interval *is* a lease renewal; the election timeout *is* the lease duration. Once you see that, "leader election" and "distributed locking" stop looking like two topics.
+
+</Collapse>
+
+<Collapse id="stores" title="8. etcd, ZooKeeper, Consul: what you actually get">
+
+You will almost never implement Raft. You will run something that has, and use it as a small, strongly consistent, low-throughput key-value store with a few extra powers.
+
+<Table numeric>
+
+| | etcd | ZooKeeper | Consul |
+| --- | ---- | --------- | ------ |
+| Protocol | Raft | ZAB (Paxos-like) | Raft |
+| Interface | gRPC key-value | Hierarchical znodes | HTTP/DNS key-value |
+| Change notification | Watch (streaming) | Watch (one-shot) | Blocking queries |
+| Ephemerality | Leases on keys | Ephemeral znodes | Sessions + health checks |
+| Best known for | Kubernetes' entire state | Kafka, HBase, Hadoop | Service discovery, service mesh |
+
+</Table>
+
+The primitives they all provide are the same three, and they are enough to build everything in the next section: an **atomic compare-and-swap** (write only if the current version is what I think it is), a **lease or session** that expires unless renewed, and a **watch** that notifies you when a key changes so you are not polling.
+
+<Note type="warn" label="These are not databases">
+
+Every write goes through consensus, so throughput is in the low thousands of writes per second — for the entire cluster, not per node — and total data size should stay in the tens or low hundreds of megabytes. etcd's default database size limit is **2 GB** and you do not want to be near it.
+
+Store *decisions*, not data: who is the leader, what is the current config, which shard lives where, which nodes are members. If you find yourself writing per-user or per-request records into etcd, you have chosen the wrong tool with unusual confidence.
+
+</Note>
+
+The other thing to internalise is that the coordination store becomes a dependency of everything that uses it, which makes it a single point of failure with unusually broad blast radius. When etcd is unhealthy, Kubernetes cannot schedule, scale, or reconcile anything. Design so that a coordination outage degrades you to "cannot change" rather than "cannot serve" — running workloads should keep running on their last-known-good configuration, exactly as a service should keep serving from a stale config cache rather than crash-looping.
+
+<Question q="Check yourself: Your service reads its feature flags from etcd on every request. What's wrong and how do you fix it?">
+
+You have coupled your request throughput and availability to a component designed for neither. etcd handles low thousands of operations per second cluster-wide, so it becomes your ceiling; and when it is unavailable — during a rolling upgrade, a leader election, a partition — your service stops serving rather than merely stopping updating.
+
+The fix is to invert it: read the flags once at startup, hold them in memory, and register a *watch* so etcd pushes changes to you. Request handling then touches only local memory. Keep serving the last known values if the watch disconnects, reconcile against the full current state on reconnect (watches miss events across disconnects), and persist a copy to local disk so a restart during an etcd outage still comes up with sane configuration.
+
+The general rule: a coordination outage should degrade you to "cannot change" rather than "cannot serve".
+
+</Question>
+
+</Collapse>
+
+<Collapse id="patterns" title="9. Patterns built on top">
+
+Given compare-and-swap, leases and watches, the standard patterns fall out.
+
+<Stack>
+  <Layer idx="A">**Leader election.** Everyone tries to create the same key with a lease, using create-if-absent. Exactly one succeeds and renews it; the rest watch the key and retry when it disappears. Kubernetes controllers do precisely this.</Layer>
+  <Layer idx="B">**Service discovery.** Each instance registers itself under a prefix with a lease and heartbeats. Consumers watch the prefix and get the live membership. A crashed instance's lease expires and it vanishes from the set without anyone deregistering it.</Layer>
+  <Layer idx="C">**Dynamic configuration.** Config lives in a key; services watch it and reload on change. Add a version number and you get instant, ordered, auditable rollouts — with the Cloudflare lesson from [CDNs & the Edge](/guides/cdn-edge/) firmly in mind, roll changes out gradually rather than to everyone at once.</Layer>
+  <Layer idx="D">**Membership and sharding.** The current member list lives in the store; a leader assigns shards to members and writes the assignment back. When membership changes, the leader recomputes and everyone watches for their new assignment — combine with consistent hashing from [Load Balancing](/guides/load-balancing/) so a membership change moves 1/*n* of the keys rather than all of them.</Layer>
+  <Layer idx="E">**Barriers and queues.** Ordered keys under a prefix give you a fair queue; a counter plus a watch gives you a barrier that releases when the last participant arrives. Useful for batch coordination, rarely worth it for anything on a request path.</Layer>
+</Stack>
+
+Notice what these have in common: the store holds a small amount of slowly-changing truth, and everything else *watches*. The data plane never asks the store a question per request. If your request path contains a synchronous call to etcd, you have made a 2,000-writes-per-second component into the ceiling for your entire system.
+
+</Collapse>
+
+<Collapse id="avoid" title="10. How to need less of this">
+
+Every technique here has a cost in latency, operational complexity, and new failure modes. The best coordination is the coordination you designed away, and there are four reliable ways to do it.
+
+<CardGrid>
+  <Card pill="Partition the problem" tone="good">
+    If each key is owned by exactly one shard and each shard by one process, there is nothing to agree about. Consistent hashing plus stable ownership eliminates most locks outright. Coordination is only needed at the boundary — when ownership changes.
+  </Card>
+  <Card pill="Make operations idempotent" tone="good">
+    If running twice is the same as running once, you no longer need to guarantee it runs once. Idempotency keys, upserts, and conditional writes convert an exclusion problem into a deduplication problem, which is far easier — see [Message Queues & Async](/guides/message-queues/).
+  </Card>
+  <Card pill="Push it into the database" tone="good">
+    A single-row conditional update, a unique constraint, or a `SELECT … FOR UPDATE` gives you real mutual exclusion using a transaction manager you already run and already monitor. One less system to lose quorum.
+  </Card>
+  <Card pill="Use commutative operations" tone="good">
+    If the operations commute, order stops mattering and so does agreement about it. Counters, sets and CRDTs from [Consistency & the CAP Theorem](/guides/consistency-cap/) converge without any coordination at all.
+  </Card>
+</CardGrid>
+
+The general principle is worth stating plainly: coordination is a *tax on every operation that requires it*, so make the set of such operations as small as you can. Most systems need strong agreement about a handful of things — who owns what, what the config is, who is primary — and need nothing at all about the millions of operations that follow from those answers. Keep the two categories separate and the expensive one small.
+
+</Collapse>
+
+<Collapse id="gotchas" title="11. The gotchas that actually bite">
+
+<Note label="1 · Two-node clusters">
+A two-node cluster tolerates zero failures and has twice the hardware to fail. It is strictly worse than one node. This mistake is usually made by a team that thinks "redundancy" and hears "two".
+</Note>
+
+<Note label="2 · Locks without fencing tokens">
+The GC-pause trace in section 5 is not exotic; it is a Tuesday on an oversubscribed host. If a lock protects correctness and the resource does not reject stale tokens, you have a corruption waiting for a slow enough garbage collection.
+</Note>
+
+<Note label="3 · Wall-clock leases">
+NTP corrections, leap-second smearing, and VM snapshot restores all move wall clocks. A clock that jumps backwards silently extends every lease it times. Use monotonic clocks for durations, always.
+</Note>
+
+<Note label="4 · The store on the request path">
+A consensus store does low thousands of writes per second, cluster-wide. Reading it once per request makes it your throughput ceiling and your availability floor. Watch and cache; never poll per request.
+</Note>
+
+<Note label="5 · Stretching the cluster across regions">
+Every write waits for a majority. Spread the majority across oceans and every write pays 150 ms+ forever. Keep the quorum local; replicate its decisions outward asynchronously.
+</Note>
+
+<Note label="6 · Automatic failover with no witness">
+Automatic promotion on a partition is what produced GitHub's 24-hour incident. Either give the decision to a majority that spans the partition boundary (an odd number of sites, or a lightweight witness in a third), or require a human. Two sites and automatic promotion is a split brain generator.
+</Note>
+
+<Note label="7 · Watches you assume are reliable">
+Watch streams disconnect. ZooKeeper watches fire once and must be re-registered, and events between disconnect and re-registration are simply missed. Always reconcile against the full current state after reconnecting rather than trusting that you saw every event.
+</Note>
+
+</Collapse>
+
+<Collapse id="recap" title="12. Recap in 60 seconds">
+
+<Recap>
+
+**You cannot tell slow from dead.** Every failure detector is a timeout, and every timeout is a guess with a cost on both sides.
+
+**FLP says perfect consensus is impossible; Raft chooses safety over liveness.** It will never decide two things; it may occasionally decide nothing for a moment.
+
+**Elect a leader.** One writer removes whole categories of conflict. Pay for it with a failover window on every leader death.
+
+**Raft = terms + elections + a replicated log.** Commit means a majority has it; an election winner must have every committed entry; a newer term makes an old leader step down.
+
+**Odd numbers only.** 3 tolerates 1, 5 tolerates 2, 4 tolerates the same as 3 while being slower. Bigger clusters are slower, not faster.
+
+**Fencing tokens are non-negotiable** for any lock protecting correctness. The resource rejects stale tokens; the client cannot be trusted to notice it was paused.
+
+**Leases are locks with expiry** — timed by the store, on a monotonic clock, never by the client.
+
+**Classify your locks.** Efficiency locks can be cheap and occasionally wrong. Correctness locks need consensus plus fencing, or they are decoration.
+
+**Coordination stores hold decisions, not data.** Low thousands of writes/second, tens of megabytes. Watch and cache; never put them on the request path.
+
+**The best coordination is none.** Partition ownership, make operations idempotent, use database constraints, prefer commutative operations.
+
+</Recap>
+
+</Collapse>
+
+<Footer>
+  <Fragment slot="next">
+    everything so far has assumed a client asks and a server answers. Some systems have to push — chat, presence, live scores, collaborative editing — and that inverts the whole model. That's [Systems That Push Back](/guides/real-time-systems/).
+  </Fragment>
+  GitHub Engineering, "October 21 post-incident analysis" (2018) ·
+  Ongaro & Ousterhout, "In Search of an Understandable Consensus Algorithm" (Raft, 2014) ·
+  Fischer, Lynch & Paterson, "Impossibility of Distributed Consensus with One Faulty Process" (1985) ·
+  Martin Kleppmann, "How to do distributed locking" (2016) ·
+  Kleppmann, *Designing Data-Intensive Applications*, ch. 8–9 ·
+  etcd docs, "Why etcd" and "Tuning" ·
+  Apache ZooKeeper, "ZooKeeper Recipes and Solutions".
+</Footer>

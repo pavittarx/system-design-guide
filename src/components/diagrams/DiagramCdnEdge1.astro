@@ -1,0 +1,19 @@
+---
+// src/components/diagrams/DiagramCdnEdge1.astro
+---
+
+<svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+<text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Connection Handshake Latency Comparison</text>
+<text x="20" y="55" fill="var(--danger)" font-size="11" font-weight="600">Direct Connection to Origin (Sydney to Virginia - RTT: 160ms)</text>
+<rect x="20" y="70" width="340" height="120" rx="6" fill="var(--panel-2)" stroke="var(--border)" />
+<text x="35" y="95" fill="var(--text)" font-size="10">1. TCP Handshake: 160ms</text>
+<text x="35" y="115" fill="var(--text)" font-size="10">2. TLS Handshake: 160ms</text>
+<text x="35" y="135" fill="var(--text)" font-size="10">3. HTTP GET + Response: 160ms</text>
+<text x="35" y="165" fill="var(--danger)" font-size="12" font-weight="700">Total Latency: 480ms</text>
+<text x="400" y="55" fill="var(--accent-2)" font-size="11" font-weight="600">CDN Terminated Connection (Edge Terminated - Local RTT: 10ms)</text>
+<rect x="400" y="70" width="340" height="120" rx="6" fill="var(--panel-2)" stroke="var(--accent-2)" stroke-width="1.5" />
+<text x="415" y="95" fill="var(--text)" font-size="10">1. TCP Handshake to Edge: 10ms</text>
+<text x="415" y="115" fill="var(--text)" font-size="10">2. TLS Handshake to Edge: 10ms</text>
+<text x="415" y="135" fill="var(--text)" font-size="10">3. HTTP GET to Edge (Warm Origin Pooled Route): 160ms</text>
+<text x="415" y="165" fill="var(--accent-2)" font-size="12" font-weight="700">Total Latency: 180ms</text>
+</svg>

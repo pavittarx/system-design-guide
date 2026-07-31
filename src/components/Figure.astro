@@ -1,0 +1,14 @@
+---
+// src/components/Figure.astro
+// Framed container for an inline diagram component.
+interface Props {
+  caption?: string;
+}
+
+const { caption } = Astro.props;
+---
+
+<figure class="figure">
+  <slot />
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>

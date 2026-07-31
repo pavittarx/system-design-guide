@@ -1,0 +1,26 @@
+---
+// src/components/diagrams/DiagramObservability2.astro
+---
+
+<svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+<text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Metrics Cardinality Multiplier</text>
+<rect x="20" y="55" width="280" height="130" rx="8" fill="var(--panel-2)" stroke="var(--accent-2)" stroke-width="1.5" />
+<text x="35" y="78" fill="var(--accent-2)" font-size="12" font-weight="700">Bounded Dimensions (Safe)</text>
+<text x="35" y="105" fill="var(--text)" font-size="11">HTTP Status codes [5 values] (200, 400, etc.)</text>
+<text x="35" y="125" fill="var(--text)" font-size="11">Region codes [3 values] (us-east, us-west, etc.)</text>
+<text x="35" y="145" fill="var(--text)" font-size="11">Endpoints [20 values] (/checkout, /cart, etc.)</text>
+<text x="35" y="170" fill="var(--muted)" font-size="11">5 &times; 3 &times; 20 = 300 series</text>
+<path d="M 310,120 H 420" fill="none" stroke="var(--danger)" stroke-width="2" marker-end="url(#arrow-red)" />
+<text x="365" y="108" fill="var(--danger)" font-size="9" text-anchor="middle" font-weight="700">&times; Unbounded</text>
+<rect x="430" y="55" width="310" height="130" rx="8" fill="var(--panel-2)" stroke="var(--danger)" stroke-width="1.5" />
+<text x="445" y="78" fill="var(--danger)" font-size="12" font-weight="700">Unbounded Dimension (Explosion)</text>
+<text x="445" y="105" fill="var(--text)" font-size="11">User ID [2,000,000 values]</text>
+<text x="445" y="125" fill="var(--muted)" font-size="11">OR Order ID / raw URL with path parameters</text>
+<text x="445" y="150" fill="var(--danger)" font-size="12" font-weight="700">300 &times; 2,000,000 = 600,000,000 series</text>
+<text x="445" y="170" fill="var(--danger)" font-size="10">Results in TSDB memory crash or massive billing.</text>
+<defs>
+<marker id="arrow-red" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1 L 10 5 L 0 9 z" fill="var(--danger)" />
+</marker>
+</defs>
+</svg>

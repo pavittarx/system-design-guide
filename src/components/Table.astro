@@ -1,0 +1,22 @@
+---
+// src/components/Table.astro
+// Wraps a markdown table in a horizontal scroll container. Set `numeric` when
+// the first column is a figure/key so it renders monospaced.
+//
+//   <Table numeric>
+//
+//   | Nodes | Majority | Verdict          |
+//   | ----- | -------- | ---------------- |
+//   | 3     | 2        | Sensible minimum |
+//
+//   </Table>
+interface Props {
+  numeric?: boolean;
+}
+
+const { numeric = false } = Astro.props;
+---
+
+<div class:list={['table-scroll', { 'num-table': numeric }]}>
+  <slot />
+</div>
