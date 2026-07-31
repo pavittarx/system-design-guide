@@ -21,7 +21,12 @@ export const GUIDES = {
 
 export type GuideSlug = keyof typeof GUIDES;
 
+// BASE_URL carries no trailing slash here, so always build hrefs through these
+// helpers — `${BASE_URL}guides/x` silently produces /system-design-guideguides/x.
 const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+
+/** Site-root-relative href, e.g. withBase('system-design-basics-complete/'). */
+export const withBase = (path = '') => `${base}/${path.replace(/^\//, '')}`;
 
 export const guideHref = (slug: GuideSlug) => `${base}/guides/${slug}/`;
 

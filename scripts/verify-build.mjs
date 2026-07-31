@@ -63,13 +63,34 @@ for (const file of pages) {
     continue;
   }
 
-  // 3. Every in-page anchor resolves to an id on that page.
+  // 3. Every internal link resolves to a file that exists. This is the check
+  //    that would have caught `${BASE_URL}guides/x` rendering as
+  //    /system-design-guideguides/x — a 404 on every link on the homepage.
+  for (const [, href] of html.matchAll(/href="([^"#?]+)[^"]*"/g)) {
+    if (/^(https?:)?\/\//.test(href) || href.startsWith('mailto:') || href.startsWith('#')) continue;
+    // Must match the base at a path boundary. Checking `startsWith(BASE)` alone
+    // accepts /system-design-guideguides/x, whose remainder then resolves to a
+    // real file — which is exactly how that bug reached production.
+    if (href !== BASE && !href.startsWith(`${BASE}/`)) {
+      fail(name, `internal link does not sit under ${BASE}/: ${href}`);
+      continue;
+    }
+    const rel = href.slice(BASE.length).replace(/^\//, '');
+    const candidates = [
+      join(DIST, rel),
+      join(DIST, rel, 'index.html'),
+      join(DIST, `${rel}.html`),
+    ];
+    if (!candidates.some(existsSync)) fail(name, `link 404s: ${href}`);
+  }
+
+  // 4. Every in-page anchor resolves to an id on that page.
   const ids = new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
   for (const [, anchor] of html.matchAll(/href="#([^"]+)"/g)) {
     if (anchor && !ids.has(anchor)) fail(name, `broken in-page anchor #${anchor}`);
   }
 
-  // 4. Entities must not survive into rendered text (YAML is not entity-decoded,
+  // 5. Entities must not survive into rendered text (YAML is not entity-decoded,
   //    so `&amp;` in frontmatter used to print literally in the sidebar).
   if (html.includes('&amp;amp;')) fail(name, 'literal &amp; in rendered output');
 }
