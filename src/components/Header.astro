@@ -7,13 +7,13 @@ interface Props {
 }
 
 const { current, tocHref = "#top", tocText = "Back to Top" } = Astro.props;
-const baseUrl = import.meta.env.BASE_URL;
+import { withBase } from '../lib/guides';
 ---
 
 <div class="sticky-header">
   <div class="header-inner">
     <div class="breadcrumbs">
-      <a href={baseUrl}>System Design Guide</a>
+      <a href={withBase()}>System Design Guide</a>
       {current && (
         <span class="sep">/</span>
         <span class="curr">{current}</span>

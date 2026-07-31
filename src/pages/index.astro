@@ -4,7 +4,7 @@ import MainLayout from '../layouts/MainLayout.astro';
 import Header from '../components/Header.astro';
 import Collapse from '../components/Collapse.astro';
 
-const baseUrl = import.meta.env.BASE_URL;
+import { guideHref, withBase } from '../lib/guides';
 ---
 
 <MainLayout title="System Design Basics — The Hub" description="A twelve-part illustrated field guide to how real systems get fast, hold their data, distribute work, stay up, and stay correct.">
@@ -41,7 +41,7 @@ const baseUrl = import.meta.env.BASE_URL;
       <p>Read in order for a story, or jump to whatever's on fire today. Each stands alone, and each now ends with a 60-second recap and a set of questions to test yourself against. The first six build and scale a system; the next five keep it alive once it's real; the last one assembles everything.</p>
 
       <div class="guides">
-        <a class="g" href={`${baseUrl}guides/understanding-caching`}>
+        <a class="g" href={guideHref('understanding-caching')}>
           <span class="status">start here</span>
           <div class="num">Guide 1 · Speed</div>
           <h3>Understanding Caching</h3>
@@ -49,7 +49,7 @@ const baseUrl = import.meta.env.BASE_URL;
           <div class="tags">DNS · Netflix · Facebook · Twitter</div>
           <div class="meta">~30 min · cache-aside in code with four bugs in it</div>
         </a>
-        <a class="g" href={`${baseUrl}guides/database-scaling`}>
+        <a class="g" href={guideHref('database-scaling')}>
           <span class="status s2">longest</span>
           <div class="num">Guide 2 · State</div>
           <h3>Scaling Databases</h3>
@@ -57,7 +57,7 @@ const baseUrl = import.meta.env.BASE_URL;
           <div class="tags">Figma · Discord · Instagram</div>
           <div class="meta">~40 min · picking a shard key, done as arithmetic</div>
         </a>
-        <a class="g" href={`${baseUrl}guides/load-balancing`}>
+        <a class="g" href={guideHref('load-balancing')}>
           <span class="status s2">most visual</span>
           <div class="num">Guide 3 · Distribution</div>
           <h3>Load Balancing</h3>
@@ -65,7 +65,7 @@ const baseUrl = import.meta.env.BASE_URL;
           <div class="tags">Google Maglev · anycast</div>
           <div class="meta">~28 min · a cascade traced from 03:14 to 03:19</div>
         </a>
-        <a class="g" href={`${baseUrl}guides/message-queues`}>
+        <a class="g" href={guideHref('message-queues')}>
           <span class="status">shortest</span>
           <div class="num">Guide 4 · Async</div>
           <h3>Message Queues</h3>
@@ -73,7 +73,7 @@ const baseUrl = import.meta.env.BASE_URL;
           <div class="tags">Kafka · Uber · every checkout</div>
           <div class="meta">~24 min · the idempotency race, traced line by line</div>
         </a>
-        <a class="g" href={`${baseUrl}guides/reliability-toolkit`}>
+        <a class="g" href={guideHref('reliability-toolkit')}>
           <span class="status s3">most practical</span>
           <div class="num">Guide 5 · Resilience</div>
           <h3>The Reliability Toolkit</h3>
@@ -81,7 +81,7 @@ const baseUrl = import.meta.env.BASE_URL;
           <div class="tags">Knight Capital · AWS S3 · Netflix</div>
           <div class="meta">~29 min · which wall stops which flood</div>
         </a>
-        <a class="g" href={`${baseUrl}guides/consistency-cap`}>
+        <a class="g" href={guideHref('consistency-cap')}>
           <span class="status s4">hardest</span>
           <div class="num">Guide 6 · Correctness</div>
           <h3>Consistency &amp; CAP</h3>
@@ -95,7 +95,7 @@ const baseUrl = import.meta.env.BASE_URL;
       <p>The first six get a system built and scaled. These five are the problems that arrive once it's actually live and serving people: knowing what it's doing, guarding its front door, beating distance, getting machines to agree, and pushing data out in real time.</p>
 
       <div class="guides">
-        <a class="g" href={`${baseUrl}guides/observability`}>
+        <a class="g" href={guideHref('observability')}>
           <span class="status s2">cross-cutting</span>
           <div class="num">Guide 7 · Visibility</div>
           <h3>Seeing Inside the Machine</h3>
@@ -103,7 +103,7 @@ const baseUrl = import.meta.env.BASE_URL;
           <div class="tags">green dashboards · p99 · RED/USE</div>
           <div class="meta">~30 min · one incident, solved with three signals</div>
         </a>
-        <a class="g" href={`${baseUrl}guides/api-gateways`}>
+        <a class="g" href={guideHref('api-gateways')}>
           <span class="status">the contract</span>
           <div class="num">Guide 8 · Interface</div>
           <h3>APIs, Gateways &amp; Rate Limiting</h3>
@@ -111,7 +111,7 @@ const baseUrl = import.meta.env.BASE_URL;
           <div class="tags">Stripe · GitHub · GraphQL</div>
           <div class="meta">~30 min · the boundary burst that doubles your limit</div>
         </a>
-        <a class="g" href={`${baseUrl}guides/cdn-edge`}>
+        <a class="g" href={guideHref('cdn-edge')}>
           <span class="status s2">physics</span>
           <div class="num">Guide 9 · Distance</div>
           <h3>CDNs &amp; the Edge</h3>
@@ -119,7 +119,7 @@ const baseUrl = import.meta.env.BASE_URL;
           <div class="tags">Fastly · Cloudflare · Netflix</div>
           <div class="meta">~30 min · why a 10-second TTL is nearly free</div>
         </a>
-        <a class="g" href={`${baseUrl}guides/coordination-consensus`}>
+        <a class="g" href={guideHref('coordination-consensus')}>
           <span class="status s4">deep end</span>
           <div class="num">Guide 10 · Agreement</div>
           <h3>Getting Machines to Agree</h3>
@@ -127,7 +127,7 @@ const baseUrl = import.meta.env.BASE_URL;
           <div class="tags">GitHub · Raft · etcd</div>
           <div class="meta">~30 min · a GC pause that corrupts the database</div>
         </a>
-        <a class="g" href={`${baseUrl}guides/real-time-systems`}>
+        <a class="g" href={guideHref('real-time-systems')}>
           <span class="status s3">stateful</span>
           <div class="num">Guide 11 · Push</div>
           <h3>Systems That Push Back</h3>
@@ -135,7 +135,7 @@ const baseUrl = import.meta.env.BASE_URL;
           <div class="tags">Slack · Discord · WhatsApp</div>
           <div class="meta">~30 min · the reconnect is the load test</div>
         </a>
-        <a class="g wide" href={`${baseUrl}guides/design-the-checkout`}>
+        <a class="g wide" href={guideHref('design-the-checkout')}>
           <span class="status s3">capstone</span>
           <div class="num">Guide 12 · Synthesis</div>
           <h3>Design the Checkout</h3>
@@ -278,7 +278,7 @@ const baseUrl = import.meta.env.BASE_URL;
       </dl>
     </Collapse>
 
-    <div class="savehint">🌐 Every card above opens a full guide, each guide links back here, and there's a <a href={`${baseUrl}system-design-basics-complete`}>single-file version of the seven core guides</a> if you'd rather have them in one page you can save, print, or read offline (the five newer guides above are standalone pages).</div>
+    <div class="savehint">🌐 Every card above opens a full guide, each guide links back here, and there's a <a href={withBase('system-design-basics-complete/')}>single-file version of the seven core guides</a> if you'd rather have them in one page you can save, print, or read offline (the five newer guides above are standalone pages).</div>
 
     <div class="note">
       <span class="label">The meta-lesson across all twelve</span>
