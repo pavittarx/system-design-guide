@@ -139,6 +139,19 @@ CAP has a blind spot: it only describes behavior *during* a partition, which is 
 
 <Statement>*If **P**artition, choose **A** or **C** — **E**lse (normal operation), choose **L**atency or **C**onsistency.*</Statement>
 
+### PACELC Theorem Matrix
+
+<Table>
+
+| Database / System | If Partition (P) | Else Normal (E) | System Trade-Off Profile | Typical Database Example |
+| :--- | :--- | :--- | :--- | :--- |
+| **PC / EC** | Consistency | Consistency | Maximum correctness; highest latency | Spanner, CockroachDB, PostgreSQL |
+| **PA / EL** | Availability | Latency | Maximum availability & speed; eventual consistency | Cassandra, DynamoDB (default) |
+| **PA / EC** | Availability | Consistency | High availability under partition; consistent when calm | MongoDB (configurable) |
+| **PC / EL** | Consistency | Latency | Strict consistency under partition; low latency when calm | Rare hybrid systems |
+
+</Table>
+
 In plain terms: even when everything is healthy, keeping all your copies perfectly in sync *costs time* — you have to wait for the other nodes to confirm. So there's a permanent, everyday trade-off between being **fast** and being **perfectly consistent**, partition or not. This is why strongly-consistent databases feel slower: they're paying the coordination tax on every write. Latency vs. consistency is the tax you pay all day; availability vs. consistency is the bill that comes due during a partition.
 
 <Note type="key" label="The branch that actually runs">
@@ -204,6 +217,19 @@ Here's the elegant trick AP databases use to *tune* where they sit. Say each pie
 - **W** = how many replicas must confirm a *write* before it counts.
 
 - **R** = how many replicas you read from and compare.
+
+### Quorum Math Matrix
+
+<Table>
+
+| Quorum Condition | Condition Formula | Consistency & Latency Guarantee | Recommended Use Case |
+| :--- | :--- | :--- | :--- |
+| **Quorum Overlap** | $R + W > N$ | **Strong Consistency** (Guaranteed overlap) | Financial ledgers, primary inventory |
+| **Write Heavy** | $W = N, R = 1$ | Fast reads, slow expensive writes | High-read caches, static configs |
+| **Read Heavy** | $W = 1, R = N$ | Fast writes, slow expensive reads | High-throughput logging, telemetry ingest |
+| **Eventual / Loose** | $R + W \le N$ | **Weak / Eventual Consistency** (No overlap guarantee) | Activity feeds, view counters, like counts |
+
+</Table>
 
 The beautiful part: if **R + W > N**, your read set is guaranteed to *overlap* the latest write on at least one node — so a read can return the latest *acknowledged* value on demand (which is a weaker promise than linearizability, and weaker still under failure — the next section walks a real one through a partition to show exactly where the edges are). Want speed instead? Lower R and W and accept staleness. One formula, a whole spectrum, chosen per query. Cassandra and DynamoDB expose exactly this.
 

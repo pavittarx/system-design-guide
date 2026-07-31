@@ -93,17 +93,32 @@ Because that one address is now itself a single point of failure, real deploymen
 Load balancers come in two broad flavors, named after layers of the networking stack. The difference is *how much of the request they bother to read.*
 
 <CardGrid>
-  <Card title="Layer 4 (transport)">
+  <Card title="Layer 4 (Transport)">
 
   Routes by IP and port only. It doesn't open the envelope — just forwards packets. Blazing fast, protocol-agnostic, but can't make smart decisions based on *content*.
 
   </Card>
-  <Card title="Layer 7 (application)">
+  <Card title="Layer 7 (Application)">
 
   Reads the actual HTTP request — URL, headers, cookies. Can route `/api` to one pool and `/images` to another, do TLS termination, rewrite, and inspect. Smarter, slightly slower.
 
   </Card>
 </CardGrid>
+
+### L4 vs. L7 Comparison Matrix
+
+<Table>
+
+| Dimension / Feature | Layer 4 (Transport) | Layer 7 (Application) |
+| :--- | :--- | :--- |
+| **Inspection Depth** | IP Address, TCP/UDP Ports | HTTP Method, Path, Headers, Cookies |
+| **Throughput & Speed** | Ultra-high (Millions of packets/s) | High (Requires HTTP parsing & TLS decryption) |
+| **Content Routing** | ❌ None (Protocol neutral) | ✓ Path-based (`/api`, `/static`), Header routing |
+| **TLS Termination** | Pass-through to backends | Decrypts TLS at the edge |
+| **Sticky Sessions** | IP Hash / Socket-based | Cookie-based / Session ID matching |
+| **Protocol Support** | Any TCP/UDP (Database, MQTT, gRPC) | Web protocols (HTTP/1.1, HTTP/2, WebSocket, gRPC) |
+
+</Table>
 
 Most modern web setups use L7 (Nginx, HAProxy, Envoy, AWS ALB) because content-aware routing is worth the tiny overhead. Reach for L4 (AWS NLB) when you need raw throughput or you're balancing non-HTTP traffic.
 

@@ -129,6 +129,20 @@ An **in-process** cache is fastest (no network hop) but every server has its own
 
 Each pattern answers two questions: *who talks to the cache*, and *when does the cache get written*. The read patterns decide how misses get filled; the write patterns decide how the cache stays in step with the source of truth.
 
+### Quick Strategy Decision Matrix
+
+<Table>
+
+| Strategy | Consistency | Write Overhead | Ideal Workload / Use Case |
+| :--- | :--- | :--- | :--- |
+| **Cache-aside** | <Pill tone="mid">eventual</Pill> | Low | Read-heavy, general purpose. The safe default pattern. |
+| **Read-through** | <Pill tone="mid">eventual</Pill> | Low | Read-heavy workloads where caching logic is encapsulated in data providers. |
+| **Write-through** | <Pill tone="good">strong-ish</Pill> | High | Critical data requiring fresh reads, where write latency trade-off is acceptable. |
+| **Write-back** | <Pill tone="bad">weak</Pill> | Very Low | Write-heavy, high-burst workloads where occasional node-crash data loss is tolerable. |
+| **Write-around** | <Pill tone="mid">eventual</Pill> | Low | Data written frequently but rarely re-read immediately. |
+
+</Table>
+
 ### Cache-aside (lazy loading) — the default
 
 The application manages the cache. On a read: check cache → hit returns it → miss reads the DB, writes the value into the cache, then returns it. On a write: update the DB and invalidate the cached entry.
@@ -168,18 +182,6 @@ Writes go straight to the DB, bypassing the cache; the cache fills later on a re
 
 - <Pill tone="good">+</Pill> Avoids flooding the cache with write-heavy data that isn't read soon.
 - <Pill tone="bad">−</Pill> Recently written data is a guaranteed miss on first read.
-
-<Table>
-
-| Strategy | Consistency | Write cost | Best for |
-| -------- | ----------- | ---------- | -------- |
-| **Cache-aside** | <Pill tone="mid">eventual</Pill> | low | Read-heavy, general purpose. The safe default. |
-| **Read-through** | <Pill tone="mid">eventual</Pill> | low | Same as above, but you want cleaner app code. |
-| **Write-through** | <Pill tone="good">strong-ish</Pill> | high | Reads must be fresh; you can pay on writes. |
-| **Write-back** | <Pill tone="bad">weak</Pill> | very low | Write-heavy, burst-tolerant, some loss acceptable. |
-| **Write-around** | <Pill tone="mid">eventual</Pill> | low | Data written but rarely re-read immediately. |
-
-</Table>
 
 Real systems mix these. AWS, for instance, recommends combining **write-through** (to keep the cache fresh) with **cache-aside** reads (as the miss fallback), plus TTLs to keep it lean.
 
