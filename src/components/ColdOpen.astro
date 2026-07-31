@@ -1,0 +1,13 @@
+---
+// src/components/ColdOpen.astro
+interface Props {
+  tag?: string;
+}
+
+const { tag } = Astro.props;
+---
+
+<div class="coldopen">
+  {tag && <span class="tag">{tag}</span>}
+  <slot />
+</div>

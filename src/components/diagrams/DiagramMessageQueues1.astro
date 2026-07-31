@@ -1,0 +1,42 @@
+---
+// src/components/diagrams/DiagramMessageQueues1.astro
+---
+
+<svg viewBox="0 0 760 260" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+<text x="20" y="30" fill="var(--text)" font-size="14" font-weight="700">Point-to-Point (Work Queue)</text>
+<text x="20" y="50" fill="var(--muted)" font-size="11">Each message is processed by exactly one worker.</text>
+<rect x="20" y="90" width="80" height="50" rx="8" fill="var(--panel-2)" stroke="var(--border)" stroke-width="1.5" />
+<text x="60" y="120" fill="var(--text)" font-size="12" font-weight="600" text-anchor="middle">Producer</text>
+<path d="M 170,90 H 270 V 140 H 170 Z M 195,90 V 140 M 220,90 V 140 M 245,90 V 140" fill="var(--panel-2)" stroke="var(--border)" stroke-width="1.5" />
+<text x="220" y="115" fill="var(--accent)" font-size="12" font-weight="700" text-anchor="middle">Queue</text>
+<text x="220" y="132" fill="var(--muted)" font-size="9" text-anchor="middle">[msg][msg][msg]</text>
+<rect x="330" y="70" width="90" height="40" rx="8" fill="var(--panel-2)" stroke="var(--border)" stroke-width="1.5" />
+<text x="375" y="95" fill="var(--text)" font-size="11" font-weight="600" text-anchor="middle">Consumer A</text>
+<rect x="330" y="125" width="90" height="40" rx="8" fill="var(--panel-2)" stroke="var(--border)" stroke-width="1.5" />
+<text x="375" y="150" fill="var(--text)" font-size="11" font-weight="600" text-anchor="middle">Consumer B</text>
+<path d="M 100,115 H 170" fill="none" stroke="var(--accent)" stroke-width="2" marker-end="url(#arrow)" />
+<path d="M 270,115 L 330,90" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="3,3" />
+<path d="M 270,115 L 330,145" fill="none" stroke="var(--accent-2)" stroke-width="2" />
+<line x1="450" y1="20" x2="450" y2="240" stroke="var(--border)" stroke-width="1" stroke-dasharray="4,4" />
+<text x="470" y="30" fill="var(--text)" font-size="14" font-weight="700">Publish-Subscribe (Pub/Sub)</text>
+<text x="470" y="50" fill="var(--muted)" font-size="11">Each message is broadcast to all active subscribers.</text>
+<rect x="470" y="90" width="80" height="50" rx="8" fill="var(--panel-2)" stroke="var(--border)" stroke-width="1.5" />
+<text x="510" y="120" fill="var(--text)" font-size="12" font-weight="600" text-anchor="middle">Publisher</text>
+<circle cx="610" cy="115" r="22" fill="var(--panel-2)" stroke="var(--accent)" stroke-width="2" />
+<text x="610" y="119" fill="var(--accent)" font-size="12" font-weight="700" text-anchor="middle">Topic</text>
+<rect x="670" y="65" width="75" height="30" rx="4" fill="var(--panel-2)" stroke="var(--border)" stroke-width="1.5" />
+<text x="707" y="84" fill="var(--text)" font-size="9" font-weight="600" text-anchor="middle">Q_Billing</text>
+<rect x="670" y="115" width="75" height="30" rx="4" fill="var(--panel-2)" stroke="var(--border)" stroke-width="1.5" />
+<text x="707" y="134" fill="var(--text)" font-size="9" font-weight="600" text-anchor="middle">Q_Shipping</text>
+<rect x="670" y="165" width="75" height="30" rx="4" fill="var(--panel-2)" stroke="var(--border)" stroke-width="1.5" />
+<text x="707" y="184" fill="var(--text)" font-size="9" font-weight="600" text-anchor="middle">Q_Analytics</text>
+<path d="M 550,115 H 588" fill="none" stroke="var(--accent)" stroke-width="2" />
+<path d="M 632,115 L 670,80" fill="none" stroke="var(--muted)" stroke-width="1.5" />
+<path d="M 632,115 L 670,130" fill="none" stroke="var(--accent-2)" stroke-width="2" />
+<path d="M 632,115 L 670,180" fill="none" stroke="var(--warn)" stroke-width="1.5" />
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1 L 10 5 L 0 9 z" fill="var(--accent)" />
+</marker>
+</defs>
+</svg>

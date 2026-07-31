@@ -1,0 +1,26 @@
+---
+// src/components/Footer.astro
+---
+<hr />
+<p class="footer">
+  Part of <em>System Design Basics</em>. Sources:
+  <slot />
+</p>
+
+<style>
+  .footer {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-top: 40px;
+  }
+  
+  /* The styles in main layout handle basic link colors, but we add underline here for links inside footer */
+  .footer :global(a) {
+    color: var(--muted);
+    text-decoration: underline;
+  }
+  
+  .footer :global(a:hover) {
+    color: var(--accent);
+  }
+</style>

@@ -1,0 +1,61 @@
+---
+// src/components/diagrams/DiagramDatabaseScaling2.astro
+---
+
+<svg viewBox="0 0 800 280" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+<style>
+      .part-box { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; rx: 6; }
+      .lbl-bold { font-family: -apple-system, sans-serif; font-size: 13px; font-weight: bold; fill: var(--text); }
+      .lbl-norm { font-family: -apple-system, sans-serif; font-size: 12px; fill: var(--muted); }
+      .lbl-small { font-family: -apple-system, sans-serif; font-size: 11px; fill: var(--muted); }
+      .bar-vertical { stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 4 2; }
+    </style>
+<rect width="100%" height="100%" fill="var(--panel)" rx="14" />
+
+    
+<g transform="translate(60, 40)">
+<rect width="300" height="200" class="part-box" />
+<text x="150" y="25" class="lbl-bold" text-anchor="middle">Vertical Partitioning (Split by Columns)</text>
+      
+      
+<rect x="30" y="45" width="240" height="130" fill="var(--panel)" stroke="var(--border)" rx="4" />
+<line x1="120" y1="45" x2="120" y2="175" class="bar-vertical" />
+      
+<text x="70" y="70" class="lbl-bold" fill="var(--accent)" text-anchor="middle">DB 1</text>
+<text x="70" y="95" class="lbl-norm" text-anchor="middle">user_id</text>
+<text x="70" y="115" class="lbl-norm" text-anchor="middle">username</text>
+<text x="70" y="135" class="lbl-norm" text-anchor="middle">password</text>
+<text x="70" y="155" class="lbl-small" text-anchor="middle">(Core Auth)</text>
+
+<text x="195" y="70" class="lbl-bold" fill="var(--accent-2)" text-anchor="middle">DB 2</text>
+<text x="195" y="95" class="lbl-norm" text-anchor="middle">profile_id</text>
+<text x="195" y="115" class="lbl-norm" text-anchor="middle">bio_text</text>
+<text x="195" y="135" class="lbl-norm" text-anchor="middle">avatar_url</text>
+<text x="195" y="155" class="lbl-small" text-anchor="middle">(Metadata)</text>
+</g>
+
+    
+<g transform="translate(440, 40)">
+<rect width="300" height="200" class="part-box" />
+<text x="150" y="25" class="lbl-bold" text-anchor="middle">Horizontal Sharding (Split by Rows)</text>
+      
+      
+<g transform="translate(30, 45)">
+<rect width="240" height="40" fill="var(--panel)" stroke="var(--border)" rx="4" style="stroke: var(--warn);" />
+<text x="15" y="24" class="lbl-bold" fill="var(--warn)">Shard 1</text>
+<text x="120" y="24" class="lbl-norm">Rows 1 - 10,000</text>
+</g>
+      
+<g transform="translate(30, 95)">
+<rect width="240" height="40" fill="var(--panel)" stroke="var(--border)" rx="4" style="stroke: var(--warn);" />
+<text x="15" y="24" class="lbl-bold" fill="var(--warn)">Shard 2</text>
+<text x="120" y="24" class="lbl-norm">Rows 10,001 - 20,000</text>
+</g>
+      
+<g transform="translate(30, 145)">
+<rect width="240" height="40" fill="var(--panel)" stroke="var(--border)" rx="4" style="stroke: var(--warn);" />
+<text x="15" y="24" class="lbl-bold" fill="var(--warn)">Shard 3</text>
+<text x="120" y="24" class="lbl-norm">Rows 20,001 - 30,000</text>
+</g>
+</g>
+</svg>

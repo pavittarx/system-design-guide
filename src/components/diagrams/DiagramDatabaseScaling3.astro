@@ -1,0 +1,68 @@
+---
+// src/components/diagrams/DiagramDatabaseScaling3.astro
+---
+
+<svg viewBox="0 0 800 240" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+<style>
+      .rung-bg { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; rx: 8; }
+      .rung-arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+      .lbl-rung-title { font-family: -apple-system, sans-serif; font-size: 12px; font-weight: bold; fill: var(--text); }
+      .lbl-rung-desc { font-family: -apple-system, sans-serif; font-size: 10px; fill: var(--muted); }
+      .marker-rung { fill: var(--muted); }
+    </style>
+<rect width="100%" height="100%" fill="var(--panel)" rx="14" />
+
+    
+<g transform="translate(30, 80)">
+<rect width="115" height="80" class="rung-bg" style="stroke: var(--accent);" />
+<text x="57" y="25" class="lbl-rung-title" text-anchor="middle">1. Index &amp; Tune</text>
+<text x="57" y="45" class="lbl-rung-desc" text-anchor="middle">Fix slow queries</text>
+<text x="57" y="60" class="lbl-rung-desc" text-anchor="middle">and add indexes</text>
+</g>
+
+<path d="M 145 120 L 165 120" class="rung-arrow" marker-end="url(#arrow-rung)" />
+
+    
+<g transform="translate(175, 80)">
+<rect width="115" height="80" class="rung-bg" style="stroke: var(--accent-2);" />
+<text x="57" y="25" class="lbl-rung-title" text-anchor="middle">2. Scale Up &amp; Pool</text>
+<text x="57" y="45" class="lbl-rung-desc" text-anchor="middle">Bigger server +</text>
+<text x="57" y="60" class="lbl-rung-desc" text-anchor="middle">connection pooling</text>
+</g>
+
+<path d="M 290 120 L 310 120" class="rung-arrow" marker-end="url(#arrow-rung)" />
+
+    
+<g transform="translate(320, 80)">
+<rect width="115" height="80" class="rung-bg" style="stroke: var(--warn);" />
+<text x="57" y="25" class="lbl-rung-title" text-anchor="middle">3. Cache Reads</text>
+<text x="57" y="45" class="lbl-rung-desc" text-anchor="middle">Move hot reads</text>
+<text x="57" y="60" class="lbl-rung-desc" text-anchor="middle">out using Redis</text>
+</g>
+
+<path d="M 435 120 L 455 120" class="rung-arrow" marker-end="url(#arrow-rung)" />
+
+    
+<g transform="translate(465, 80)">
+<rect width="115" height="80" class="rung-bg" style="stroke: var(--danger);" />
+<text x="57" y="25" class="lbl-rung-title" text-anchor="middle">4. Read Replicas</text>
+<text x="57" y="45" class="lbl-rung-desc" text-anchor="middle">Scale read queries</text>
+<text x="57" y="60" class="lbl-rung-desc" text-anchor="middle">horizontally</text>
+</g>
+
+<path d="M 580 120 L 600 120" class="rung-arrow" marker-end="url(#arrow-rung)" />
+
+    
+<g transform="translate(610, 160) translate(0, -80)">
+<rect width="160" height="80" class="rung-bg" style="stroke: var(--accent);" />
+<text x="80" y="25" class="lbl-rung-title" text-anchor="middle">5. Partition &amp; Shard</text>
+<text x="80" y="45" class="lbl-rung-desc" text-anchor="middle">Split data across</text>
+<text x="80" y="60" class="lbl-rung-desc" text-anchor="middle">separate machines</text>
+</g>
+
+<defs>
+<marker id="arrow-rung" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1.5 L 8 5 L 0 8.5 z" class="marker-rung" />
+</marker>
+</defs>
+</svg>

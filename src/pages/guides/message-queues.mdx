@@ -1,0 +1,487 @@
+---
+layout: ../../layouts/MainLayout.astro
+title: "Message Queues & Async — A Practical Guide"
+description: "The art of saying \"I'll get to that\" — and why the fastest systems are the ones that refuse to do the work right now."
+chapter: "4"
+current: "4. Message Queues"
+series: "A companion to <a href=\"understanding-caching.html\"><em>Caching</em></a>, <a href=\"database-scaling.html\"><em>Scaling Databases</em></a>, and <a href=\"load-balancing.html\"><em>Load Balancing</em></a>."
+sections:
+  - id: "sync"
+    title: "Synchronous vs. async"
+  - id: "queue"
+    title: "The queue as a shock absorber"
+  - id: "parts"
+    title: "Producers, consumers, brokers"
+  - id: "delivery"
+    title: "Delivery guarantees"
+  - id: "idem"
+    title: "Idempotency: the survival skill"
+  - id: "visibility"
+    title: "Visibility timeouts"
+  - id: "order"
+    title: "Ordering &amp; dead letters"
+  - id: "outbox"
+    title: "Dual writes &amp; the outbox"
+  - id: "gotchas"
+    title: "Operational gotchas"
+  - id: "numbers"
+    title: "Four numbers to watch"
+  - id: "tools"
+    title: "Kafka vs. RabbitMQ vs. SQS"
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+import DiagramMessageQueues1 from '../../components/diagrams/DiagramMessageQueues1.astro';
+import DiagramMessageQueues2 from '../../components/diagrams/DiagramMessageQueues2.astro';
+import Collapse from '../../components/Collapse.astro';
+import Question from '../../components/Question.astro';
+import Footer from '../../components/Footer.astro';
+
+<div class="coldopen">
+<span class="tag">◇ the checkout that punished success</span>
+<p>Black Friday. A user clicks "Buy." Behind that one click, your code synchronously charges the card, generates an invoice PDF, emails a receipt, updates the warehouse, pings the analytics service, and posts to Slack. The user stares at a spinner for 11 seconds because the email server is having a slow day. Multiply by 50,000 concurrent shoppers and the whole site seizes — not because buying is hard, but because you insisted on doing <em>everything</em> before saying "thanks for your order." A queue is how you hand off the boring parts and reply instantly.</p>
+</div>
+
+<Collapse id="sync" title="1. Synchronous vs. asynchronous">
+<p><strong>Synchronous</strong> is a phone call: you both have to be on the line at the same time, and you wait for the answer. <strong>Asynchronous</strong> is a text message: you send it and get on with your life; the other side handles it when they can.</p>
+<p>Lots of work has no business being synchronous. The user doesn't need to <em>watch</em> their receipt email get sent — they just need to know the order went through. So do the essential bit inline (record the order, take the money), drop everything else onto a queue, and return "success" immediately. The slow, non-urgent work happens in the background.</p>
+
+
+<div class="note wild" style="margin-top: 18px;">
+<span class="label">◈ In the wild · E-Commerce Checkout</span>
+    When you click "Buy" on Amazon or Shopify, the instant "Order confirmed!" is a fast asynchronous hand-off. The email generation, warehouse inventory booking, and credit card settlement details are queued, allowing the client interface to load instantly.
+</div>
+
+</Collapse>
+<Collapse id="queue" title="2. The queue as a shock absorber">
+<p>A message queue is a durable line that work waits in. Producers add messages to one end; consumers take them off the other and do the work. Its magic trick is <strong>decoupling in both time and speed.</strong></p>
+<div class="stack">
+<div class="layer"><div class="idx">P</div><div class="body"><h4>Producer</h4><p>Drops a "send receipt" message and moves on instantly.</p></div></div>
+<div class="arrow">↓ enqueue ↓</div>
+<div class="layer"><div class="idx">≡</div><div class="body"><h4>Queue (broker)</h4><p>Holds messages durably until someone processes them. Absorbs bursts.</p></div><div class="speed">the buffer</div></div>
+<div class="arrow">↓ dequeue ↓</div>
+<div class="layer"><div class="idx">C</div><div class="body"><h4>Consumer(s)</h4><p>Pull messages at their own pace. Add more to go faster.</p></div></div>
+</div>
+<p>When a traffic spike hits, the queue simply gets longer — it doesn't fall over. Consumers chew through the backlog at a steady rate the downstream systems can survive. That's the shock absorber: <em>bursty</em> input, <em>smooth</em> output. A queue turns "everything at once" into "a steady, controlled rate."</p>
+<div class="note key">
+<span class="label">This is load-leveling — and where backpressure comes in</span>
+    Absorbing a spike by <em>buffering</em> it (letting the queue grow) is <strong>load-leveling</strong>: the database sips at its own pace instead of getting knocked over. This is the cheapest thing you can put in front of a write-bound database — writes are the hard half to scale, as <a href="database-scaling.html">the Database Scaling guide</a> gets into, and a queue lets you cap the write rate without dropping the writes. True <strong>backpressure</strong> is the next step — a <em>bounded</em> queue that, when full, pushes back on or sheds producers, so an unbounded backlog can't itself become the outage (runaway memory, ever-staler messages). Buffer for smoothness; bound the queue so the buffer can't sink you.
+</div>
+
+<div class="note wild">
+<span class="label">◈ In the wild · LinkedIn &amp; Kafka</span>
+    Kafka was built at LinkedIn around 2010 for exactly this reason. Dozens of services each needing data from dozens of others had become an explosion of point-to-point wiring — <em>N</em> systems to <em>M</em> systems is <em>N&times;M</em> brittle pipelines. Kafka replaced that web with one <strong>durable, append-only log</strong> every system publishes to and reads from at its own pace: the shock absorber turned into a company-wide backbone. It decoupled producers from consumers so cleanly that they open-sourced it in 2011, and much of the industry now runs its event backbone on it.
+</div>
+
+</Collapse>
+<Collapse id="parts" title="3. Producers, consumers, and two shapes of delivery">
+<p>Beyond the basic queue, there are two classic patterns, and knowing which you want saves a lot of confusion:</p>
+<div class="cards">
+<div class="card"><h4>Work queue (point-to-point)</h4><p>Each message goes to <em>exactly one</em> consumer. Ten workers share the load; a receipt gets emailed once. This is task distribution.</p></div>
+<div class="card"><h4>Pub/sub (publish–subscribe)</h4><p>Each message is broadcast to <em>every</em> interested subscriber. "Order placed" fans out to billing, shipping, and analytics — each gets its own copy. This is event notification.</p></div>
+</div>
+<p>Pub/sub is the backbone of <strong>event-driven architecture</strong>: services announce that something happened and don't care who's listening. New feature? Subscribe to the existing event stream — no need to touch the producer. It's how big systems add capabilities without everything having to know about everything.</p>
+
+
+<div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
+<DiagramMessageQueues1 />
+</div>
+
+</Collapse>
+<Collapse id="delivery" title="4. Delivery guarantees: the three honesties">
+<p>Networks fail, consumers crash mid-task. So every queue has to answer: if things go wrong, how hard do we try to deliver? There are three honest answers, and physics won't let you have a perfect fourth.</p>
+<div class="table-scroll">
+<table>
+<thead><tr><th>Guarantee</th><th>Meaning</th><th>Risk</th><th>Use when</th></tr></thead>
+<tbody>
+<tr><td><strong>At-most-once</strong></td><td>Fire and forget. Deliver 0 or 1 times.</td><td>Messages can be <em>lost</em>.</td><td>Metrics, logs — a dropped one won't hurt.</td></tr>
+<tr><td><strong>At-least-once</strong></td><td>Retry until confirmed. Deliver 1 or more times.</td><td>Messages can be <em>duplicated</em>.</td><td>Almost everything — the common default.</td></tr>
+<tr><td><strong>Exactly-once</strong></td><td>Deliver precisely once. The holy grail.</td><td>Expensive, complex, and often a comforting fiction.</td><td>Rarely truly needed; usually faked with at-least-once + idempotency.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="note warn">
+<span class="label">The dirty secret</span>
+<em>End-to-end</em> "exactly-once delivery" — across systems with real side effects — is famously close to impossible. The obstacle is the same one <a href="consistency-cap.html">the CAP &amp; Consistency guide</a> circles: two independent systems can't agree on "this happened" in one indivisible step over an unreliable network, so somebody always has to choose between retrying (maybe twice) and giving up (maybe never). What people actually build is <strong>at-least-once delivery + idempotent processing</strong>: deliver possibly twice, but make processing a duplicate a harmless no-op. The result <em>looks</em> exactly-once from the outside, which is all anyone wanted. (Kafka's exactly-once <em>processing</em> within its own ecosystem — idempotent producer + transactions — is the real exception, but it doesn't extend to arbitrary external side effects.)
+</div>
+
+<div class="note wild">
+<span class="label">◈ In the wild · WhatsApp</span>
+    This is exactly how WhatsApp delivers to a phone that's switched off: the server doesn't fail and doesn't wait — it holds the message in an in-memory queue and keeps retrying until the device reconnects and <em>acks</em> receipt, then deletes it. Those two grey ticks (✓✓) are literally that ack. In early 2014 the design moved roughly <strong>50 billion messages a day</strong> for 450 million users on around 550 servers, run by a team of <strong>32 engineers</strong> — on Erlang and a sharded in-memory <a href="https://newsletter.systemdesign.one/p/whatsapp-engineering">Mnesia store that tracked every in-flight message</a>. At-least-once-until-acked, at planetary scale.
+</div>
+
+</Collapse>
+<Collapse id="idem" title="5. Idempotency: the survival skill">
+<p>Idempotent means: <strong>doing it twice has the same effect as doing it once.</strong> Pressing an elevator button five times doesn't summon five elevators. This single property is what makes at-least-once delivery safe, and it's worth internalizing because it shows up everywhere in distributed systems.</p>
+<p>The classic horror is a payment consumer that gets the same "charge $50" message twice (because the first ack got lost) and charges the customer $100. The fix: give each message a unique ID and record which IDs you've already processed. See a repeat? Skip it. Now the retry that would've double-charged is a shrug.</p>
+<p>That's the idea. The obvious way to write it is wrong.</p>
+
+<h3>The version everybody writes first — and it's broken</h3>
+  
+
+```bash
+on message(id, action):
+if already_processed(id):   # seen this one?
+return ok               # harmless no-op
+do(action)
+mark_processed(id)
+```
+
+
+<p>Read it as a single thread and it's flawless. Read it as two consumers — which is the entire point of a queue — and there's a gap between the check and the mark that is wide enough to drive a double charge through. Duplicates don't politely arrive one after the other; they arrive at the same moment, on two machines.</p>
+<pre class="trace">
+<b>{"t1"}</b>{"  C1 gets msg #7847 (charge $50)"}{"\n"}
+<b>{"t1"}</b>{"  C2 gets msg #7847 — a duplicate"}{"\n"}
+<b>{"t2"}</b>{"  C1  already_processed(7847)? → no"}{"\n"}
+<b>{"t3"}</b>{"  C2  already_processed(7847)? → no"}{"\n"}
+<b>{"t4"}</b>{"  C1  do(charge $50)  → card charged"}{"\n"}
+<b>{"t5"}</b>{"  C2  do(charge $50)  → "}<span class="bad">{"charged again"}</span>{"\n"}
+<b>{"t6"}</b>{"  C1  mark_processed(7847)"}{"\n"}
+<b>{"t7"}</b>{"  C2  mark_processed(7847)  (no-op)"}{"\n"}
+{"\n"}
+<span class="bad">{"result: $100 taken for a $50 order"}</span>{"\n"}
+</pre>
+<p>Both consumers looked before either wrote. The guard did nothing. Note that no line of that trace is unusual — it's just two ordinary executions overlapping by a few milliseconds, which is the normal condition of any system with more than one worker.</p>
+
+<h3>The fix: claim the ID before doing the work</h3>
+<p>Don't ask whether you've processed the message. <em>Claim</em> it — in one statement that the database is obliged to arbitrate, because a uniqueness constraint on <code>message_id</code> means only one of the two inserts can possibly succeed. If yours didn't insert a row, someone else owns this message and you go home.</p>
+  
+
+```sql
+on message(id, action):
+# one atomic claim; the DB picks a winner
+rows = execute("""
+INSERT INTO processed (message_id)
+VALUES (:id)
+ON CONFLICT (message_id) DO NOTHING
+""", id)
+
+if rows == 0:        # lost the race
+return ok        # the winner is handling it
+
+do(action)           # only the winner gets here
+```
+
+
+<p>The check and the write are now the same operation, so there is no gap to lose. This is the general shape of the trick, not a Postgres detail: any store with a uniqueness constraint or a conditional write will do — a unique index, DynamoDB's <code>attribute_not_exists</code>, Redis <code>SET NX</code>. What you need is one operation that both tests and takes.</p>
+
+<h3>What this still doesn't solve</h3>
+<p>The winner can crash between claiming and finishing. Now the ID is marked and the work never happened, and every redelivery bounces off a claim row belonging to a process that no longer exists — a permanently lost message that looks, from the outside, exactly like a successfully processed one. That's why the claim row shouldn't be a bare marker. Give it a <strong>status</strong> (<code>claimed</code> / <code>done</code>) and a <strong>lease</strong> — a claim timestamp plus an expiry — so a claim that has gone stale can be taken over rather than blocking the message forever. Then "already claimed" and "claimed by a corpse" stop being the same state.</p>
+<p>The genuinely robust version doesn't need a lease at all, because it puts the work and the claim in the <em>same transaction</em>: insert the claim row and write the business change together, commit once. Either both land or neither does, and a crash rolls the claim back along with everything else. Do this whenever the side effect lives in the same database as the claim — and notice how often it does.</p>
+<div class="note warn">
+<span class="label">When the work isn't in your database</span>
+    Charging a card is the case that breaks the pattern: you cannot enrol someone else's payment API in your transaction. The answer is to push idempotency across the boundary — send an <strong>idempotency key</strong> (your message ID, or something derived from it) with the charge request, and the provider dedupes on their side, returning the original result instead of charging again. This is exactly what Stripe's and every other payment provider's idempotency keys are for. When you can't make the operation idempotent, make the <em>API call</em> idempotent and let the system that owns the money enforce it.
+</div>
+<div class="note">
+<span class="label">The table you'll forget about</span>
+    A <code>processed</code> table grows by one row per message forever, and nobody notices until it's the biggest table in the database and the unique index no longer fits in memory. Give it a retention policy from day one — delete rows older than your maximum redelivery window (hours or days, not years), with a partitioned table or a scheduled purge. You only need to remember an ID for as long as the queue could plausibly resend it.
+</div>
+
+
+<Question q="Check yourself: You add a processed-IDs table and the double charges stop. A month later, a handful of payments silently never happen at all. What did the fix introduce?">
+A claim with no way to expire. The consumer inserted the ID, then crashed before completing the charge, so the row now says "handled" for work that never ran — and every redelivery bounces off it and acks. You traded a loud failure for a silent one. The claim row needs a status and a lease so a stale claim can be taken over, or the claim and the work need to commit in one transaction; where the side effect is external, the provider's idempotency key is what lets you safely retry instead of guessing.
+</Question>
+
+</Collapse>
+<Collapse id="visibility" title="6. Visibility timeouts: the bug that duplicates your work">
+<p>This is the most common queue bug in production, and it hides because nothing in your code is wrong.</p>
+<p>When a consumer takes a message, the broker doesn't delete it — it makes it <strong>invisible</strong> for N seconds (SQS calls this the visibility timeout; other brokers call it an ack deadline or ack timeout). If your ack arrives within N, the message is removed. If it doesn't, the broker assumes you died and hands the same message to another consumer. It has no way to tell "crashed" from "still working."</p>
+<p>So if a job takes longer than N, the queue delivers it again <em>while the first consumer is still running it</em>. That is not a stray duplicate from a lost ack; it is genuine, guaranteed concurrent processing of the same message, and it's the scenario the race in section 5 was drawn for. Worse: if the job is slow for <em>everyone</em>, every redelivery also times out, and the message loops forever — redelivered, re-processed, never completed, burning capacity that the rest of the queue needed. A backlog that grows while your consumers are visibly busy is usually this.</p>
+  
+    
+
+* <strong>Set the timeout above your real p99 processing time</strong>, with headroom — not above the average, which is the mistake. The tail is what times out.
+
+
+    
+
+* <strong>Heartbeat long jobs.</strong> Most brokers let a consumer extend the timeout while it works (SQS <code>ChangeMessageVisibility</code>, RabbitMQ's consumer timeout tuning, Kafka's <code>max.poll.interval.ms</code> and background heartbeats). A job of genuinely unpredictable length should extend its own lease, not be given a huge fixed one — a huge fixed timeout means a real crash goes unnoticed for just as long.
+
+
+    
+
+* <strong>Cap redelivery.</strong> A maximum receive count turns the infinite loop into a DLQ entry, which is a problem you can see.
+
+
+  
+
+
+<Question q="Check yourself: The same job runs three times. The logs show no errors and no retries. What's the first setting you check?">
+The visibility timeout (or ack deadline) against your actual p99 processing time. No errors is the tell: nothing failed, the broker simply decided you'd died because you hadn't acked in time and gave the message to someone else — twice. Three executions of a job that takes just over the timeout is the classic signature. Fix the timeout, then heartbeat the job so its length stops being a guess, and check the receive count on the message to confirm — it's the number nobody thinks to look at.
+</Question>
+
+</Collapse>
+<Collapse id="order" title="7. Ordering &amp; the dead-letter queue">
+<p><strong>Ordering.</strong> Many queues don't guarantee messages come out in the order they went in — especially once you have multiple consumers racing. If order matters ("account created" must precede "account updated"), you either use a queue that preserves order within a partition (Kafka does, keyed by e.g. user ID) or design so order doesn't matter. Assuming global ordering you don't have is a top-tier source of Heisenbugs.</p>
+<p><strong>Dead-letter queue (DLQ).</strong> What about a message that <em>can't</em> be processed — malformed data, a bug, a permanent failure? Without a plan, your consumer retries it forever, blocking everything behind it (a "poison message"). The fix is a DLQ: after N failed attempts, shunt the message to a separate queue for humans to inspect later. It's the inbox of things that went wrong, and checking it occasionally will teach you a lot about your own system.</p>
+
+
+<Question q="Check yourself: Kafka guarantees ordering, so why did your &quot;account created&quot; and &quot;account updated&quot; events arrive backwards?">
+Because the guarantee is per-partition, and those two events almost certainly landed in different partitions — either they were produced with no key (round-robin) or with different keys. Ordering only holds for messages that share a partition, so anything that must be ordered relative to each other has to share a partition key: here, the account ID. The corollary is that your key choice <em>is</em> your ordering design, and it also decides your blast radius when one message gets stuck.
+</Question>
+
+</Collapse>
+<Collapse id="outbox" title="8. The dual-write problem and the transactional outbox">
+<p>Here's a line of code that appears in almost every service that uses a queue, and it's a bug:</p>
+  
+
+```bash
+db.insert(order)               # write 1
+queue.publish(order_placed)    # write 2
+# ...and nothing binds them
+```
+
+
+<p>Two writes, two systems, no transaction spanning them. Crash between them and you get one of two bad outcomes, and which one you get depends on the order you chose. Write the database first and die: you have taken the order and told nobody, so no receipt, no warehouse pick, no fraud check — a paid order that silently doesn't exist downstream. Publish first and die: you have announced an order you never recorded, and the shipping service is now confidently picking stock for a row that isn't there. Wrapping it in a try/catch doesn't help, because the failure you're worried about is the process dying between the two lines, and dead processes don't run catch blocks.</p>
+<p>The <strong>transactional outbox</strong> removes the second system from the critical path. You write the event into an <code>outbox</code> table in the <em>same transaction</em> as the business data — one commit, one database, atomic by construction. A separate relay process then reads unsent rows from that table and publishes them to the broker, marking them sent.</p>
+  
+
+```sql
+BEGIN;
+  INSERT INTO orders (...)  VALUES (...);
+  INSERT INTO outbox (topic, payload)
+VALUES ('order_placed', :json);
+COMMIT;
+-- a relay polls outbox and publishes,
+-- then marks the row sent
+```
+
+
+<p>Now the only question is <em>when</em> the event gets published, never <em>whether</em> — if the order committed, the event is in the table, and the relay will get to it. The other route to the same guarantee is <strong>change data capture</strong>: instead of a table you write yourself, a tool tails the database's own replication log (Postgres WAL, MySQL binlog) and turns committed rows into messages. Debezium is the usual name here. Less application code, more infrastructure to run; same property.</p>
+<div class="note warn">
+<span class="label">Outbox gives at-least-once, not exactly-once</span>
+    The relay can publish a message and crash before marking the row sent — so it publishes it again on restart. That's not a flaw to be engineered away; it's the same wall from section 4, moved one step. The outbox guarantees the event is never <em>lost</em>. Making a duplicate harmless is still the consumer's job, which is why the idempotent claim in section 5 doesn't become optional just because you adopted an outbox.
+</div>
+
+
+<div class="note key">
+<span class="label">🛠️ Hands-On Lab: Build a Transactional Outbox Worker</span>
+<p>Build this mini-project to implement atomicity between business databases and message brokers:</p>
+    
+      
+
+* <strong>The Database Schema:</strong> Spin up a Postgres database in Docker. Create an <code>orders</code> table and an <code>outbox_events</code> table. The <code>outbox_events</code> table should have fields: <code>id (UUID)</code>, <code>event_type (VARCHAR)</code>, <code>payload (JSONB)</code>, and <code>status (VARCHAR, default 'PENDING')</code>.
+
+
+      
+
+* <strong>The Atomic Endpoint:</strong> Write an API server with a POST endpoint `/checkout`. Inside a single database transaction, insert an order row AND insert an event row with type <code>'order_placed'</code>.
+
+
+      
+
+* <strong>The Publisher Daemon (Relay):</strong> Write a background program that polls the <code>outbox_events</code> table for <code>status = 'PENDING'</code> rows every 500ms. For each row, publish the event payload to a local message broker (like SQS or RabbitMQ), then mark the database event row status as <code>'PUBLISHED'</code>.
+
+
+      
+
+* <strong>Simulate Failures:</strong> Under a load test, force your broker connection to drop (e.g. stop the RabbitMQ Docker container), verify that transactions still commit successfully, and watch events queue up safely inside the database outbox. Restart RabbitMQ and verify that all queued events are delivered to consumers with zero loss.
+
+
+    
+<p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Put this project on your portfolio as a benchmark of high-reliability distributed outbox design.</p>
+</div>
+
+
+<Question q="Check yourself: Your service records the order correctly, but roughly once a week the confirmation email never sends. No exception, no DLQ entry. What's the architectural fix?">
+This is the dual-write problem: the database commit and the queue publish are two separate writes, and once a week the process dies or the broker call fails in the gap between them. There's no exception because there's nobody left to catch it, and no DLQ entry because the message was never published. The fix is the transactional outbox — write the event to an outbox table inside the same transaction as the order, and let a relay publish it. Retrying the publish in a catch block only shrinks the window; it doesn't close it.
+</Question>
+
+</Collapse>
+<Collapse id="gotchas" title="9. Operational gotchas that bite in year two">
+<p>None of these show up in the tutorial. All of them show up in the incident review.</p>
+
+<h3>Head-of-line blocking</h3>
+<p>Ordering guarantees are always <em>per-partition</em> — Kafka orders within a partition, SQS FIFO within a message group, and nobody orders across them. And a partition is, for ordering purposes, a queue of one: to keep messages in order you must finish message N before starting N+1. So one slow message, or one that keeps failing and retrying, blocks every message behind it in that partition — and if you keyed by customer ID, "that partition" is a specific set of customers having a very bad day while your overall queue depth looks fine.</p>
+<p>The trade is unavoidable: <strong>concurrency within a partition and strict ordering are mutually exclusive.</strong> You pick. Usually you pick more partitions (finer keys, so a blockage is narrower), a fast path to the DLQ so a poison message stops blocking quickly, and ordering only where it genuinely matters rather than as a default.</p>
+
+<h3>Alert on consumer lag, not queue depth</h3>
+<p><strong>Depth</strong> tells you how much is waiting. <strong>Lag</strong> tells you whether you're falling behind — arrivals minus completions, or in Kafka terms the distance between the producer's offset and your committed one. They're different questions and only one of them is urgent. A deep queue that's draining is a system doing its job after a spike; a shallow queue that's growing is a system that will be a deep queue by morning. Alert on lag and on its <em>derivative</em> — is it increasing? — and treat depth as context, not as a page.</p>
+
+<h3>Claim check: don't put the payload in the message</h3>
+<p>A 40 MB video, a giant CSV, a base64'd PDF — none of these belong in a message. Brokers enforce size limits precisely because of this (SQS caps a message at 256 KB; Kafka's default max message size is around 1 MB), and even below the limit a fat queue is a slow queue: more bytes per message means less throughput, longer replication, worse memory behaviour on the broker. The <strong>claim check</strong> pattern is the fix and it's exactly what it sounds like — put the payload in object storage, send a message containing the key, let the consumer fetch it. The message describes the work; it isn't the work.</p>
+
+<h3>Schema evolution across a rolling deploy</h3>
+<p>Producers and consumers are separate deployments, so they never change at the same instant. For a window — minutes, or hours if a deploy stalls — the new producer is emitting messages that the <em>old</em> consumer has to survive. And messages already sitting in the queue were written by yesterday's code, so the reverse is true too: a message in flight during a deploy is a message from the past.</p>
+  
+    
+
+* <strong>Additive only.</strong> Add optional fields; don't remove or rename in the same release as you stop writing them. Removal is a second deploy, after nothing reads it.
+
+
+    
+
+* <strong>Tolerant readers.</strong> Ignore fields you don't recognise instead of rejecting the message. Strict parsers turn a harmless producer change into a DLQ flood.
+
+
+    
+
+* <strong>Never repurpose a field.</strong> Changing what <code>status: 2</code> means is the change that can't be rolled back, because the messages already in flight carry the old meaning and nothing distinguishes them. New meaning, new field.
+
+
+  
+
+<h3>The DLQ that nobody reads</h3>
+<p>A dead-letter queue you don't monitor is not a safety net — it's a slower, quieter way to lose data, with the added insult that you'll discover it during a customer complaint about an order from three weeks ago. A DLQ needs two things to actually be a safety net: an <strong>alert on arrival rate</strong> (non-zero should be interesting; a spike should page someone), and a <strong>documented, rehearsed replay path</strong> — how a human moves messages back to the main queue after the bug is fixed, and what happens if the replayed message is a duplicate. If the answer to that last part is "we've never tried," you don't have a DLQ, you have a landfill.</p>
+
+
+<Question q="Check yourself: Consumers are healthy, CPU is low, lag is basically zero — but one customer's exports have been pending for two hours. Which number would have caught it?">
+Oldest message age. Lag and depth are aggregates, and an aggregate over dozens of partitions will happily average away one partition that is completely stuck — a consumer that died without rebalancing, or a poison message at the head blocking everything behind it. Oldest message age is the only one of the four that can't be diluted by healthy traffic, which is exactly why it's worth paging on separately. High age with low lag is nearly always head-of-line blocking in one partition.
+</Question>
+
+</Collapse>
+<Collapse id="numbers" title="10. Four numbers that describe any queue">
+<p>Every queue's health fits in four numbers. Learn what each one means when it moves and you can debug most queue incidents from the dashboard.</p>
+  
+    
+
+* <strong>Consumer lag</strong> — <em>are we falling behind?</em> The one that matters. Rising lag means arrival rate has overtaken drain rate; nothing else on this list is urgent while this one is flat.
+
+
+    
+
+* <strong>Oldest message age</strong> — <em>how stale is the worst case?</em> This catches what lag averages away: one partition with no live consumer, or a message stuck at the head. It's also the number your users actually feel, because it's the wait time of the unluckiest request.
+
+
+    
+
+* <strong>Processing time p99</strong> — <em>how close are we to the cliff?</em> This must sit comfortably below the visibility timeout. When p99 drifts up toward it, you get redelivery and concurrent duplicates before you get a single alert about latency.
+
+
+    
+
+* <strong>DLQ arrival rate</strong> — <em>what are we losing?</em> The rate, not the count — a count is a number nobody looks at twice, a rate has a shape and you can see it change after a deploy.
+
+
+  
+<p>Starting points, not benchmarks — every one of these depends on what the queue does, and a nightly batch pipeline has no business being held to a checkout queue's numbers. Use them as the values you set on day one and then argue with:</p>
+<div class="table-scroll">
+<table class="num-table">
+<thead><tr><th>Number</th><th>Starting point</th><th>When it moves</th></tr></thead>
+<tbody>
+<tr><td>consumer lag</td><td>Alert at ~1 min of work backlog (user-facing); page if it rises for 3 consecutive intervals</td><td>Rising = under-provisioned or a slow dependency. Flat-but-high = you survived a spike.</td></tr>
+<tr><td>oldest msg age</td><td>Page at ~5 min (user-facing), ~1 h (batch)</td><td>High while lag is low = one stuck partition, not a capacity problem.</td></tr>
+<tr><td>processing p99</td><td>Keep under ~⅓ of the visibility timeout</td><td>Approaching the timeout = duplicate processing is already happening.</td></tr>
+<tr><td>DLQ rate</td><td>Alert on any sustained non-zero; investigate above ~0.1% of throughput</td><td>A step change right after a deploy = you shipped it.</td></tr>
+<tr><td>queue depth</td><td>Dashboard only, not a page</td><td>Context for the four above. Deep and draining is fine.</td></tr>
+</tbody>
+</table>
+</div>
+<div class="note key">
+<span class="label">The arithmetic worth doing once</span>
+    Messages arrive at rate <strong>A</strong>. Each consumer processes at rate <strong>C</strong>. With <strong>N</strong> consumers you need <strong>N &gt; A / C</strong> just to hold steady — at exactly A/C you never fall behind and you never catch up either. Only the surplus eats a backlog: a backlog of <strong>B</strong> messages drains in roughly <strong>B / (N·C − A)</strong>. Push N·C toward A and that denominator goes to zero and the drain time goes to infinity. Which is the whole lesson: <em>a queue provisioned with no headroom above its arrival rate never recovers from a spike.</em> It doesn't recover slowly — it doesn't recover. Size consumers for the backlog you want to be able to clear, not for the average day.
+</div>
+
+
+<Question q="Check yourself: You doubled your consumers to clear a 2-million-message backlog. Six hours later it's barely moved. What's the arithmetic?">
+Only the capacity <em>above</em> the arrival rate does any draining: the backlog falls at N·C − A, not at N·C. If you were previously right at the edge, doubling might take you from "keeping up" to "keeping up plus a little," and a little divided into two million is a very long time. Work out the surplus explicitly before you scale — and check that C itself hasn't dropped, because a saturated downstream dependency means the extra consumers are just queueing somewhere else.
+</Question>
+
+</Collapse>
+<Collapse id="tools" title="11. Kafka vs. RabbitMQ vs. SQS">
+<p>Three tools you'll hear constantly. They're less interchangeable than they look:</p>
+<div class="cards">
+<div class="card"><h4>Apache Kafka</h4><p>A distributed <em>log</em>, not a traditional queue. Messages are kept (even after reading) and replayed. Insane throughput; great for event streaming, analytics pipelines, and "many consumers, same stream." Heavier to operate.</p></div>
+<div class="card"><h4>RabbitMQ</h4><p>A classic, flexible message broker with rich routing. Smart about <em>getting this message to the right consumer</em>. Great for task queues and complex routing. Messages typically vanish once acked.</p></div>
+<div class="card"><h4>AWS SQS</h4><p>A fully-managed queue — no servers to babysit. Dead simple, scales itself, at-least-once by default (plus a FIFO mode). The boring, correct choice on AWS.</p></div>
+<div class="card"><h4>Rule of thumb</h4><p>Streaming/replay/high volume → <strong>Kafka</strong>. Complex routing of discrete tasks → <strong>RabbitMQ</strong>. "I just want a queue and no ops" → <strong>SQS</strong>.</p></div>
+</div>
+
+
+<div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
+<DiagramMessageQueues2 />
+</div>
+
+
+<div class="note wild" style="margin-top: 18px;">
+<span class="label">◈ In the wild · Uber Dispatch System</span>
+    Uber's real-time matching system handles tens of thousands of GPS updates, ride bookings, and dispatch signals. Location events are emitted asynchronously into a partitioned queue structure. This ensures driver matching processes run decoupled in the background, preventing a spike in GPS updates from seizing the user app's critical path.
+</div>
+
+</Collapse>
+<Collapse id="recap" title="12. Recap in 60 seconds">
+<div class="recap">
+    
+      
+
+* <strong>Async is a choice about waiting, not about work.</strong> Do the essential bit inline, queue the rest, answer the user now.
+
+
+      
+
+* <strong>A queue is a shock absorber.</strong> Bursty in, smooth out. Bound it, or the buffer becomes the outage.
+
+
+      
+
+* <strong>Work queue = one consumer gets it. Pub/sub = everyone does.</strong> Task distribution vs. event notification.
+
+
+      
+
+* <strong>At-least-once is the real default.</strong> Exactly-once end-to-end is a story; at-least-once plus idempotency is the implementation.
+
+
+      
+
+* <strong>Check-then-act is a race.</strong> Claim the message ID with one atomic conditional insert, and only the winner does the work.
+
+
+      
+
+* <strong>A claim needs a status and a lease</strong>, or a crash mid-work turns a message into a permanent silent loss.
+
+
+      
+
+* <strong>External side effects need the provider's idempotency key.</strong> If you can't put the work in your transaction, push dedup to whoever owns it.
+
+
+      
+
+* <strong>Visibility timeout below your p99 = guaranteed duplicate processing</strong>, and if it's slow for everyone, infinite redelivery. Heartbeat long jobs; cap receive count.
+
+
+      
+
+* <strong>Ordering is per-partition, and a partition is a queue of one.</strong> Concurrency and strict ordering are mutually exclusive — pick.
+
+
+      
+
+* <strong>Never write to the DB and the broker as two steps.</strong> Outbox table in the same transaction, or CDC off the replication log.
+
+
+      
+
+* <strong>Send a pointer, not a payload.</strong> Claim check keeps the queue thin and inside broker size limits.
+
+
+      
+
+* <strong>Deploys are rolling, so schemas must be additive.</strong> Tolerant readers, optional fields, never repurpose a field's meaning.
+
+
+      
+
+* <strong>Alert on lag and its slope, not depth.</strong> Deep and draining is fine; shallow and growing is not.
+
+
+      
+
+* <strong>An unmonitored DLQ is a landfill.</strong> Alert on arrival rate, rehearse the replay.
+
+
+      
+
+* <strong>N &gt; A / C, always.</strong> No headroom above arrival rate means a spike never drains.
+
+
+    
+</div>
+
+</Collapse>
+<hr />
+<Footer><a href="https://kafka.apache.org/documentation/">Apache Kafka Documentation</a> ·
+<a href="https://www.rabbitmq.com/tutorials/amqp-concepts.html">RabbitMQ — AMQP Concepts</a> ·
+<a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html">AWS SQS Developer Guide</a></Footer>

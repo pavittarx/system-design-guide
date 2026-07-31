@@ -1,0 +1,28 @@
+{
+  "name": "system-design-guide",
+  "version": "1.0.0",
+  "description": "A seven-part illustrated field guide to how real systems get fast, hold their data, distribute work, stay up, and stay correct — closing with a capstone that designs one whole system end to end. Each guide opens with a real-world disaster and hangs every concept on a war story: Knight Capital, the AWS S3 typo, GitHub's 43-second partition, Figma, Discord, and more. Roughly 48,000 words, with worked numbers, failure traces, and self-check questions throughout.",
+  "main": "components.js",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pavittarx/system-design-guide.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/pavittarx/system-design-guide/issues"
+  },
+  "homepage": "https://github.com/pavittarx/system-design-guide#readme",
+  "dependencies": {
+    "@astrojs/mdx": "^7.0.5",
+    "astro": "^7.1.6"
+  }
+}

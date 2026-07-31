@@ -1,0 +1,574 @@
+---
+// src/layouts/MainLayout.astro
+import Header from '../components/Header.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  current?: string;
+  frontmatter?: {
+    title: string;
+    description: string;
+    chapter?: number | string;
+    current?: string;
+    series?: string;
+    sections?: Array<{ id: string; title: string }>;
+  };
+}
+
+const { title, description = "A practical field guide to system design basics.", frontmatter } = Astro.props;
+const base = import.meta.env.BASE_URL;
+
+const pageTitle = frontmatter?.title || title;
+const pageDesc = frontmatter?.description || description;
+const chapter = frontmatter?.chapter;
+const current = frontmatter?.current || Astro.props.current;
+const series = frontmatter?.series;
+const sections = frontmatter?.sections;
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{pageTitle}</title>
+  <meta name="description" content={pageDesc} />
+  
+  <style is:global>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel-2: #1d212a;
+      --text: #e7e9ee;
+      --muted: #9aa3b2;
+      --accent: #5b9dff;
+      --accent-2: #7ee0c0;
+      --warn: #ffcf70;
+      --danger: #ff8a8a;
+      --border: #262b36;
+      --code-bg: #12151b;
+      --radius: 14px;
+      --maxw: 820px;
+      interpolate-size: allow-keywords; /* Opt-in to keyword size transitions natively */
+    }
+    
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f6f7f9;
+        --panel: #ffffff;
+        --panel-2: #f0f2f5;
+        --text: #1a1d24;
+        --muted: #5a6472;
+        --accent: #2f6bd6;
+        --accent-2: #16916f;
+        --warn: #9a6b00;
+        --danger: #b23b3b;
+        --border: #e2e5ea;
+        --code-bg: #f1f3f6;
+      }
+    }
+    
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 17px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    
+    .wrap {
+      max-width: var(--maxw);
+      margin: 0 auto;
+      padding: 32px 20px 80px;
+    }
+    
+    header.hero {
+      padding: 20px 0 8px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 28px;
+    }
+    
+    .kicker {
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-size: 12px;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    
+    h1 {
+      font-size: 2.05rem;
+      line-height: 1.15;
+      margin: 0 0 12px;
+      letter-spacing: -0.02em;
+    }
+    
+    .lede {
+      color: var(--muted);
+      font-size: 1.12rem;
+      margin: 0;
+    }
+    
+    h2 {
+      font-size: 1.5rem;
+      margin: 48px 0 16px;
+      letter-spacing: -0.015em;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      scroll-margin-top: 65px;
+      width: 100%;
+    }
+    
+    h3 {
+      font-size: 1.3rem;
+      margin: 36px 0 12px;
+      font-weight: 700;
+    }
+    
+    p { margin: 20px 0; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    
+    code {
+      background: var(--panel-2);
+      color: var(--accent-2);
+      border: 1px solid var(--border);
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-size: 0.88em;
+      font-family: "SF Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+      font-weight: 500;
+    }
+    
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      line-height: 1.5;
+      margin: 18px 0;
+    }
+    
+    pre code {
+      color: inherit;
+      background: none;
+      border: none;
+      padding: 0;
+      font-size: 1em;
+      font-weight: normal;
+    }
+    
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 40px 0;
+    }
+    
+    ul.tight li, ol.tight li {
+      margin: 6px 0;
+    }
+    
+    /* Callouts */
+    .note {
+      border-left: 3px solid var(--accent);
+      background: var(--panel);
+      border-radius: 0 10px 10px 0;
+      padding: 12px 16px;
+      margin: 18px 0;
+    }
+    .note.warn { border-left-color: var(--warn); }
+    .note.key { border-left-color: var(--accent-2); }
+    .note.war { border-left-color: var(--danger); }
+    .note.wild { border-left-color: var(--accent-2); }
+    .note.wild .label { color: var(--accent-2); }
+    .note .label {
+      font-weight: 700;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 4px;
+    }
+    
+    /* Cold open block */
+    .coldopen {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--danger);
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin: 22px 0;
+    }
+    .coldopen .tag {
+      font-family: "SF Mono", ui-monospace, Menlo, monospace;
+      color: var(--danger);
+      font-size: 0.72rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .coldopen p { margin: 8px 0 0; }
+    
+    /* Stack diagrams */
+    .stack { margin: 20px 0; }
+    .layer {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin: 8px 0;
+      position: relative;
+    }
+    .layer .idx {
+      flex: 0 0 34px;
+      height: 34px;
+      border-radius: 9px;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      background: var(--panel-2);
+      color: var(--accent);
+      font-size: 0.95rem;
+    }
+    .layer .body h4 { margin: 0 0 2px; font-size: 1.1rem; }
+    .layer .body p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+    .layer .speed {
+      margin-left: auto;
+      font-size: 0.78rem;
+      color: var(--accent-2);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .arrow { text-align: center; color: var(--muted); font-size: 0.8rem; margin: -2px 0; }
+    
+    /* Tables */
+    .table-scroll {
+      overflow-x: auto;
+      margin: 18px 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+      min-width: 560px;
+    }
+    th, td {
+      text-align: left;
+      padding: 11px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      background: var(--panel-2);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+    tr:last-child td { border-bottom: none; }
+    td strong { color: var(--text); }
+    .num-table td:first-child {
+      font-family: "SF Mono", ui-monospace, Menlo, monospace;
+      color: var(--accent-2);
+      white-space: nowrap;
+    }
+    
+    /* Retention & Worked Example */
+    .recap {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 6px 18px 14px;
+      margin: 18px 0;
+    }
+    .recap ul { padding-left: 18px; margin: 10px 0; }
+    .recap li { margin: 7px 0; font-size: 0.95rem; }
+    
+    .trace {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin: 18px 0;
+      font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      font-size: 0.8rem;
+      line-height: 1.75;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .trace b { color: var(--accent); font-weight: 600; }
+    .trace .bad { color: var(--danger); }
+    .trace .good { color: var(--accent-2); }
+    
+    /* Navigation / TOC */
+    nav.toc {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      margin-bottom: 8px;
+    }
+    nav.toc strong {
+      display: block;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 28px; }
+    nav.toc li { margin: 5px 0; break-inside: avoid; }
+    @media (max-width: 560px) {
+      nav.toc ol { columns: 1; }
+      h1 { font-size: 1.7rem; }
+    }
+    
+    .series { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+    
+    /* Guide Cards (Homepage Hub) */
+    .guides {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 20px 0;
+    }
+    @media (max-width: 600px) {
+      .guides { grid-template-columns: 1fr; }
+    }
+    .g {
+      display: block;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      transition: border-color 0.15s, transform 0.15s;
+      color: inherit;
+    }
+    .g:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+      text-decoration: none;
+    }
+    .g .num {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .g h3 { margin: 6px 0 6px; font-size: 1.18rem; }
+    .g p { margin: 0 0 10px; font-size: 0.92rem; color: var(--muted); }
+    .g .tags { font-size: 0.76rem; color: var(--accent-2); }
+    .g .meta { font-size: 0.74rem; color: var(--muted); margin-top: 8px; }
+    .g .status {
+      float: right;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(126, 224, 192, 0.16);
+      color: var(--accent-2);
+    }
+    .g .status.s2 { background: rgba(91, 157, 255, 0.16); color: var(--accent); }
+    .g .status.s3 { background: rgba(255, 207, 112, 0.18); color: var(--warn); }
+    .g .status.s4 { background: rgba(255, 138, 138, 0.16); color: var(--danger); }
+    .g.wide { grid-column: 1 / -1; border-color: var(--accent); }
+    
+    .pillar {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 1px 8px;
+      border-radius: 999px;
+      background: var(--panel-2);
+      color: var(--muted);
+      margin-right: 6px;
+    }
+    
+    .savehint {
+      background: var(--panel-2);
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin: 18px 0;
+    }
+    
+    .paths {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin: 18px 0;
+    }
+    @media (max-width: 600px) {
+      .paths { grid-template-columns: 1fr; }
+    }
+    .path {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .path h4 { margin: 0 0 4px; font-size: 1rem; }
+    .path p { margin: 0; font-size: 0.86rem; color: var(--muted); }
+    .path .seq {
+      display: block;
+      margin-top: 8px;
+      font-size: 0.8rem;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    
+    dl.gloss { margin: 14px 0; }
+    dl.gloss dt { font-weight: 700; font-size: 0.95rem; margin-top: 12px; }
+    dl.gloss dd { margin: 2px 0 0; color: var(--muted); font-size: 0.92rem; }
+    
+    /* Journey diagram (homepage) */
+    .journey {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: stretch;
+      margin: 22px 0;
+    }
+    .hop {
+      flex: 1 1 130px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      position: relative;
+    }
+    .hop .n { font-size: 0.72rem; color: var(--accent); font-weight: 700; }
+    .hop h4 { margin: 2px 0 4px; font-size: 0.95rem; }
+    .hop p { margin: 0; font-size: 0.82rem; color: var(--muted); }
+    .hop .ref {
+      display: block;
+      margin-top: 6px;
+      font-size: 0.72rem;
+      color: var(--accent-2);
+      font-weight: 600;
+    }
+    
+    /* Cards list (caching/observability) */
+    .cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin: 18px 0;
+    }
+    @media (max-width: 560px) {
+      .cards { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .card h4 { margin: 0 0 6px; font-size: 1rem; }
+    .card p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+    
+    /* Preferences Media query for reduced motion */
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        animation-delay: -1ms !important;
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+        background-attachment: initial !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0s !important;
+        transition-delay: 0s !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  {current ? (
+    <Header current={current} />
+  ) : (
+    <slot name="header" />
+  )}
+  <div class="wrap" id="top">
+    {chapter && (
+      <header class="hero">
+        <div class="kicker">System Design Basics · {chapter} of 12</div>
+        <h1>{pageTitle}</h1>
+        <p class="lede">{pageDesc}</p>
+        {series && <p class="series" set:html={series} />}
+      </header>
+    )}
+
+    {sections && sections.length > 0 && (
+      <nav class="toc">
+        <strong>Contents</strong>
+        <ol>
+          {sections.map(section => (
+            <li>
+              <a href={`#${section.id}`}>{section.title}</a>
+            </li>
+          ))}
+        </ol>
+      </nav>
+    )}
+
+    <slot />
+  </div>
+  
+  <script is:inline>
+    // --- Global Page Actions: Scroll Restoration & Hash Routing ---
+
+    // Restore scroll position
+    const storedScroll = localStorage.getItem('sec-scroll-pos');
+    if (storedScroll !== null && !window.location.hash) {
+      setTimeout(() => {
+        window.scrollTo({ top: parseInt(storedScroll, 10), behavior: 'auto' });
+      }, 120);
+    }
+
+    // Save scroll position on scroll (debounced)
+    let scrollTimeout;
+    window.addEventListener('scroll', () => {
+      clearTimeout(scrollTimeout);
+      scrollTimeout = setTimeout(() => {
+        localStorage.setItem('sec-scroll-pos', window.scrollY);
+      }, 150);
+    });
+
+    // Auto-expand details elements when targeted by a hash link
+    function handleHashChange() {
+      const hash = window.location.hash;
+      if (hash) {
+        const target = document.querySelector(hash);
+        if (target) {
+          let parent = target.closest('details');
+          while (parent) {
+            parent.open = true;
+            parent = parent.parentElement.closest('details');
+          }
+          setTimeout(() => {
+            target.scrollIntoView({ behavior: 'smooth' });
+          }, 100);
+        }
+      }
+    }
+    window.addEventListener('hashchange', handleHashChange);
+    window.addEventListener('DOMContentLoaded', handleHashChange);
+  </script>
+</body>
+</html>

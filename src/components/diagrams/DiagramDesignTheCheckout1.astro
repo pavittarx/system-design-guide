@@ -1,0 +1,19 @@
+---
+// src/components/diagrams/DiagramDesignTheCheckout1.astro
+---
+
+<svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+<text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Sync vs. Async Checkout Architecture</text>
+<text x="20" y="55" fill="var(--danger)" font-size="11" font-weight="600">Naive Synchronous Flow (Fragile blocker)</text>
+<rect x="20" y="70" width="320" height="120" rx="6" fill="var(--panel-2)" stroke="var(--border)" />
+<text x="35" y="95" fill="var(--text)" font-size="9">Validate ➔ Reserve Stock ➔ Charge Card</text>
+<text x="35" y="115" fill="var(--text)" font-size="9">➔ Generate Invoice PDF ➔ Send Email</text>
+<text x="35" y="135" fill="var(--text)" font-size="9">➔ Notify Warehouse ➔ Update Analytics</text>
+<text x="35" y="165" fill="var(--danger)" font-size="11" font-weight="700">Total Latency: 1.9s (Fragile to any slow step)</text>
+<text x="400" y="55" fill="var(--accent-2)" font-size="11" font-weight="600">Optimised Asynchronous Flow</text>
+<rect x="400" y="70" width="320" height="120" rx="6" fill="var(--panel-2)" stroke="var(--accent-2)" stroke-width="1.5" />
+<text x="415" y="95" fill="var(--text)" font-size="9">Validate ➔ Reserve Stock ➔ Charge Card</text>
+<text x="415" y="115" fill="var(--accent-2)" font-size="9">➔ Save Order + Write Outbox Table [DB committed]</text>
+<text x="415" y="135" fill="var(--muted)" font-size="9">➔ Outbox relay pushes to Queue ➔ Worker jobs async</text>
+<text x="415" y="165" fill="var(--accent-2)" font-size="11" font-weight="700">Total Latency: 261ms (Fast, resilient)</text>
+</svg>

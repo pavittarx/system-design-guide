@@ -1,0 +1,14 @@
+---
+// src/components/Note.astro
+interface Props {
+  type?: 'key' | 'warn' | 'wild' | 'info';
+  label?: string;
+}
+
+const { type = 'key', label } = Astro.props;
+---
+
+<div class={`note ${type}`}>
+  {label && <span class="label">{label}</span>}
+  <slot />
+</div>

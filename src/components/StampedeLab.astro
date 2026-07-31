@@ -1,0 +1,177 @@
+---
+// src/components/StampedeLab.astro
+---
+
+<div class="stampede-sim-box" id="stampede-sim">
+  <span class="label" style="color: var(--accent);">🎮 Interactive Lab: Cache Stampede Benchmarker</span>
+  <p style="font-size: 0.85rem; color: var(--muted); margin: 0 0 16px 0;">Select the optimization mode, adjust concurrent users, and trigger an expiry miss to benchmark database load spikes.</p>
+  <div class="sim-grid">
+    <div class="sim-controls">
+      <label style="font-size: 0.78rem; font-weight: 700; color: var(--muted);">1. Optimization Mode</label>
+      <select class="sim-btn" id="sf-mode" style="text-align: left; padding-right: 20px;">
+        <option value="naive">Naive (No Single-Flight)</option>
+        <option value="coalesced">Coalesced (Single-Flight)</option>
+      </select>
+      <label style="font-size: 0.78rem; font-weight: 700; color: var(--muted); margin-top: 8px;">2. Concurrent Users (VUs)</label>
+      <input type="range" id="sim-vus" min="10" max="200" value="100" style="width: 100%; accent-color: var(--accent);" />
+      <div style="font-size: 0.8rem; font-weight: 600; color: var(--text); margin-top: -4px;"><span id="vu-val">100</span> users</div>
+            
+      <button class="sim-btn warn" id="btn-stampede-trigger" style="margin-top: 8px; text-align: center;">🔥 Trigger Expiry Miss</button>
+    </div>
+          
+    <div class="sim-nodes" style="flex-direction: column; align-items: stretch; justify-content: center; padding: 20px;">
+      <div style="font-size: 0.78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em;">Database CPU Utilization</div>
+      <div class="meter-container">
+        <div class="meter-bar" id="db-load-bar"></div>
+        <div class="meter-text" id="db-load-text">Idle (0%)</div>
+      </div>
+            
+      <div class="stampede-results">
+        <div class="result-card">
+          <div style="font-size: 0.72rem; color: var(--muted); font-weight: 700;">Database Queries Issued</div>
+          <div class="result-val" id="res-queries">0</div>
+        </div>
+        <div class="result-card">
+          <div style="font-size: 0.72rem; color: var(--muted); font-weight: 700;">p99 User Latency</div>
+          <div class="result-val" id="res-latency">0 ms</div>
+        </div>
+      </div>
+    </div>
+  </div>
+        
+  <div class="sim-console" id="stampede-console">
+    <div class="console-line system">> Coalescer simulator ready. Select configurations and hit trigger.</div>
+  </div>
+</div>
+
+<script>
+  function writeStampedeConsole(text, type = 'system') {
+    const consoleEl = document.getElementById('stampede-console');
+    if (!consoleEl) return;
+    const line = document.createElement('div');
+    line.className = `console-line ${type}`;
+    line.innerHTML = `> ${text}`;
+    consoleEl.appendChild(line);
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+  
+  function runStampedeSim() {
+    const modeEl = document.getElementById('sf-mode') as HTMLSelectElement;
+    const vusEl = document.getElementById('sim-vus') as HTMLInputElement;
+    const loadBar = document.getElementById('db-load-bar');
+    const loadText = document.getElementById('db-load-text');
+    const queriesEl = document.getElementById('res-queries');
+    const latencyEl = document.getElementById('res-latency');
+    
+    if (!modeEl || !vusEl || !loadBar || !loadText || !queriesEl || !latencyEl) return;
+
+    const mode = modeEl.value;
+    const vus = parseInt(vusEl.value, 10);
+
+    const consoleEl = document.getElementById('stampede-console');
+    if (consoleEl) consoleEl.innerHTML = '';
+    
+    writeStampedeConsole(`Simulating cache expiration for key user:feed...`, 'system');
+    writeStampedeConsole(`Incoming burst of ${vus} concurrent read requests...`, 'client');
+    
+    if (mode === 'naive') {
+      const dbQueries = vus;
+      const latency = Math.round(50 + (vus * 4.5));
+      
+      loadBar.style.width = '100%';
+      loadBar.style.backgroundColor = 'var(--danger)';
+      loadText.textContent = 'CRITICAL (100%)';
+      
+      queriesEl.textContent = dbQueries.toString();
+      queriesEl.className = 'result-val bad';
+      latencyEl.textContent = `${latency} ms`;
+      latencyEl.className = 'result-val bad';
+      
+      writeStampedeConsole(`CRITICAL: Naive fetch allowed all ${vus} threads to hit DB simultaneously!`, 'danger');
+      writeStampedeConsole(`Database thread pool saturated. Context-switching overhead increased.`, 'db');
+      writeStampedeConsole(`p99 latency bloated to ${latency}ms due to database queuing.`, 'db');
+    } else {
+      const dbQueries = 1;
+      const latency = 55;
+      
+      loadBar.style.width = '2%';
+      loadBar.style.backgroundColor = 'var(--accent-2)';
+      loadText.textContent = 'NORMAL (2%)';
+      
+      queriesEl.textContent = dbQueries.toString();
+      queriesEl.className = 'result-val good';
+      latencyEl.textContent = `${latency} ms`;
+      latencyEl.className = 'result-val good';
+      
+      writeStampedeConsole(`SUCCESS: Single-flight coalesced ${vus} threads.`, 'cache');
+      writeStampedeConsole(`First thread locks key, sends EXACTLY 1 query to DB...`, 'cache');
+      writeStampedeConsole(`The remaining ${vus-1} concurrent requests wait and share the resolved result.`, 'client');
+      writeStampedeConsole(`Database CPU stays at 2%. p99 latency flat at ${latency}ms.`, 'db');
+    }
+  }
+
+  const slider = document.getElementById('sim-vus') as HTMLInputElement;
+  const vuVal = document.getElementById('vu-val');
+  slider?.addEventListener('input', () => {
+    if (vuVal && slider) vuVal.textContent = slider.value;
+  });
+
+  document.getElementById('btn-stampede-trigger')?.addEventListener('click', runStampedeSim);
+</script>
+
+<style>
+  .stampede-sim-box {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin: 22px 0;
+  }
+  .meter-container {
+    margin: 14px 0;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    height: 24px;
+    position: relative;
+  }
+  .meter-bar {
+    height: 100%;
+    width: 0%;
+    background: var(--accent-2);
+    transition: width 0.4s ease, background-color 0.4s ease;
+  }
+  .meter-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .stampede-results {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 14px;
+  }
+  .result-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    text-align: center;
+  }
+  .result-val {
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin-top: 4px;
+  }
+  .result-val.bad { color: var(--danger); }
+  .result-val.good { color: var(--accent-2); }
+</style>

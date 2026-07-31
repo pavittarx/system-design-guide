@@ -1,0 +1,60 @@
+---
+// src/components/diagrams/DiagramDatabaseScaling1.astro
+---
+
+<svg viewBox="0 0 800 240" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+<style>
+      .node-bg { fill: var(--panel-2); stroke: var(--border); stroke-width: 1.5; rx: 8; }
+      .arrow-line { stroke: var(--muted); stroke-width: 2; fill: none; }
+      .rep-line { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; fill: none; }
+      .marker-head { fill: var(--muted); }
+      .marker-rep { fill: var(--accent); }
+      .text-bold { font-family: -apple-system, sans-serif; font-size: 13px; font-weight: bold; fill: var(--text); }
+      .text-normal { font-family: -apple-system, sans-serif; font-size: 12px; fill: var(--muted); }
+      .text-small { font-family: -apple-system, sans-serif; font-size: 11px; fill: var(--muted); }
+    </style>
+<rect width="100%" height="100%" fill="var(--panel)" rx="14" />
+    
+    
+<g transform="translate(60, 80)">
+<rect width="140" height="80" class="node-bg" />
+<text x="70" y="30" class="text-bold" text-anchor="middle">Application</text>
+<text x="70" y="50" class="text-normal" text-anchor="middle">Client Instances</text>
+<text x="70" y="65" class="text-small" text-anchor="middle">(Stateless App Tier)</text>
+</g>
+
+    
+<path d="M 200 100 Q 300 60 390 85" class="arrow-line" marker-end="url(#arrow-head)" />
+<text x="300" y="65" class="text-bold" fill="var(--danger)" text-anchor="middle">1. Writes (Primary Only)</text>
+
+    
+<path d="M 200 140 Q 300 180 390 155" class="arrow-line" marker-end="url(#arrow-head)" />
+<text x="300" y="195" class="text-bold" fill="var(--accent-2)" text-anchor="middle">3. Reads (Load Balanced)</text>
+
+    
+<g transform="translate(400, 50)">
+<rect width="150" height="60" class="node-bg" style="stroke: var(--danger); stroke-width: 2;" />
+<text x="75" y="25" class="text-bold" text-anchor="middle">Primary DB</text>
+<text x="75" y="45" class="text-small" text-anchor="middle">(Writes / Source of Truth)</text>
+</g>
+
+    
+<path d="M 475 110 L 475 130" class="rep-line" marker-end="url(#arrow-rep)" />
+<text x="490" y="125" class="text-bold" fill="var(--accent)">2. Async Stream</text>
+
+    
+<g transform="translate(400, 130)">
+<rect width="150" height="60" class="node-bg" style="stroke: var(--accent-2); stroke-width: 2;" />
+<text x="75" y="25" class="text-bold" text-anchor="middle">Read Replicas</text>
+<text x="75" y="45" class="text-small" text-anchor="middle">(Eventual Consistency)</text>
+</g>
+
+<defs>
+<marker id="arrow-head" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1.5 L 8 5 L 0 8.5 z" class="marker-head" />
+</marker>
+<marker id="arrow-rep" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1.5 L 8 5 L 0 8.5 z" class="marker-rep" />
+</marker>
+</defs>
+</svg>

@@ -1,0 +1,88 @@
+---
+// src/components/diagrams/DiagramUnderstandingCaching1.astro
+---
+
+<svg viewBox="0 0 800 320" width="100%" height="auto" style="background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin: 20px 0; display: block;" xmlns="http://www.w3.org/2000/svg">
+<style>
+      .node-rect { fill: var(--panel-2); stroke: var(--border); stroke-width: 2; rx: 8; }
+      .node-rect.hit { stroke: var(--accent-2); fill: color-mix(in srgb, var(--accent-2) 10%, var(--panel-2)); }
+      .node-rect.origin { stroke: var(--warn); fill: color-mix(in srgb, var(--warn) 8%, var(--panel-2)); }
+      .arrow-line { stroke: var(--border); stroke-width: 2; stroke-dasharray: 4; fill: none; }
+      .arrow-line.active { stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: none; }
+      .text-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; font-weight: 700; fill: var(--text); }
+      .text-desc { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 11px; fill: var(--muted); }
+      .text-metric { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; font-weight: 600; fill: var(--accent-2); }
+      .text-metric.slow { fill: var(--warn); }
+      .badge { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 9px; font-weight: bold; text-transform: uppercase; fill: var(--bg); }
+      .badge-bg { rx: 4; }
+      .badge-bg.hit { fill: var(--accent-2); }
+      .badge-bg.miss { fill: var(--danger); }
+    
+  
+
+</style>
+<rect x="0" y="0" width="100%" height="100%" fill="var(--panel)" rx="14" />
+<path d="M 50 160 L 730 160" class="arrow-line active" marker-end="url(#arrow)" />
+<path d="M 200 160 Q 125 100 50 160" class="arrow-line" stroke-dasharray="4" style="stroke: var(--accent-2);" />
+<path d="M 340 160 Q 195 80 50 160" class="arrow-line" stroke-dasharray="4" style="stroke: var(--accent-2);" />
+<path d="M 480 160 Q 265 60 50 160" class="arrow-line" stroke-dasharray="4" style="stroke: var(--accent-2);" />
+<path d="M 620 160 Q 335 40 50 160" class="arrow-line" stroke-dasharray="4" style="stroke: var(--accent-2);" />
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="var(--accent)" />
+</marker>
+</defs>
+<g transform="translate(10, 120)">
+<rect width="80" height="80" class="node-rect" />
+<text x="40" y="35" class="text-title" text-anchor="middle">Client</text>
+<text x="40" y="55" class="text-desc" text-anchor="middle">Browser / App</text>
+<text x="40" y="70" class="text-desc" text-anchor="middle">Initiates GET</text>
+</g>
+<g transform="translate(140, 120)">
+<rect width="110" height="80" class="node-rect hit" />
+<text x="55" y="25" class="text-title" text-anchor="middle">1. Client Cache</text>
+<text x="55" y="45" class="text-desc" text-anchor="middle">HTTP Headers</text>
+<text x="55" y="60" class="text-desc" text-anchor="middle">Local Disk/RAM</text>
+<text x="55" y="74" class="text-metric" text-anchor="middle">~100 ns - 5ms</text>
+<rect x="35" y="-8" width="40" height="15" class="badge-bg hit" />
+<text x="55" y="3" class="badge" text-anchor="middle">HIT #1</text>
+</g>
+<g transform="translate(280, 120)">
+<rect width="110" height="80" class="node-rect hit" />
+<text x="55" y="25" class="text-title" text-anchor="middle">2. CDN / Edge</text>
+<text x="55" y="45" class="text-desc" text-anchor="middle">PoP Near User</text>
+<text x="55" y="60" class="text-desc" text-anchor="middle">HTML/Static/API</text>
+<text x="55" y="74" class="text-metric" text-anchor="middle">~10 - 30ms</text>
+<rect x="35" y="-8" width="40" height="15" class="badge-bg hit" />
+<text x="55" y="3" class="badge" text-anchor="middle">HIT #2</text>
+</g>
+<g transform="translate(420, 120)">
+<rect width="110" height="80" class="node-rect hit" />
+<text x="55" y="25" class="text-title" text-anchor="middle">3. Proxy / GW</text>
+<text x="55" y="45" class="text-desc" text-anchor="middle">Nginx / Varnish</text>
+<text x="55" y="60" class="text-desc" text-anchor="middle">Gateway Cache</text>
+<text x="55" y="74" class="text-metric" text-anchor="middle">~2 - 10ms</text>
+<rect x="35" y="-8" width="40" height="15" class="badge-bg hit" />
+<text x="55" y="3" class="badge" text-anchor="middle">HIT #3</text>
+</g>
+<g transform="translate(560, 120)">
+<rect width="110" height="80" class="node-rect hit" />
+<text x="55" y="25" class="text-title" text-anchor="middle">4. App Cache</text>
+<text x="55" y="45" class="text-desc" text-anchor="middle">Redis / Memcached</text>
+<text x="55" y="60" class="text-desc" text-anchor="middle">In-Process Map</text>
+<text x="55" y="74" class="text-metric" text-anchor="middle">~0.2 - 2ms</text>
+<rect x="35" y="-8" width="40" height="15" class="badge-bg hit" />
+<text x="55" y="3" class="badge" text-anchor="middle">HIT #4</text>
+</g>
+<g transform="translate(700, 120)">
+<rect width="90" height="80" class="node-rect origin" />
+<text x="45" y="30" class="text-title" text-anchor="middle">5. Origin DB</text>
+<text x="45" y="50" class="text-desc" text-anchor="middle">Source of Truth</text>
+<text x="45" y="74" class="text-metric slow" text-anchor="middle">&gt; 10ms</text>
+<rect x="25" y="-8" width="40" height="15" style="fill: var(--warn); rx: 4;" />
+<text x="45" y="3" class="badge" text-anchor="middle">ORIGIN</text>
+</g>
+<text x="400" y="290" font-family="-apple-system, sans-serif" font-size="12" fill="var(--muted)" text-anchor="middle">
+      Every step inward adds latency and system cost. The goal of caching is to short-circuit requests as early as possible.
+</text>
+</svg>

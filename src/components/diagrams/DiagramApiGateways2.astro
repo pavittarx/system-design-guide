@@ -1,0 +1,17 @@
+---
+// src/components/diagrams/DiagramApiGateways2.astro
+---
+
+<svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+<text x="20" y="25" fill="var(--text)" font-size="12" font-weight="700">Token Bucket vs. Leaky Bucket</text>
+<text x="20" y="55" fill="var(--accent)" font-size="11" font-weight="600">Token Bucket (Permits Controlled Bursts)</text>
+<rect x="20" y="70" width="280" height="120" rx="8" fill="var(--panel-2)" stroke="var(--accent)" stroke-width="1.5" />
+<text x="35" y="98" fill="var(--text)" font-size="10">Bucket holds tokens. Refills at R tokens/sec.</text>
+<text x="35" y="118" fill="var(--text)" font-size="10">If bucket has tokens, allow burst immediately.</text>
+<text x="35" y="138" fill="var(--text)" font-size="10">If empty, reject with 429.</text>
+<text x="420" y="55" fill="var(--accent-2)" font-size="11" font-weight="600">Leaky Bucket (Forces Smooth Outflow)</text>
+<rect x="420" y="70" width="280" height="120" rx="8" fill="var(--panel-2)" stroke="var(--accent-2)" stroke-width="1.5" />
+<text x="435" y="98" fill="var(--text)" font-size="10">Bucket holds requests in queue.</text>
+<text x="435" y="118" fill="var(--text)" font-size="10">Requests leak at a constant, flat rate.</text>
+<text x="435" y="138" fill="var(--text)" font-size="10">Smooths traffic spikes completely.</text>
+</svg>

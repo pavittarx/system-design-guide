@@ -1,0 +1,25 @@
+---
+// src/components/diagrams/DiagramRealTimeSystems2.astro
+---
+
+<svg viewBox="0 0 760 220" width="100%" height="auto" style="display: block; font-family: -apple-system, sans-serif;">
+<text x="20" y="25" fill="var(--text)" font-size="13" font-weight="700">Metastable Reconnect Storm Loop</text>
+<rect x="40" y="60" width="140" height="40" rx="4" fill="var(--panel-2)" stroke="var(--danger)" />
+<text x="110" y="84" fill="var(--text)" font-size="10" text-anchor="middle">1. Network Drop / Restart</text>
+<rect x="220" y="60" width="140" height="40" rx="4" fill="var(--panel-2)" stroke="var(--danger)" />
+<text x="290" y="84" fill="var(--text)" font-size="10" text-anchor="middle">2. 100k clients disconnect</text>
+<rect x="400" y="60" width="140" height="40" rx="4" fill="var(--panel-2)" stroke="var(--danger)" />
+<text x="470" y="84" fill="var(--text)" font-size="9" text-anchor="middle">3. Sync handshakes overload CPU</text>
+<rect x="580" y="60" width="140" height="40" rx="4" fill="var(--panel-2)" stroke="var(--danger)" />
+<text x="650" y="84" fill="var(--text)" font-size="10" text-anchor="middle">4. Gateway crashes again</text>
+<path d="M 180,80 H 220" stroke="var(--danger)" stroke-width="1.5" marker-end="url(#arrow)" />
+<path d="M 360,80 H 400" stroke="var(--danger)" stroke-width="1.5" marker-end="url(#arrow)" />
+<path d="M 540,80 H 580" stroke="var(--danger)" stroke-width="1.5" marker-end="url(#arrow)" />
+<path d="M 650,100 C 650,160 110,160 110,100" fill="none" stroke="var(--danger)" stroke-width="2" stroke-dasharray="4,4" marker-end="url(#arrow)" />
+<text x="380" y="145" fill="var(--danger)" font-size="10" font-weight="700" text-anchor="middle">Metastable Failure Loop (Permanent overload)</text>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 1 L 10 5 L 0 9 z" fill="var(--danger)" />
+</marker>
+</defs>
+</svg>
