@@ -25,5 +25,8 @@
   "dependencies": {
     "@astrojs/mdx": "^7.0.5",
     "astro": "^7.1.6"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }
