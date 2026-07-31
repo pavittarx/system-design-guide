@@ -4,7 +4,9 @@ title: "Systems That Push Back — System Design Basics"
 description: "Request/response has a lovely property: the server can forget you the moment it answers. Real-time systems give that up, and every hard problem in this guide falls out of the fact that the server now has to remember who you are."
 chapter: "11"
 current: "11. Real-Time Systems"
-series: "A companion to <a href=\"load-balancing.html\"><em>Load Balancing</em></a> and <a href=\"message-queues.html\"><em>Message Queues &amp; Async</em></a>."
+series:
+  lead: "A companion to"
+  guides: [load-balancing, message-queues]
 sections:
   - id: "inversion"
     title: "The inversion"
@@ -31,368 +33,448 @@ sections:
   - id: "recap"
     title: "Recap in 60 seconds"
 ---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Question, Recap, Stack, Table } from '../../components';
 import DiagramRealTimeSystems1 from '../../components/diagrams/DiagramRealTimeSystems1.astro';
 import DiagramRealTimeSystems2 from '../../components/diagrams/DiagramRealTimeSystems2.astro';
-import Collapse from '../../components/Collapse.astro';
-import Question from '../../components/Question.astro';
-import Footer from '../../components/Footer.astro';
 
-<div class="coldopen">
-<span class="tag">◇ Slack, 12 May 2020</span>
-<p>A routine change causes a fraction of Slack's servers to start failing. Clients disconnect. Clients do what clients do: they reconnect. All of them, immediately, to the servers that are still healthy. Each reconnection is not a cheap HTTP request — it is a WebSocket handshake plus a full state resynchronisation, hundreds of times more expensive than a normal message. The healthy servers, now carrying the load of the failed ones <em>plus</em> a stampede of resyncs, begin failing too. Slack was down for hours, and the postmortem's central observation is one worth tattooing somewhere: in a persistent-connection system, <b>the reconnect is the load test</b>, and it arrives at the worst possible moment, from every client at once, in perfect synchrony.</p>
-</div>
+<ColdOpen tag="◇ Slack, 12 May 2020">
+
+A routine change causes a fraction of Slack's servers to start failing. Clients disconnect. Clients do what clients do: they reconnect. All of them, immediately, to the servers that are still healthy. Each reconnection is not a cheap HTTP request — it is a WebSocket handshake plus a full state resynchronisation, hundreds of times more expensive than a normal message. The healthy servers, now carrying the load of the failed ones *plus* a stampede of resyncs, begin failing too. Slack was down for hours, and the postmortem's central observation is one worth tattooing somewhere: in a persistent-connection system, **the reconnect is the load test**, and it arrives at the worst possible moment, from every client at once, in perfect synchrony.
+
+</ColdOpen>
 
 <Collapse id="inversion" title="1. The inversion">
-<p>Everything in this series so far has assumed the same shape: a client asks, a server answers, the server forgets. That statelessness is what makes the earlier guides work. It is why you can put ten identical servers behind a load balancer and route each request to whichever is least busy. It is why an instance can be terminated mid-deploy and nobody notices. It is why capacity is a function of requests per second and nothing else.</p>
-<p>Real-time systems invert it. The server must send data the client never asked for, at a moment the client did not choose. To do that it must hold an open connection, and the moment it does, three assumptions break at once.</p>
-<div class="cards">
-<div class="card">
-<span class="pill bad">Servers become stateful</span>
-<p class="tight">Connection X lives on server 7. Not "any server" — server 7 specifically. Deploys, scaling and failures now move connections, not just requests.</p>
-</div>
-<div class="card">
-<span class="pill bad">Capacity has two dimensions</span>
-<p class="tight">You are no longer sized by requests per second alone. You are sized by <em>concurrent connections</em>, which consume memory whether or not they are doing anything.</p>
-</div>
-<div class="card">
-<span class="pill bad">Messages need addressing</span>
-<p class="tight">An event happens on server 3 for a user connected to server 7. Something must know where that user is and get the message there.</p>
-</div>
-</div>
-<p>None of that is a reason to avoid real-time. It is a reason to be honest that you are building a distinctly different kind of system, with a different capacity model and a different set of failure modes, and to notice when a feature request quietly drags you across that line. "Can we show a live unread count?" is a small product ask and a large architectural one.</p>
+
+Everything in this series so far has assumed the same shape: a client asks, a server answers, the server forgets. That statelessness is what makes the earlier guides work. It is why you can put ten identical servers behind a load balancer and route each request to whichever is least busy. It is why an instance can be terminated mid-deploy and nobody notices. It is why capacity is a function of requests per second and nothing else.
+
+Real-time systems invert it. The server must send data the client never asked for, at a moment the client did not choose. To do that it must hold an open connection, and the moment it does, three assumptions break at once.
+
+<CardGrid>
+  <Card pill="Servers become stateful" tone="bad">
+    Connection X lives on server 7. Not "any server" — server 7 specifically. Deploys, scaling and failures now move connections, not just requests.
+  </Card>
+  <Card pill="Capacity has two dimensions" tone="bad">
+    You are no longer sized by requests per second alone. You are sized by *concurrent connections*, which consume memory whether or not they are doing anything.
+  </Card>
+  <Card pill="Messages need addressing" tone="bad">
+    An event happens on server 3 for a user connected to server 7. Something must know where that user is and get the message there.
+  </Card>
+</CardGrid>
+
+None of that is a reason to avoid real-time. It is a reason to be honest that you are building a distinctly different kind of system, with a different capacity model and a different set of failure modes, and to notice when a feature request quietly drags you across that line. "Can we show a live unread count?" is a small product ask and a large architectural one.
 
 </Collapse>
+
 <Collapse id="options" title="2. Polling, long polling, SSE, WebSockets">
-<p>There are four mechanisms in common use, and they form a ladder from "no new problems" to "all the new problems, plus full duplex".</p>
-<div class="stack">
-<div class="layer"><span class="idx">1</span> <b>Short polling.</b> The client asks every <em>n</em> seconds. Dead simple, works everywhere, caches and load-balances like anything else. Latency averages <em>n</em>/2 and most requests return nothing.</div>
-<div class="layer"><span class="idx">2</span> <b>Long polling.</b> The client asks and the server <em>holds the request open</em> until there is something to say (or a timeout, typically 30 s). Near-instant delivery over plain HTTP, at the cost of a held connection per client anyway — most of the cost of WebSockets with more overhead per message.</div>
-<div class="layer"><span class="idx">3</span> <b>Server-Sent Events.</b> One long-lived HTTP response that the server streams into, forever. Server-to-client only. Text only. Automatic reconnection and event IDs are built into the browser's <code>EventSource</code>, which is a bigger deal than it sounds.</div>
-<div class="layer"><span class="idx">4</span> <b>WebSockets.</b> An HTTP request upgrades into a persistent bidirectional binary-capable channel. Maximum power, and you now own reconnection, heartbeats, message framing, and backpressure yourself.</div>
-</div>
-<p>The efficiency gap is stark once you put numbers on it. Consider 10,000 users on a page that updates rarely.</p>
-<div class="note key">
-<span class="label">Short polling vs push, 10,000 users</span>
-    Polling every 5 s: <b>2,000 requests/second</b>, each carrying full HTTP headers and cookies (~800 bytes) plus a response. Roughly <b>1.6 MB/s of pure overhead</b>, and if updates arrive once a minute per user, <b>over 99% of those requests return nothing</b>. Average notification latency: 2.5 s.<br /><br />
-    SSE or WebSocket: 10,000 idle connections, a heartbeat every 30 s, and one small frame (2–6 bytes of framing) at the instant something happens. Latency: <b>milliseconds</b>. Bandwidth when idle: nearly zero.
-</div>
-<p>That comparison is why the ladder exists. But note the direction of the trade — polling's waste is bandwidth and latency, which are cheap and measurable; push's cost is <em>state</em>, which is expensive and shows up as operational complexity rather than a line on a graph.</p>
 
+There are four mechanisms in common use, and they form a ladder from "no new problems" to "all the new problems, plus full duplex".
 
-<div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
-<DiagramRealTimeSystems1 />
-</div>
+<Stack>
+  <Layer idx="1">**Short polling.** The client asks every *n* seconds. Dead simple, works everywhere, caches and load-balances like anything else. Latency averages *n*/2 and most requests return nothing.</Layer>
+  <Layer idx="2">**Long polling.** The client asks and the server *holds the request open* until there is something to say (or a timeout, typically 30 s). Near-instant delivery over plain HTTP, at the cost of a held connection per client anyway — most of the cost of WebSockets with more overhead per message.</Layer>
+  <Layer idx="3">**Server-Sent Events.** One long-lived HTTP response that the server streams into, forever. Server-to-client only. Text only. Automatic reconnection and event IDs are built into the browser's `EventSource`, which is a bigger deal than it sounds.</Layer>
+  <Layer idx="4">**WebSockets.** An HTTP request upgrades into a persistent bidirectional binary-capable channel. Maximum power, and you now own reconnection, heartbeats, message framing, and backpressure yourself.</Layer>
+</Stack>
+
+The efficiency gap is stark once you put numbers on it. Consider 10,000 users on a page that updates rarely.
+
+<Note type="key" label="Short polling vs push, 10,000 users">
+
+Polling every 5 s: **2,000 requests/second**, each carrying full HTTP headers and cookies (~800 bytes) plus a response. Roughly **1.6 MB/s of pure overhead**, and if updates arrive once a minute per user, **over 99% of those requests return nothing**. Average notification latency: 2.5 s.
+
+SSE or WebSocket: 10,000 idle connections, a heartbeat every 30 s, and one small frame (2–6 bytes of framing) at the instant something happens. Latency: **milliseconds**. Bandwidth when idle: nearly zero.
+
+</Note>
+
+That comparison is why the ladder exists. But note the direction of the trade — polling's waste is bandwidth and latency, which are cheap and measurable; push's cost is *state*, which is expensive and shows up as operational complexity rather than a line on a graph.
+
+<Figure>
+  <DiagramRealTimeSystems1 />
+</Figure>
 
 </Collapse>
+
 <Collapse id="choose" title="3. Choosing between them">
-<p>The decision is usually made by fashion, and it should be made by direction and frequency.</p>
-<div class="table-scroll">
-<table class="num-table">
-<thead><tr><th></th><th>Short poll</th><th>Long poll</th><th>SSE</th><th>WebSocket</th></tr></thead>
-<tbody>
-<tr><td>Direction</td><td>Client pull</td><td>Client pull</td><td>Server → client</td><td>Bidirectional</td></tr>
-<tr><td>Protocol</td><td>HTTP</td><td>HTTP</td><td>HTTP</td><td>Upgraded from HTTP</td></tr>
-<tr><td>Auto-reconnect</td><td>N/A</td><td>Manual</td><td><b>Built in</b></td><td>You write it</td></tr>
-<tr><td>Binary payloads</td><td>Yes</td><td>Yes</td><td>No (text/base64)</td><td>Yes</td></tr>
-<tr><td>Proxy/CDN friendliness</td><td>Excellent</td><td>Fair</td><td>Good</td><td>Needs config</td></tr>
-<tr><td>Server state</td><td>None</td><td>Held request</td><td>Held response</td><td>Full connection</td></tr>
-<tr><td>Best for</td><td>Rare, tolerant updates</td><td>Legacy fallback</td><td>Feeds, notifications, progress</td><td>Chat, games, collaboration</td></tr>
-</tbody>
-</table>
-</div>
-<p>The under-used option is SSE, and the reason is a mistake in framing: teams ask "do we need real-time?" and reach for WebSockets, when the honest question is "does the <em>client</em> need to send a stream too?" For a notification bell, a live dashboard, a build-progress log, a price ticker, or a streaming LLM response, the answer is no — the client's occasional actions can be ordinary HTTP POSTs. SSE gives you the push with a protocol that traverses proxies unmodified, works through your existing HTTP infrastructure, and hands you reconnection-with-resume for free via <code>Last-Event-ID</code>.</p>
-<div class="note warn">
-<span class="label">The SSE gotcha worth knowing up front</span>
-    Over HTTP/1.1, browsers cap connections at <b>six per origin</b>, and an SSE stream holds one open indefinitely. Open the app in six tabs and the seventh hangs — including ordinary requests.<br />
-    Over HTTP/2 the streams are multiplexed on one connection and the limit effectively disappears. If you use SSE, use HTTP/2 end to end, and check that your load balancer is not quietly downgrading.
-</div>
-<p>Choose WebSockets when the client genuinely streams: chat with typing indicators, collaborative editing with cursor positions, multiplayer games, live drawing. Choose polling when updates are rare and a few seconds of staleness costs nothing — a five-second poll on a page one person has open is not a design failure, it is a perfectly good use of a boring tool.</p>
 
+The decision is usually made by fashion, and it should be made by direction and frequency.
 
-<div class="note key">
-<span class="label">🛠️ Hands-On Lab: Build a Real-Time SSE Stream with Heartbeats &amp; Gap Recovery</span>
-<p>Build this portfolio project to implement a production-ready, low-overhead Server-Sent Events stream:</p>
-    
-      
+<Table numeric>
 
-* <strong>The Server:</strong> Write an API server in Node.js or Python. Create a <code>GET /events</code> route.
+| | Short poll | Long poll | SSE | WebSocket |
+| --- | ---------- | --------- | --- | --------- |
+| Direction | Client pull | Client pull | Server → client | Bidirectional |
+| Protocol | HTTP | HTTP | HTTP | Upgraded from HTTP |
+| Auto-reconnect | N/A | Manual | **Built in** | You write it |
+| Binary payloads | Yes | Yes | No (text/base64) | Yes |
+| Proxy/CDN friendliness | Excellent | Fair | Good | Needs config |
+| Server state | None | Held request | Held response | Full connection |
+| Best for | Rare, tolerant updates | Legacy fallback | Feeds, notifications, progress | Chat, games, collaboration |
 
+</Table>
 
-      
+The under-used option is SSE, and the reason is a mistake in framing: teams ask "do we need real-time?" and reach for WebSockets, when the honest question is "does the *client* need to send a stream too?" For a notification bell, a live dashboard, a build-progress log, a price ticker, or a streaming LLM response, the answer is no — the client's occasional actions can be ordinary HTTP POSTs. SSE gives you the push with a protocol that traverses proxies unmodified, works through your existing HTTP infrastructure, and hands you reconnection-with-resume for free via `Last-Event-ID`.
 
-* <strong>Configure SSE Headers:</strong> Set the required headers to keep the browser socket open and disable proxies buffering output:
-```javascript
-res.writeHead(200, {
-'Content-Type': 'text/event-stream',
-'Cache-Control': 'no-cache',
-'Connection': 'keep-alive',
-'X-Accel-Buffering': 'no' // Prevent Nginx buffering
-});
-```
+<Note type="warn" label="The SSE gotcha worth knowing up front">
 
+Over HTTP/1.1, browsers cap connections at **six per origin**, and an SSE stream holds one open indefinitely. Open the app in six tabs and the seventh hangs — including ordinary requests.
 
-      
+Over HTTP/2 the streams are multiplexed on one connection and the limit effectively disappears. If you use SSE, use HTTP/2 end to end, and check that your load balancer is not quietly downgrading.
 
-* <strong>Heartbeats &amp; Resync:</strong> Read the incoming header <code>Last-Event-ID</code> (if present). Keep a short rolling memory buffer of recent events. If the client sends an ID, replay missed items. Otherwise, send heartbeats every 15s to keep the socket alive:
-```javascript
-// Send a comment frame to keep the socket warm
-const heartbeatInterval = setInterval(() => {
-res.write(': keepalive\n\n');
-}, 15000);
-// Sending an event frame
-function sendEvent(id, name, data) {
-res.write(`id: ${id}\n`);
-res.write(`event: ${name}\n`);
-res.write(`data: ${JSON.stringify(data)}\n\n`);
-}
-```
+</Note>
 
+Choose WebSockets when the client genuinely streams: chat with typing indicators, collaborative editing with cursor positions, multiplayer games, live drawing. Choose polling when updates are rare and a few seconds of staleness costs nothing — a five-second poll on a page one person has open is not a design failure, it is a perfectly good use of a boring tool.
 
-      
+<Lab
+  title="Build a Real-Time SSE Stream with Heartbeats & Gap Recovery"
+  tip="Include this SSE project in your portfolio to show hands-on mastery of lightweight push protocols and gap-tolerant stream design."
+>
 
-* <strong>Test Disconnects:</strong> Connect a client in a browser. Kill your network connection briefly and verify that the client auto-reconnects, passes the last seen ID, and recovers missing events cleanly without duplicates.
+Build this portfolio project to implement a production-ready, low-overhead Server-Sent Events stream:
 
+- **The Server:** Write an API server in Node.js or Python. Create a `GET /events` route.
 
-    
-<p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Include this SSE project in your portfolio to show hands-on mastery of lightweight push protocols and gap-tolerant stream design.</p>
-</div>
+- **Configure SSE Headers:** Set the required headers to keep the browser socket open and disable proxies buffering output:
+
+  ```javascript
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'X-Accel-Buffering': 'no' // Prevent Nginx buffering
+  });
+  ```
+
+- **Heartbeats & Resync:** Read the incoming header `Last-Event-ID` (if present). Keep a short rolling memory buffer of recent events. If the client sends an ID, replay missed items. Otherwise, send heartbeats every 15s to keep the socket alive:
+
+  ```javascript
+  // Send a comment frame to keep the socket warm
+  const heartbeatInterval = setInterval(() => {
+    res.write(': keepalive\n\n');
+  }, 15000);
+
+  // Sending an event frame
+  function sendEvent(id, name, data) {
+    res.write(`id: ${id}\n`);
+    res.write(`event: ${name}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
+  ```
+
+- **Test Disconnects:** Connect a client in a browser. Kill your network connection briefly and verify that the client auto-reconnects, passes the last seen ID, and recovers missing events cleanly without duplicates.
+
+</Lab>
 
 </Collapse>
-<Collapse id="cost" title="4. What a connection actually costs">
-<p>The "C10K problem" was solved twenty years ago and the folklore has not caught up. Modern servers using epoll or kqueue hold enormous numbers of idle connections; WhatsApp famously reached <b>2 million connections on a single FreeBSD box</b> in 2012. The cost is not the connection, it is what you attach to it.</p>
-<div class="note key">
-<span class="label">The memory arithmetic</span>
-    Per connection you pay: kernel socket buffers (typically <b>4–64 KB</b> combined, and tunable), TLS session state (<b>~10–20 KB</b>), and your own per-connection object — user ID, subscriptions, send queue, parser state.<br /><br />
-    At <b>50 KB</b> per connection, 100,000 connections is <b>5 GB</b> — comfortable. At <b>500 KB</b>, because someone attached a generous send buffer and a cached user profile, the same 100,000 connections is <b>50 GB</b>, and you are buying ten times the machines for the same product.
-</div>
-<p>So the tuning levers are: keep the per-connection object small (store an ID, not an object graph), bound the send queue explicitly (see <a href="#backpressure">backpressure</a>), reduce socket buffer sizes for connections you know carry small messages, and prefer TLS session resumption so handshake state is not duplicated.</p>
-<p>Then there is CPU, which behaves differently. Idle connections cost almost nothing. Each message costs a syscall, a framing operation, and possibly TLS encryption. The killer is <em>fan-out</em>: one message to a 50,000-member channel is 50,000 sends. If you also serialise the message once per recipient rather than once per broadcast, you have turned a 200-byte message into 10 MB of allocation and JSON encoding, per broadcast. Serialise once, send many.</p>
-<div class="note warn">
-<span class="label">Ephemeral ports</span>
-    A single client IP can open at most ~64,000 connections to a single server IP:port, because that is the size of the ephemeral port space. This is invisible in production (clients have different IPs) and appears instantly in load testing from one machine, where it is usually misdiagnosed as a server limit.<br />
-    It also bites <em>between</em> your own tiers: a gateway holding many connections to one backend can exhaust ports. Fix with multiple backend ports or IPs, and by reusing pooled connections rather than opening new ones.
-</div>
 
+<Collapse id="cost" title="4. What a connection actually costs">
+
+The "C10K problem" was solved twenty years ago and the folklore has not caught up. Modern servers using epoll or kqueue hold enormous numbers of idle connections; WhatsApp famously reached **2 million connections on a single FreeBSD box** in 2012. The cost is not the connection, it is what you attach to it.
+
+<Note type="key" label="The memory arithmetic">
+
+Per connection you pay: kernel socket buffers (typically **4–64 KB** combined, and tunable), TLS session state (**~10–20 KB**), and your own per-connection object — user ID, subscriptions, send queue, parser state.
+
+At **50 KB** per connection, 100,000 connections is **5 GB** — comfortable. At **500 KB**, because someone attached a generous send buffer and a cached user profile, the same 100,000 connections is **50 GB**, and you are buying ten times the machines for the same product.
+
+</Note>
+
+So the tuning levers are: keep the per-connection object small (store an ID, not an object graph), bound the send queue explicitly (see [backpressure](#backpressure)), reduce socket buffer sizes for connections you know carry small messages, and prefer TLS session resumption so handshake state is not duplicated.
+
+Then there is CPU, which behaves differently. Idle connections cost almost nothing. Each message costs a syscall, a framing operation, and possibly TLS encryption. The killer is *fan-out*: one message to a 50,000-member channel is 50,000 sends. If you also serialise the message once per recipient rather than once per broadcast, you have turned a 200-byte message into 10 MB of allocation and JSON encoding, per broadcast. Serialise once, send many.
+
+<Note type="warn" label="Ephemeral ports">
+
+A single client IP can open at most ~64,000 connections to a single server IP:port, because that is the size of the ephemeral port space. This is invisible in production (clients have different IPs) and appears instantly in load testing from one machine, where it is usually misdiagnosed as a server limit.
+
+It also bites *between* your own tiers: a gateway holding many connections to one backend can exhaust ports. Fix with multiple backend ports or IPs, and by reusing pooled connections rather than opening new ones.
+
+</Note>
 
 <Question q="Check yourself: A server can easily hold 100,000 idle connections, but crashes when they actually start receiving traffic. Explain the difference between connection scale and buffer memory.">
-<p>An idle TCP connection costs very little: basic kernel sockets and connection registry metadata (~10–30 KB). The scaling ceiling changes completely when traffic starts flowing. Kernel-level read/write socket buffers dynamically grow (often to 64 KB or higher) to support outstanding data, and application-level send queues can buffer undelivered payloads for slow clients.</p>
-<p>If 100,000 connections each accumulate 200 KB of buffered data (e.g. because of slow network receivers), the server requires 20 GB of memory just for queues. Unbounded buffers degrade isolation, causing healthy connections to be dropped when the host goes out of memory. Defensive engineering requires setting hard queue limits and forcing disconnections on slow consumers so they resync from a sequence log later.</p>
+
+An idle TCP connection costs very little: basic kernel sockets and connection registry metadata (~10–30 KB). The scaling ceiling changes completely when traffic starts flowing. Kernel-level read/write socket buffers dynamically grow (often to 64 KB or higher) to support outstanding data, and application-level send queues can buffer undelivered payloads for slow clients.
+
+If 100,000 connections each accumulate 200 KB of buffered data (e.g. because of slow network receivers), the server requires 20 GB of memory just for queues. Unbounded buffers degrade isolation, causing healthy connections to be dropped when the host goes out of memory. Defensive engineering requires setting hard queue limits and forcing disconnections on slow consumers so they resync from a sequence log later.
+
 </Question>
 
 </Collapse>
+
 <Collapse id="routing" title="5. Routing to a stateful server">
-<p>Your user is connected to gateway 7. An event for that user is generated by a worker that has never heard of gateway 7. Getting the message from one to the other is the central architectural problem of real-time systems, and there are three standard answers.</p>
-<div class="stack">
-<div class="layer"><span class="idx">A</span> <b>Registry.</b> Every gateway writes "user 8817 is on gateway-7" into a shared store (Redis, or a coordination store from <a href="coordination-consensus.html">Getting Machines to Agree</a>). Senders look it up and deliver directly. Precise and efficient; the registry becomes a hot dependency, and it goes stale the instant a gateway dies.</div>
-<div class="layer"><span class="idx">B</span> <b>Broadcast bus.</b> Every gateway subscribes to a pub/sub topic; senders publish and every gateway discards what isn't theirs. No registry, no staleness, trivially correct. Cost is that every gateway sees every message — fine at ten gateways, ruinous at a thousand.</div>
-<div class="layer"><span class="idx">C</span> <b>Sharded topics.</b> The middle ground and the usual answer at scale. Partition by channel or conversation; a gateway subscribes only to the partitions its connected users care about. Senders publish to a partition without knowing who is listening. Scales because each gateway's traffic is proportional to its users' interests, not to global volume.</div>
-</div>
-<p>Layered on top of routing is the question of which gateway a client lands on in the first place. The load balancer must support the upgrade (an L7 balancer that doesn't understand the WebSocket handshake will break it), and it must not balance mid-stream. Long-lived connections also defeat ordinary load balancing in a subtle way described in <a href="load-balancing.html">Load Balancing</a>: least-connections works beautifully for short requests and terribly for long ones, because a server that has been up longest accumulates the most connections and never sheds them.</p>
-<div class="note warn">
-<span class="label">The deploy problem</span>
-    Restart a gateway holding 50,000 connections and all 50,000 clients reconnect simultaneously — the Slack failure mode. Roll a fleet of twenty gateways and you do that twenty times in a row.<br />
-    Mitigations: drain slowly, closing connections at a controlled rate (say 500/s) rather than all at once; send a close frame with a reason so clients know to reconnect with jitter rather than immediately; and deliberately rebalance a small fraction of connections continuously in normal operation, so that "reconnect" is a well-exercised path rather than a rare emergency.
-</div>
+
+Your user is connected to gateway 7. An event for that user is generated by a worker that has never heard of gateway 7. Getting the message from one to the other is the central architectural problem of real-time systems, and there are three standard answers.
+
+<Stack>
+  <Layer idx="A">**Registry.** Every gateway writes "user 8817 is on gateway-7" into a shared store (Redis, or a coordination store from [Getting Machines to Agree](/guides/coordination-consensus/)). Senders look it up and deliver directly. Precise and efficient; the registry becomes a hot dependency, and it goes stale the instant a gateway dies.</Layer>
+  <Layer idx="B">**Broadcast bus.** Every gateway subscribes to a pub/sub topic; senders publish and every gateway discards what isn't theirs. No registry, no staleness, trivially correct. Cost is that every gateway sees every message — fine at ten gateways, ruinous at a thousand.</Layer>
+  <Layer idx="C">**Sharded topics.** The middle ground and the usual answer at scale. Partition by channel or conversation; a gateway subscribes only to the partitions its connected users care about. Senders publish to a partition without knowing who is listening. Scales because each gateway's traffic is proportional to its users' interests, not to global volume.</Layer>
+</Stack>
+
+Layered on top of routing is the question of which gateway a client lands on in the first place. The load balancer must support the upgrade (an L7 balancer that doesn't understand the WebSocket handshake will break it), and it must not balance mid-stream. Long-lived connections also defeat ordinary load balancing in a subtle way described in [Load Balancing](/guides/load-balancing/): least-connections works beautifully for short requests and terribly for long ones, because a server that has been up longest accumulates the most connections and never sheds them.
+
+<Note type="warn" label="The deploy problem">
+
+Restart a gateway holding 50,000 connections and all 50,000 clients reconnect simultaneously — the Slack failure mode. Roll a fleet of twenty gateways and you do that twenty times in a row.
+
+Mitigations: drain slowly, closing connections at a controlled rate (say 500/s) rather than all at once; send a close frame with a reason so clients know to reconnect with jitter rather than immediately; and deliberately rebalance a small fraction of connections continuously in normal operation, so that "reconnect" is a well-exercised path rather than a rare emergency.
+
+</Note>
 
 </Collapse>
+
 <Collapse id="fanout" title="6. Fan-out: on write or on read?">
-<p>When one user's action must reach many users' screens, you choose when to pay for the multiplication. This is the single biggest design decision in a feed or chat system, and it is genuinely a choice — both answers are correct for different workloads.</p>
-<div class="cards">
-<div class="card">
-<span class="pill good">Fan-out on write (push)</span>
-<p class="tight">On publish, immediately write the item into every follower's inbox. Reads are a single sequential fetch of a precomputed list — extremely fast, trivially cacheable. Writes are O(followers) and can be enormous.</p>
-</div>
-<div class="card">
-<span class="pill mid">Fan-out on read (pull)</span>
-<p class="tight">Store the item once. On read, gather items from everyone this user follows and merge them. Writes are O(1). Reads are expensive, hard to cache, and get worse as the user follows more people.</p>
-</div>
-</div>
-<div class="note key">
-<span class="label">Why the hybrid exists</span>
-    Most users have hundreds of followers. Fan-out on write costs a few hundred small writes — nothing.<br />
-    A celebrity has <b>100 million</b> followers. One post at fan-out-on-write is <b>100 million inbox writes</b>, which is not a post, it is an incident. Worse, most of those inboxes belong to people who will not open the app today, so the work is wasted.<br /><br />
-<b>The hybrid:</b> fan out on write for ordinary accounts, and mark accounts above a threshold as "pull". A user's feed is then <em>their precomputed inbox</em> merged at read time with <em>the recent posts of the handful of celebrities they follow</em>. Both operations stay small. This is, in outline, what Twitter, Instagram and their peers actually do.
-</div>
-<p>For chat the same choice appears with different names. A two-person conversation fans out on write, always. A 200,000-member community channel does not — you store the message once in the channel's log and let connected clients read from it, which is roughly Discord's approach: a channel is a stream, and only the members currently connected and currently looking at it receive a push.</p>
-<p>The refinement that makes the difference at scale is to fan out only to <em>active</em> recipients. A message needs to reach the screens that are open right now; everyone else can be served from the channel log the next time they connect, and can receive a push notification through an entirely separate, much cheaper path. Fan-out cost then scales with concurrent viewers rather than with membership, and those two numbers can differ by three orders of magnitude.</p>
+
+When one user's action must reach many users' screens, you choose when to pay for the multiplication. This is the single biggest design decision in a feed or chat system, and it is genuinely a choice — both answers are correct for different workloads.
+
+<CardGrid>
+  <Card pill="Fan-out on write (push)" tone="good">
+    On publish, immediately write the item into every follower's inbox. Reads are a single sequential fetch of a precomputed list — extremely fast, trivially cacheable. Writes are O(followers) and can be enormous.
+  </Card>
+  <Card pill="Fan-out on read (pull)" tone="mid">
+    Store the item once. On read, gather items from everyone this user follows and merge them. Writes are O(1). Reads are expensive, hard to cache, and get worse as the user follows more people.
+  </Card>
+</CardGrid>
+
+<Note type="key" label="Why the hybrid exists">
+
+Most users have hundreds of followers. Fan-out on write costs a few hundred small writes — nothing.
+
+A celebrity has **100 million** followers. One post at fan-out-on-write is **100 million inbox writes**, which is not a post, it is an incident. Worse, most of those inboxes belong to people who will not open the app today, so the work is wasted.
+
+**The hybrid:** fan out on write for ordinary accounts, and mark accounts above a threshold as "pull". A user's feed is then *their precomputed inbox* merged at read time with *the recent posts of the handful of celebrities they follow*. Both operations stay small. This is, in outline, what Twitter, Instagram and their peers actually do.
+
+</Note>
+
+For chat the same choice appears with different names. A two-person conversation fans out on write, always. A 200,000-member community channel does not — you store the message once in the channel's log and let connected clients read from it, which is roughly Discord's approach: a channel is a stream, and only the members currently connected and currently looking at it receive a push.
+
+The refinement that makes the difference at scale is to fan out only to *active* recipients. A message needs to reach the screens that are open right now; everyone else can be served from the channel log the next time they connect, and can receive a push notification through an entirely separate, much cheaper path. Fan-out cost then scales with concurrent viewers rather than with membership, and those two numbers can differ by three orders of magnitude.
 
 </Collapse>
-<Collapse id="presence" title="7. Presence, typing and the cheap-signal trap">
-<p>Presence — the green dot — looks like the smallest feature on the page and is reliably one of the most expensive things in a real-time system, for a reason that generalises: <b>the cost of a signal is its rate times its audience, and presence is high on both.</b></p>
-<p>Consider a 1,000-member channel where 200 people are online. Each of those 200 has a status that can change. If every change is broadcast to every member, one person opening their laptop generates 1,000 messages. Now imagine a busy morning where people connect and disconnect constantly — a mobile client on a train changes state every few minutes — and presence traffic dwarfs the actual conversation by an order of magnitude.</p>
-<div class="note key">
-<span class="label">Four techniques that make presence affordable</span>
-<b>1 · Only tell people who are looking.</b> Presence updates go to users currently viewing that channel, not all members. Usually a 10–100× reduction on its own.<br />
-<b>2 · Batch on an interval.</b> Collect changes and flush every 1–5 seconds as one message. Presence has no correctness requirement, so a two-second delay is invisible, and a burst of fifty changes becomes one frame.<br />
-<b>3 · Debounce flapping.</b> Do not mark someone offline the instant a connection drops — wait 30–60 seconds. Mobile clients disconnect constantly, and a green dot that flickers is worse than one that is slightly stale.<br />
-<b>4 · Pull on demand.</b> For a large member list, do not push presence at all. Send the current state when the user opens the list, and refresh it while it is open.
-</div>
-<p>Typing indicators are the same problem in miniature and are best handled with a simple protocol: the client sends "typing" at most once every few seconds while the user types, the server broadcasts it with no persistence whatsoever, and the indicator expires on the receiving client after a few seconds without renewal. No "stopped typing" message is needed, which conveniently means a lost message cannot leave someone permanently typing.</p>
-<p>The general lesson is worth extracting because it applies to read receipts, cursor positions, live reactions and anything else in this family: <b>ephemeral signals must never touch durable storage, must be batched, and must be scoped to the audience actually looking.</b> Persisting a typing indicator to a database is a mistake with a remarkably high ceiling on how much damage it can do.</p>
 
+<Collapse id="presence" title="7. Presence, typing and the cheap-signal trap">
+
+Presence — the green dot — looks like the smallest feature on the page and is reliably one of the most expensive things in a real-time system, for a reason that generalises: **the cost of a signal is its rate times its audience, and presence is high on both.**
+
+Consider a 1,000-member channel where 200 people are online. Each of those 200 has a status that can change. If every change is broadcast to every member, one person opening their laptop generates 1,000 messages. Now imagine a busy morning where people connect and disconnect constantly — a mobile client on a train changes state every few minutes — and presence traffic dwarfs the actual conversation by an order of magnitude.
+
+<Note type="key" label="Four techniques that make presence affordable">
+
+**1 · Only tell people who are looking.** Presence updates go to users currently viewing that channel, not all members. Usually a 10–100× reduction on its own.
+
+**2 · Batch on an interval.** Collect changes and flush every 1–5 seconds as one message. Presence has no correctness requirement, so a two-second delay is invisible, and a burst of fifty changes becomes one frame.
+
+**3 · Debounce flapping.** Do not mark someone offline the instant a connection drops — wait 30–60 seconds. Mobile clients disconnect constantly, and a green dot that flickers is worse than one that is slightly stale.
+
+**4 · Pull on demand.** For a large member list, do not push presence at all. Send the current state when the user opens the list, and refresh it while it is open.
+
+</Note>
+
+Typing indicators are the same problem in miniature and are best handled with a simple protocol: the client sends "typing" at most once every few seconds while the user types, the server broadcasts it with no persistence whatsoever, and the indicator expires on the receiving client after a few seconds without renewal. No "stopped typing" message is needed, which conveniently means a lost message cannot leave someone permanently typing.
+
+The general lesson is worth extracting because it applies to read receipts, cursor positions, live reactions and anything else in this family: **ephemeral signals must never touch durable storage, must be batched, and must be scoped to the audience actually looking.** Persisting a typing indicator to a database is a mistake with a remarkably high ceiling on how much damage it can do.
 
 <Question q="Check yourself: Presence traffic is 10× your message traffic. Where did it go wrong, and how do you fix it without removing the feature?">
-<p>The usual cause is broadcasting every status change to every member of every channel the user belongs to. One person opening a laptop, in ten channels averaging a thousand members, is ten thousand messages — for a green dot. Mobile clients making it worse by flapping on and off the network several times a minute is the second half of the problem.</p>
-<p>Four fixes, roughly in order of payoff. Scope to viewers: send presence only to users currently looking at that channel, not all members — typically 10–100× on its own. Batch: collect changes and flush every one to five seconds as a single message; presence has no correctness requirement so the delay is invisible. Debounce: wait 30–60 seconds before marking someone offline, which removes most flapping entirely. And for large member lists, stop pushing altogether — fetch presence when the user opens the list and refresh it while it is open.</p>
-<p>Underneath all four is one rule: ephemeral signals must never touch durable storage, must be batched, and must be scoped to the audience actually looking.</p>
+
+The usual cause is broadcasting every status change to every member of every channel the user belongs to. One person opening a laptop, in ten channels averaging a thousand members, is ten thousand messages — for a green dot. Mobile clients making it worse by flapping on and off the network several times a minute is the second half of the problem.
+
+Four fixes, roughly in order of payoff. Scope to viewers: send presence only to users currently looking at that channel, not all members — typically 10–100× on its own. Batch: collect changes and flush every one to five seconds as a single message; presence has no correctness requirement so the delay is invisible. Debounce: wait 30–60 seconds before marking someone offline, which removes most flapping entirely. And for large member lists, stop pushing altogether — fetch presence when the user opens the list and refresh it while it is open.
+
+Underneath all four is one rule: ephemeral signals must never touch durable storage, must be batched, and must be scoped to the audience actually looking.
+
 </Question>
 
 </Collapse>
-<Collapse id="ordering" title="8. Ordering, gaps and catch-up">
-<p>A connection that drops for eleven seconds creates a hole in the user's view of the world, and the client cannot see the hole — it only knows what it received. Making that recoverable requires the same primitive in every design: a <b>monotonic sequence number per stream</b>.</p>
-<p>Every message carries a sequence. The client tracks the highest it has seen. On reconnect it says "I have up to 4,812", and the server replays everything after that from a log. SSE has this built in — the server sets <code>id:</code> on each event and the browser sends <code>Last-Event-ID</code> automatically on reconnect. With WebSockets you build it yourself, and it is the first thing you should build.</p>
-<pre class="trace">
-{"\n"}
-{"client seq 4812   "}<span class="good">{"connected"}</span>{"\n"}
-{"  ├─ 4813 delivered            "}<span class="good">{"ok"}</span>{"\n"}
-{"  ├─ "}<span class="bad">{"connection drops — 4814, 4815, 4816 missed"}</span>{"\n"}
-{"  ├─ reconnect, client sends "}<b>{"last_seq=4813"}</b>{"\n"}
-{"  ├─ server replays 4814, 4815, 4816 from the channel log"}{"\n"}
-{"  └─ 4817 delivered live       "}<span class="good">{"ok — no gap, no duplicate"}</span>{"\n"}
-{"\n"}
-</pre>
-<p>Two decisions follow. First, <b>how far back can you replay?</b> The log is finite. If the client has been away longer than the retention window, you cannot replay — you must tell it so, and the client must resynchronise from scratch by fetching current state. Handle this explicitly with a "too far behind, resync" response, because the alternative is a client that silently believes it is up to date and is not.</p>
-<p>Second, <b>ordering guarantee within a stream.</b> Sequence numbers give you per-stream order, which is what users perceive: messages in one conversation appear in the order they were sent. Global ordering across all streams is far more expensive and nobody notices its absence. Scope your ordering guarantee to the conversation, the channel, or the document — the same partition-and-order reasoning as <a href="message-queues.html">Message Queues &amp; Async</a>.</p>
-<div class="note wild">
-<span class="label">◈ In the wild · Figma</span>
-    Figma leans on exactly this idea for multiplayer editing: every open document lives on a single server that owns the authoritative order of changes, so there is one place that decides what happened first. Rather than reach for full CRDTs, it uses a simpler last-writer-wins rule per object property, with that server acting as referee, so two people dragging the same rectangle converge without a merge conflict. When a client drops and comes back, it resyncs from the server's ordered log — the same "replay from where I left off" move described above. Their team wrote it up in <a href="https://www.figma.com/blog/how-figmas-multiplayer-technology-works/">how Figma's multiplayer technology works</a>.
-</div>
-<p>And since replay means a message can be delivered twice, clients must deduplicate by message ID. Idempotent handling on the receiving side is what makes at-least-once delivery acceptable, exactly as it is on the server side.</p>
 
+<Collapse id="ordering" title="8. Ordering, gaps and catch-up">
+
+A connection that drops for eleven seconds creates a hole in the user's view of the world, and the client cannot see the hole — it only knows what it received. Making that recoverable requires the same primitive in every design: a **monotonic sequence number per stream**.
+
+Every message carries a sequence. The client tracks the highest it has seen. On reconnect it says "I have up to 4,812", and the server replays everything after that from a log. SSE has this built in — the server sets `id:` on each event and the browser sends `Last-Event-ID` automatically on reconnect. With WebSockets you build it yourself, and it is the first thing you should build.
+
+```trace
+client seq 4812   ++connected++
+  ├─ 4813 delivered            ++ok++
+  ├─ ~~connection drops — 4814, 4815, 4816 missed~~
+  ├─ reconnect, client sends **last_seq=4813**
+  ├─ server replays 4814, 4815, 4816 from the channel log
+  └─ 4817 delivered live       ++ok — no gap, no duplicate++
+```
+
+Two decisions follow. First, **how far back can you replay?** The log is finite. If the client has been away longer than the retention window, you cannot replay — you must tell it so, and the client must resynchronise from scratch by fetching current state. Handle this explicitly with a "too far behind, resync" response, because the alternative is a client that silently believes it is up to date and is not.
+
+Second, **ordering guarantee within a stream.** Sequence numbers give you per-stream order, which is what users perceive: messages in one conversation appear in the order they were sent. Global ordering across all streams is far more expensive and nobody notices its absence. Scope your ordering guarantee to the conversation, the channel, or the document — the same partition-and-order reasoning as [Message Queues & Async](/guides/message-queues/).
+
+<Note type="wild" label="◈ In the wild · Figma">
+
+Figma leans on exactly this idea for multiplayer editing: every open document lives on a single server that owns the authoritative order of changes, so there is one place that decides what happened first. Rather than reach for full CRDTs, it uses a simpler last-writer-wins rule per object property, with that server acting as referee, so two people dragging the same rectangle converge without a merge conflict. When a client drops and comes back, it resyncs from the server's ordered log — the same "replay from where I left off" move described above. Their team wrote it up in [how Figma's multiplayer technology works](https://www.figma.com/blog/how-figmas-multiplayer-technology-works/).
+
+</Note>
+
+And since replay means a message can be delivered twice, clients must deduplicate by message ID. Idempotent handling on the receiving side is what makes at-least-once delivery acceptable, exactly as it is on the server side.
 
 <Question q="Check yourself: Your users report messages &quot;arriving out of order&quot; after a brief network blip. What's actually happening?">
-<p>Almost certainly not reordering — TCP guarantees order within a connection. What they are seeing is a <em>gap</em>: messages sent while they were disconnected never arrived, so a later message appears immediately after an earlier one with the middle missing. The client has no way to know something is absent unless you tell it.</p>
-<p>The fix is a monotonic sequence number per stream. The client tracks the highest it has seen and sends it on reconnect; the server replays everything after it from the channel log. If the client is further behind than your retention window, respond with an explicit "too far behind — resync" so it fetches current state rather than silently believing it is complete.</p>
-<p>Two details to get right: replay means duplicates are possible, so clients must deduplicate by message ID; and scope the ordering guarantee to a single stream (conversation, channel, document). Global ordering across all streams is far more expensive and nobody perceives its absence.</p>
+
+Almost certainly not reordering — TCP guarantees order within a connection. What they are seeing is a *gap*: messages sent while they were disconnected never arrived, so a later message appears immediately after an earlier one with the middle missing. The client has no way to know something is absent unless you tell it.
+
+The fix is a monotonic sequence number per stream. The client tracks the highest it has seen and sends it on reconnect; the server replays everything after it from the channel log. If the client is further behind than your retention window, respond with an explicit "too far behind — resync" so it fetches current state rather than silently believing it is complete.
+
+Two details to get right: replay means duplicates are possible, so clients must deduplicate by message ID; and scope the ordering guarantee to a single stream (conversation, channel, document). Global ordering across all streams is far more expensive and nobody perceives its absence.
+
 </Question>
 
 </Collapse>
+
 <Collapse id="reconnect" title="9. The reconnect storm">
-<p>This is the failure mode from the cold open, and it deserves its own section because it is the one that turns a small incident into a long one.</p>
-<p>The dynamics are brutally simple. Something disconnects a large number of clients simultaneously — a gateway crash, a deploy, a network blip, a load balancer restart. Every client notices at nearly the same moment and reconnects immediately. Reconnection is expensive: TLS handshake, authentication, subscription setup, state resync. The surviving capacity, already carrying the failed servers' share, receives a synchronised burst of the most expensive operation in the system. It falls over. Its clients now reconnect too. This is the metastable failure pattern from <a href="reliability-toolkit.html">The Reliability Toolkit</a> in its purest form: the system cannot recover even after the original trigger is gone, because the recovery traffic is itself the load.</p>
-<div class="note key">
-<span class="label">The defences, in order of importance</span>
-<b>1 · Jittered exponential backoff, client-side.</b> Not <code>2^n</code> seconds — <code>random(0, 2^n)</code> seconds. Without randomisation, backoff merely reschedules the stampede to a later, tidier moment. Cap it at 30–60 s and reset it only after a connection has been <em>stable</em> for a while, so flapping does not reset the backoff on every attempt.<br />
-<b>2 · Make reconnection cheap.</b> Resume from a sequence number instead of resending full state. A resume is a few kilobytes; a cold sync can be megabytes. This is the difference between a spike and an outage.<br />
-<b>3 · Admission control at the gateway.</b> Cap new connections per second and reject the excess quickly with a retry hint. A fast rejection that a client backs off from is vastly better than a slow acceptance that takes the server with it.<br />
-<b>4 · Server-directed reconnect.</b> On planned shutdown, send a close frame containing a suggested delay and, if you have it, a target gateway. Now you are scheduling the reconnects rather than receiving them.
-</div>
-<p>The uncomfortable part is that all four defences live in code you must have shipped <em>before</em> the incident, much of it on clients you cannot update quickly. A mobile app with a bad retry loop is a permanent liability — it will still be reconnecting aggressively months after you fix the server. Get backoff and jitter right in the client on day one; it is the highest-leverage twelve lines of code in the whole system.</p>
 
+This is the failure mode from the cold open, and it deserves its own section because it is the one that turns a small incident into a long one.
 
-<div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
-<DiagramRealTimeSystems2 />
-</div>
+The dynamics are brutally simple. Something disconnects a large number of clients simultaneously — a gateway crash, a deploy, a network blip, a load balancer restart. Every client notices at nearly the same moment and reconnects immediately. Reconnection is expensive: TLS handshake, authentication, subscription setup, state resync. The surviving capacity, already carrying the failed servers' share, receives a synchronised burst of the most expensive operation in the system. It falls over. Its clients now reconnect too. This is the metastable failure pattern from [The Reliability Toolkit](/guides/reliability-toolkit/) in its purest form: the system cannot recover even after the original trigger is gone, because the recovery traffic is itself the load.
 
+<Note type="key" label="The defences, in order of importance">
+
+**1 · Jittered exponential backoff, client-side.** Not `2^n` seconds — `random(0, 2^n)` seconds. Without randomisation, backoff merely reschedules the stampede to a later, tidier moment. Cap it at 30–60 s and reset it only after a connection has been *stable* for a while, so flapping does not reset the backoff on every attempt.
+
+**2 · Make reconnection cheap.** Resume from a sequence number instead of resending full state. A resume is a few kilobytes; a cold sync can be megabytes. This is the difference between a spike and an outage.
+
+**3 · Admission control at the gateway.** Cap new connections per second and reject the excess quickly with a retry hint. A fast rejection that a client backs off from is vastly better than a slow acceptance that takes the server with it.
+
+**4 · Server-directed reconnect.** On planned shutdown, send a close frame containing a suggested delay and, if you have it, a target gateway. Now you are scheduling the reconnects rather than receiving them.
+
+</Note>
+
+The uncomfortable part is that all four defences live in code you must have shipped *before* the incident, much of it on clients you cannot update quickly. A mobile app with a bad retry loop is a permanent liability — it will still be reconnecting aggressively months after you fix the server. Get backoff and jitter right in the client on day one; it is the highest-leverage twelve lines of code in the whole system.
+
+<Figure>
+  <DiagramRealTimeSystems2 />
+</Figure>
 
 <Question q="Check yourself: Reconnection is a standard client requirement. Explain why it is also your system's most dangerous load test, and name three server-side mitigations.">
-<p>Reconnection is a dangerous load test because a mass disconnect causes thousands of clients to attempt to reconnect simultaneously. A reconnect is much more expensive than a simple request, requiring a full TLS handshake, client authentication, and a complete state resynchronization. This surge can saturate server CPU and memory, causing surviving servers to fall over, creating a cascading metastable failure loop.</p>
-<p>Three server-side mitigations are:</p>
-      
-        
 
-* <strong>Server-Directed Reconnect:</strong> Send a close frame containing a randomized reconnect delay and targets, spacing out the stampede.
+Reconnection is a dangerous load test because a mass disconnect causes thousands of clients to attempt to reconnect simultaneously. A reconnect is much more expensive than a simple request, requiring a full TLS handshake, client authentication, and a complete state resynchronization. This surge can saturate server CPU and memory, causing surviving servers to fall over, creating a cascading metastable failure loop.
 
+Three server-side mitigations are:
 
-        
+- **Server-Directed Reconnect:** Send a close frame containing a randomized reconnect delay and targets, spacing out the stampede.
 
-* <strong>Admission Control:</strong> Set a strict limit on connection setup rates, quickly rejecting over-quota handshakes so they back off.
+- **Admission Control:** Set a strict limit on connection setup rates, quickly rejecting over-quota handshakes so they back off.
 
+- **Cheap Resumes:** Let clients resume from a sequence number to fetch only deltas instead of forcing a full cold sync.
 
-        
-
-* <strong>Cheap Resumes:</strong> Let clients resume from a sequence number to fetch only deltas instead of forcing a full cold sync.
-
-
-      
 </Question>
 
 </Collapse>
+
 <Collapse id="backpressure" title="10. Backpressure: the slow consumer">
-<p>You are pushing messages at a client on a train with two bars of signal. It cannot keep up. Where do the messages go?</p>
-<p>By default, into a buffer, and buffers grow. One slow client with a large channel subscription can accumulate tens of megabytes of undelivered messages, and a few hundred such clients can exhaust the memory of a gateway serving fifty thousand healthy ones. The healthy connections die because of the sick ones — a failure of isolation, which is precisely what bulkheads exist to prevent.</p>
-<div class="note warn">
-<span class="label">Unbounded queues are not a design, they are a deferral</span>
-    Every send queue must have an explicit maximum, and an explicit policy for what happens when it is full. There are only four options, and refusing to choose means choosing "grow until the process dies".
-</div>
-<div class="cards">
-<div class="card">
-<span class="pill mid">Drop oldest</span>
-<p class="tight">Keep the newest messages. Right for state-like streams — prices, positions, dashboards — where old values are worthless.</p>
-</div>
-<div class="card">
-<span class="pill mid">Drop newest</span>
-<p class="tight">Preserve what's queued. Rarely what you want, but correct when the queued items are already committed work.</p>
-</div>
-<div class="card">
-<span class="pill good">Collapse / conflate</span>
-<p class="tight">Replace superseded messages with the latest per key. A ticker sends one current price, not four hundred stale ones. The best option when it applies.</p>
-</div>
-<div class="card">
-<span class="pill good">Disconnect</span>
-<p class="tight">Close the connection and let the client reconnect and resync from its sequence number. Brutal, bounded, and correct — it converts an unbounded memory problem into a bounded reconnect.</p>
-</div>
-</div>
-<p>"Disconnect and let them resync" is the option teams resist and then adopt, because it is the only one whose worst case is bounded. It is also why section 8's sequence numbers are load-bearing: cheap resume is what makes aggressive disconnection an acceptable policy rather than a data-loss event.</p>
-<p>The related discipline is to <b>send less</b>. Coalesce rapid updates into one frame on a short timer. Send deltas rather than full objects. Let the client declare what it is actually looking at and stop sending it everything else — a client viewing one channel does not need live updates for the other four hundred it is a member of.</p>
+
+You are pushing messages at a client on a train with two bars of signal. It cannot keep up. Where do the messages go?
+
+By default, into a buffer, and buffers grow. One slow client with a large channel subscription can accumulate tens of megabytes of undelivered messages, and a few hundred such clients can exhaust the memory of a gateway serving fifty thousand healthy ones. The healthy connections die because of the sick ones — a failure of isolation, which is precisely what bulkheads exist to prevent.
+
+<Note type="warn" label="Unbounded queues are not a design, they are a deferral">
+Every send queue must have an explicit maximum, and an explicit policy for what happens when it is full. There are only four options, and refusing to choose means choosing "grow until the process dies".
+</Note>
+
+<CardGrid>
+  <Card pill="Drop oldest" tone="mid">
+    Keep the newest messages. Right for state-like streams — prices, positions, dashboards — where old values are worthless.
+  </Card>
+  <Card pill="Drop newest" tone="mid">
+    Preserve what's queued. Rarely what you want, but correct when the queued items are already committed work.
+  </Card>
+  <Card pill="Collapse / conflate" tone="good">
+    Replace superseded messages with the latest per key. A ticker sends one current price, not four hundred stale ones. The best option when it applies.
+  </Card>
+  <Card pill="Disconnect" tone="good">
+    Close the connection and let the client reconnect and resync from its sequence number. Brutal, bounded, and correct — it converts an unbounded memory problem into a bounded reconnect.
+  </Card>
+</CardGrid>
+
+"Disconnect and let them resync" is the option teams resist and then adopt, because it is the only one whose worst case is bounded. It is also why section 8's sequence numbers are load-bearing: cheap resume is what makes aggressive disconnection an acceptable policy rather than a data-loss event.
+
+The related discipline is to **send less**. Coalesce rapid updates into one frame on a short timer. Send deltas rather than full objects. Let the client declare what it is actually looking at and stop sending it everything else — a client viewing one channel does not need live updates for the other four hundred it is a member of.
 
 </Collapse>
-<Collapse id="gotchas" title="11. The gotchas that actually bite">
-<div class="note">
-<span class="label">1 · Idle timeouts you didn't set</span>
-    Load balancers, corporate proxies and mobile carrier NATs all close connections that have been idle for 30–120 seconds, usually without telling either side. Send application-level heartbeats every 20–30 s, and use them to detect death in both directions. A TCP connection can appear open for many minutes after the peer is gone.
-</div>
-<div class="note">
-<span class="label">2 · WebSockets bypass your HTTP middleware</span>
-    Auth, rate limiting, logging, tracing and request-size limits usually live in HTTP middleware. After the upgrade, none of it runs. Every message on a socket needs its own authorisation check and its own rate limit — a client that authenticated an hour ago may have lost permissions since.
-</div>
-<div class="note">
-<span class="label">3 · Cross-Site WebSocket Hijacking</span>
-    The WebSocket handshake sends cookies but is <b>not</b> protected by the same-origin policy. A malicious page can open a socket to your server as the logged-in user. You must validate the <code>Origin</code> header server-side and prefer a token in the first application message over cookie auth.
-</div>
-<div class="note">
-<span class="label">4 · Mobile backgrounding</span>
-    iOS and Android suspend background apps and their sockets, typically within seconds. Real-time delivery to a backgrounded app does not work and cannot be made to work — that path is APNs/FCM push notifications, which is a different system with different semantics. Design for the foreground/background transition explicitly; do not treat it as an edge case.
-</div>
-<div class="note">
-<span class="label">5 · Least-connections balancing with long connections</span>
-    Least-connections assumes connections are short. With persistent ones, the oldest server accumulates the most and never releases them, and a newly added server sits nearly idle. Balance new connections randomly or by capacity, and rebalance deliberately rather than hoping the algorithm does it.
-</div>
-<div class="note">
-<span class="label">6 · Per-recipient serialisation</span>
-    Encoding the same message once per recipient turns a 200-byte broadcast into megabytes of allocation on a large channel. Serialise once, send the same buffer to everyone. This single change has rescued more real-time systems than any other micro-optimisation.
-</div>
-<div class="note">
-<span class="label">7 · Testing at one connection per client</span>
-    Load tests from a single machine hit ephemeral port exhaustion at ~64k connections and rarely reproduce the thing that actually breaks you — the synchronised reconnect. Test the storm explicitly: connect 50,000 clients, kill a gateway, and watch what the survivors do.
-</div>
 
+<Collapse id="gotchas" title="11. The gotchas that actually bite">
+
+<Note label="1 · Idle timeouts you didn't set">
+Load balancers, corporate proxies and mobile carrier NATs all close connections that have been idle for 30–120 seconds, usually without telling either side. Send application-level heartbeats every 20–30 s, and use them to detect death in both directions. A TCP connection can appear open for many minutes after the peer is gone.
+</Note>
+
+<Note label="2 · WebSockets bypass your HTTP middleware">
+Auth, rate limiting, logging, tracing and request-size limits usually live in HTTP middleware. After the upgrade, none of it runs. Every message on a socket needs its own authorisation check and its own rate limit — a client that authenticated an hour ago may have lost permissions since.
+</Note>
+
+<Note label="3 · Cross-Site WebSocket Hijacking">
+The WebSocket handshake sends cookies but is **not** protected by the same-origin policy. A malicious page can open a socket to your server as the logged-in user. You must validate the `Origin` header server-side and prefer a token in the first application message over cookie auth.
+</Note>
+
+<Note label="4 · Mobile backgrounding">
+iOS and Android suspend background apps and their sockets, typically within seconds. Real-time delivery to a backgrounded app does not work and cannot be made to work — that path is APNs/FCM push notifications, which is a different system with different semantics. Design for the foreground/background transition explicitly; do not treat it as an edge case.
+</Note>
+
+<Note label="5 · Least-connections balancing with long connections">
+Least-connections assumes connections are short. With persistent ones, the oldest server accumulates the most and never releases them, and a newly added server sits nearly idle. Balance new connections randomly or by capacity, and rebalance deliberately rather than hoping the algorithm does it.
+</Note>
+
+<Note label="6 · Per-recipient serialisation">
+Encoding the same message once per recipient turns a 200-byte broadcast into megabytes of allocation on a large channel. Serialise once, send the same buffer to everyone. This single change has rescued more real-time systems than any other micro-optimisation.
+</Note>
+
+<Note label="7 · Testing at one connection per client">
+Load tests from a single machine hit ephemeral port exhaustion at ~64k connections and rarely reproduce the thing that actually breaks you — the synchronised reconnect. Test the storm explicitly: connect 50,000 clients, kill a gateway, and watch what the survivors do.
+</Note>
 
 <Question q="Check yourself: WebSockets upgrade from HTTP. Why is this upgrade a security and rate-limiting trap?">
-<p>Because once the connection upgrades, it bypasses all standard L7 HTTP gateway middleware (logging, authorization filters, body-size limits, and WAF rules). The connection stays open for hours, and the server-side framework does not run validation on incoming WebSocket frames.</p>
-<p>Concretely: a user authorised for a channel an hour ago may have been removed since, and their still-open socket will keep receiving and sending unless something checks. A client can send ten thousand messages a second with no rate limiter in the path. A malformed or enormous frame can hit a parser that was never fuzzed because "the gateway limits body size".</p>
-<p>So: check authorisation per message against current state (cached with a short TTL, not read from the socket's initial context), apply a per-connection rate limit, bound frame size, and re-verify the token periodically — closing the connection when it expires rather than trusting it indefinitely. And validate the <code>Origin</code> header at handshake time, since the same-origin policy does not protect WebSockets.</p>
+
+Because once the connection upgrades, it bypasses all standard L7 HTTP gateway middleware (logging, authorization filters, body-size limits, and WAF rules). The connection stays open for hours, and the server-side framework does not run validation on incoming WebSocket frames.
+
+Concretely: a user authorised for a channel an hour ago may have been removed since, and their still-open socket will keep receiving and sending unless something checks. A client can send ten thousand messages a second with no rate limiter in the path. A malformed or enormous frame can hit a parser that was never fuzzed because "the gateway limits body size".
+
+So: check authorisation per message against current state (cached with a short TTL, not read from the socket's initial context), apply a per-connection rate limit, bound frame size, and re-verify the token periodically — closing the connection when it expires rather than trusting it indefinitely. And validate the `Origin` header at handshake time, since the same-origin policy does not protect WebSockets.
+
 </Question>
 
 </Collapse>
+
 <Collapse id="recap" title="12. Recap in 60 seconds">
-<div class="recap">
-<p><b>Push makes servers stateful.</b> That one change breaks stateless load balancing, stateless deploys, and requests-per-second capacity planning all at once.</p>
-<p><b>Climb the ladder only as far as you must.</b> Polling for rare updates, SSE for server-to-client streams, WebSockets when the client streams too. SSE is the most under-used option by a wide margin.</p>
-<p><b>Connections are cheap; what you attach to them isn't.</b> 50 KB each is 5 GB at 100k. 500 KB each is 50 GB. Keep per-connection state small and send queues bounded.</p>
-<p><b>Something must know where the user is.</b> Registry, broadcast bus, or sharded topics — the last one is what scales.</p>
-<p><b>Fan out on write for normal users, on read for celebrities.</b> 100 million inbox writes for one post is not a design, and most of those inboxes are never opened.</p>
-<p><b>Presence costs rate × audience.</b> Scope to who's looking, batch on an interval, debounce flapping, and never persist ephemeral signals.</p>
-<p><b>Sequence numbers are load-bearing.</b> They give you gap-free reconnect, cheap resume, deduplication, and the freedom to disconnect slow clients.</p>
-<p><b>The reconnect is the load test.</b> Jittered backoff on the client, cheap resume, and admission control at the gateway — all shipped before the incident.</p>
-<p><b>Bound every send queue.</b> Drop, conflate, or disconnect. Unbounded buffering means one slow client can kill a server full of healthy ones.</p>
-<p><b>Heartbeat everything.</b> Idle timeouts you never configured will close your connections, and TCP will not tell you.</p>
-</div>
+
+<Recap>
+
+**Push makes servers stateful.** That one change breaks stateless load balancing, stateless deploys, and requests-per-second capacity planning all at once.
+
+**Climb the ladder only as far as you must.** Polling for rare updates, SSE for server-to-client streams, WebSockets when the client streams too. SSE is the most under-used option by a wide margin.
+
+**Connections are cheap; what you attach to them isn't.** 50 KB each is 5 GB at 100k. 500 KB each is 50 GB. Keep per-connection state small and send queues bounded.
+
+**Something must know where the user is.** Registry, broadcast bus, or sharded topics — the last one is what scales.
+
+**Fan out on write for normal users, on read for celebrities.** 100 million inbox writes for one post is not a design, and most of those inboxes are never opened.
+
+**Presence costs rate × audience.** Scope to who's looking, batch on an interval, debounce flapping, and never persist ephemeral signals.
+
+**Sequence numbers are load-bearing.** They give you gap-free reconnect, cheap resume, deduplication, and the freedom to disconnect slow clients.
+
+**The reconnect is the load test.** Jittered backoff on the client, cheap resume, and admission control at the gateway — all shipped before the incident.
+
+**Bound every send queue.** Drop, conflate, or disconnect. Unbounded buffering means one slow client can kill a server full of healthy ones.
+
+**Heartbeat everything.** Idle timeouts you never configured will close your connections, and TCP will not tell you.
+
+</Recap>
 
 </Collapse>
-<hr />
 
-<div class="footer">
-<p><b>Next:</b> that's every building block in the series. The last guide puts them together on one problem, end to end — traffic, caching, queues, consistency, failure — in <a href="design-the-checkout.html">Design the Checkout</a>.</p>
-<p><b>Sources and further reading:</b> Slack Engineering, "A Terrible, Horrible, No-Good, Very Bad Day at Slack" (2020) · Discord Engineering, "How Discord Scaled Elixir to 5,000,000 Concurrent Users" · WhatsApp/Erlang Factory, "Scaling to Millions of Simultaneous Connections" (2012) · RFC 6455 (The WebSocket Protocol) · WHATWG HTML, Server-Sent Events · Twitter Engineering, "Timelines at Scale" · Cloudflare, "Backpressure explained".</p>
-</div>
+<Footer>
+  <Fragment slot="next">
+    that's every building block in the series. The last guide puts them together on one problem, end to end — traffic, caching, queues, consistency, failure — in [Design the Checkout](/guides/design-the-checkout/).
+  </Fragment>
+  Slack Engineering, "A Terrible, Horrible, No-Good, Very Bad Day at Slack" (2020) ·
+  Discord Engineering, "How Discord Scaled Elixir to 5,000,000 Concurrent Users" ·
+  WhatsApp/Erlang Factory, "Scaling to Millions of Simultaneous Connections" (2012) ·
+  RFC 6455 (The WebSocket Protocol) ·
+  WHATWG HTML, Server-Sent Events ·
+  Twitter Engineering, "Timelines at Scale" ·
+  Cloudflare, "Backpressure explained".
+</Footer>

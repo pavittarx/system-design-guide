@@ -4,7 +4,14 @@ title: "Scaling Databases — A Practical Guide"
 description: "The database is where most systems hit their ceiling first. This is the ladder of moves — from tuning one box, to replicas, to sharding — and the trade-offs at every rung, with how real companies climbed it."
 chapter: "2"
 current: "2. Database Scaling"
-series: "A companion to <a href=\"understanding-caching.html\">Caching</a>, <a href=\"load-balancing.html\">Load Balancing</a>, <a href=\"message-queues.html\">Message Queues</a>, <a href=\"reliability-toolkit.html\">Reliability</a>, and <a href=\"consistency-cap.html\">Consistency &amp; CAP</a>."
+series:
+  lead: "A companion to"
+  guides:
+    - { slug: understanding-caching, label: "Caching" }
+    - load-balancing
+    - { slug: message-queues, label: "Message Queues" }
+    - { slug: reliability-toolkit, label: "Reliability" }
+    - consistency-cap
 sections:
   - id: "why"
     title: "Why the DB breaks first"
@@ -15,7 +22,7 @@ sections:
   - id: "worked-index"
     title: "Worked example: the unused index"
   - id: "replicas"
-    title: "Read replicas &amp; replication"
+    title: "Read replicas & replication"
   - id: "partition"
     title: "Partitioning"
   - id: "sharding"
@@ -25,9 +32,9 @@ sections:
   - id: "avoid"
     title: "Avoiding the query entirely"
   - id: "cap"
-    title: "CAP &amp; consistency"
+    title: "CAP & consistency"
   - id: "managed"
-    title: "Distributed SQL &amp; NoSQL"
+    title: "Distributed SQL & NoSQL"
   - id: "gotchas"
     title: "The gotchas that bite later"
   - id: "ladder"
@@ -35,120 +42,132 @@ sections:
   - id: "recap"
     title: "Recap in 60 seconds"
 ---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Pill, Question, Recap, Stack, Table } from '../../components';
 import DiagramDatabaseScaling1 from '../../components/diagrams/DiagramDatabaseScaling1.astro';
 import DiagramDatabaseScaling2 from '../../components/diagrams/DiagramDatabaseScaling2.astro';
 import DiagramDatabaseScaling3 from '../../components/diagrams/DiagramDatabaseScaling3.astro';
-import Collapse from '../../components/Collapse.astro';
-import Question from '../../components/Question.astro';
-import Footer from '../../components/Footer.astro';
 
-<div class="coldopen">
-<span class="tag">◇ 09:14 · the query that was fine last quarter</span>
-<p>Nobody changed the code. A single <code>SELECT</code> against the orders table has shipped untouched for eighteen months — at 100,000 rows it returned in 3 ms and nobody ever looked at it again. The table is now 40 million rows, the index that would have saved it was never created, and this morning that query takes six seconds, scanning the whole table and holding a database connection for every one of them. At 30 requests a second, six seconds each, you need 180 connections in flight against a pool of 100. The pool empties. And now the login page is timing out, and the health check is timing out, and the settings endpoint that has never in its life touched the orders table is timing out — because they are all queued behind a connection that isn't coming back. The CPU graph looks almost calm; the box is just waiting on disk. It is not a capacity problem. It is one missing index, and it took the whole product down.</p>
-</div>
+<ColdOpen tag="◇ 09:14 · the query that was fine last quarter">
+
+Nobody changed the code. A single `SELECT` against the orders table has shipped untouched for eighteen months — at 100,000 rows it returned in 3 ms and nobody ever looked at it again. The table is now 40 million rows, the index that would have saved it was never created, and this morning that query takes six seconds, scanning the whole table and holding a database connection for every one of them. At 30 requests a second, six seconds each, you need 180 connections in flight against a pool of 100. The pool empties. And now the login page is timing out, and the health check is timing out, and the settings endpoint that has never in its life touched the orders table is timing out — because they are all queued behind a connection that isn't coming back. The CPU graph looks almost calm; the box is just waiting on disk. It is not a capacity problem. It is one missing index, and it took the whole product down.
+
+</ColdOpen>
 
 <Collapse id="why" title="1. Why the database breaks first">
-<p>You can add app servers behind a <a href="load-balancing.html">load balancer</a> almost endlessly — they're stateless and interchangeable. The database is different: it holds <em>state</em>, and there's usually one authoritative copy that every write must go through. That makes it the natural bottleneck.</p>
-<p>Two pressures build up, and they need different fixes:</p>
-  
-    
 
-* <strong>Read pressure</strong> — too many queries reading data. Usually the <em>easier</em> problem; you can serve reads from copies.
+You can add app servers behind a [load balancer](/guides/load-balancing/) almost endlessly — they're stateless and interchangeable. The database is different: it holds *state*, and there's usually one authoritative copy that every write must go through. That makes it the natural bottleneck.
 
+Two pressures build up, and they need different fixes:
 
-    
+- **Read pressure** — too many queries reading data. Usually the *easier* problem; you can serve reads from copies.
+- **Write pressure** — too many inserts/updates, or simply too much data to fit and index on one machine. The *harder* problem, because all writes contend for the one source of truth.
 
-* <strong>Write pressure</strong> — too many inserts/updates, or simply too much data to fit and index on one machine. The <em>harder</em> problem, because all writes contend for the one source of truth.
+<Note type="key" label="The golden rule of scaling">
 
+Every rung up this ladder adds complexity and new failure modes. So climb it **only as far as your load actually forces you to** — and no further. Most applications never need sharding. Diagnose whether you're read-bound or write-bound first; it decides which rung you need. The next section is how you actually do that.
 
-  
-<div class="note key">
-<span class="label">The golden rule of scaling</span>
-    Every rung up this ladder adds complexity and new failure modes. So climb it <strong>only as far as your load actually forces you to</strong> — and no further. Most applications never need sharding. Diagnose whether you're read-bound or write-bound first; it decides which rung you need. The next section is how you actually do that.
-</div>
+</Note>
 
 </Collapse>
+
 <Collapse id="diagnose" title="2. Diagnose first: read-bound or write-bound?">
-<p>"The database is slow" is not a diagnosis, and the two pressures send you to completely different rungs. Worse, the wrong answer is expensive in a specific way: if you're write-bound and you add read replicas, you have not just failed to help — you've added machines that each replay <em>every single write</em>, plus a replication stream to monitor and a new failure mode. You made it worse and you paid for the privilege.</p>
-<p>Here is a triage you can genuinely run on a Monday morning. Five signals, in order of how quickly they answer the question.</p>
 
-<h3>1. The read/write mix, from the database's own counters</h3>
-<p>Every engine counts this for you. In Postgres, <code>pg_stat_database</code> gives you <code>tup_returned</code> / <code>tup_fetched</code> against <code>tup_inserted + tup_updated + tup_deleted</code>; <code>pg_stat_user_tables</code> breaks it down per table. In MySQL, <code>SHOW GLOBAL STATUS</code> gives you <code>Com_select</code> versus <code>Com_insert</code>/<code>Com_update</code>/<code>Com_delete</code>, and <code>Innodb_rows_read</code> versus <code>Innodb_rows_inserted</code>. These are cumulative since restart, so take two samples an hour apart and subtract — the absolute numbers are meaningless, the delta is the answer. They're row counters, not statement counters, so treat them as order-of-magnitude signal, not gospel.</p>
+"The database is slow" is not a diagnosis, and the two pressures send you to completely different rungs. Worse, the wrong answer is expensive in a specific way: if you're write-bound and you add read replicas, you have not just failed to help — you've added machines that each replay *every single write*, plus a replication stream to monitor and a new failure mode. You made it worse and you paid for the privilege.
 
-<h3>2. Which p99 actually moved</h3>
-<p>This is the one that settles arguments. Split your latency percentiles by statement type and look at what degraded <em>when the trouble started</em>, not what is slowest in absolute terms. Writes are often slower than reads on a healthy system; that's normal and tells you nothing. If SELECT p99 went from 40 ms to 600 ms while INSERT p99 barely moved, you are read-bound. If your writes are the ones climbing while reads hold steady, you are write-bound. <code>pg_stat_statements</code> (ordered by <code>total_exec_time</code>, not <code>mean_exec_time</code> — the query that costs you most is usually a fast one run absurdly often) or the MySQL slow query log will point at the specific statements.</p>
+Here is a triage you can genuinely run on a Monday morning. Five signals, in order of how quickly they answer the question.
 
-<h3>3. Replication lag climbing vs. lock wait time climbing</h3>
-<p>These two are near-perfect discriminators. <strong>Replication lag rising</strong> means the primary is generating write-ahead log faster than replicas can apply it — that is a write-volume problem by definition, and it is a leading indicator you'll hit the write ceiling. <strong>Lock wait time rising</strong> means writes are contending with each other or with long-running readers: check <code>pg_stat_activity</code> for <code>wait_event_type = 'Lock'</code>, or <code>SHOW ENGINE INNODB STATUS</code> for row-lock waits. Contention is a write-shaped problem too, but it's usually fixed by shortening transactions rather than by buying hardware.</p>
+### 1. The read/write mix, from the database's own counters
 
-<h3>4. Buffer cache hit ratio</h3>
-<p>From <code>pg_stat_database</code>: <code>blks_hit / (blks_hit + blks_read)</code>, or InnoDB's buffer pool hit rate. For an OLTP workload you want this above about 99%. When it starts falling, your working set has outgrown RAM and reads that used to be memory hits are now disk reads — a read-side problem that vertical scaling (more RAM) fixes instantly and cheaply. One honest caveat: Postgres counts a "miss" whenever it goes to the operating system, and the OS page cache may still serve it from memory, so the true disk-read count is lower than this ratio suggests. Use the trend, not the value.</p>
+Every engine counts this for you. In Postgres, `pg_stat_database` gives you `tup_returned` / `tup_fetched` against `tup_inserted + tup_updated + tup_deleted`; `pg_stat_user_tables` breaks it down per table. In MySQL, `SHOW GLOBAL STATUS` gives you `Com_select` versus `Com_insert`/`Com_update`/`Com_delete`, and `Innodb_rows_read` versus `Innodb_rows_inserted`. These are cumulative since restart, so take two samples an hour apart and subtract — the absolute numbers are meaningless, the delta is the answer. They're row counters, not statement counters, so treat them as order-of-magnitude signal, not gospel.
 
-<h3>5. Rows examined per row returned</h3>
-<p>The single most diagnostic number in this entire guide. For each expensive query, divide the rows the database <em>touched</em> by the rows it <em>gave back</em> — <code>Rows_examined</code> vs. <code>Rows_sent</code> in the MySQL slow log, or <code>Rows Removed by Filter</code> in <code>EXPLAIN (ANALYZE, BUFFERS)</code>. Near 1 is healthy. Above 100 means the database is doing a hundred times more work than the answer requires, and the fix is an index or a rewritten query — not a bigger machine, not replicas, and absolutely not sharding.</p>
+### 2. Which p99 actually moved
 
-<pre class="trace">
-{"\n"}
-<b>{"$ triage — pg_stat_database delta, 09:00 → 10:00"}</b>{"\n"}
-{"  rows returned by reads .............. 4,120,000,000"}{"\n"}
-{"  rows inserted + updated + deleted ...     3,900,000   ≈ 1000:1"}{"\n"}
-{"\n"}
-<b>{"$ which p99 moved (pg_stat_statements)"}</b>{"\n"}
-{"  SELECT p99 ..........  42 ms  →  610 ms   "}<span class="bad">{"◀ this one"}</span>{"\n"}
-{"  INSERT p99 ..........   6 ms  →    7 ms   "}<span class="good">{"unchanged"}</span>{"\n"}
-{"\n"}
-<b>{"$ supporting signals"}</b>{"\n"}
-{"  buffer cache hit ....  99.6%  →  91.2%    working set left RAM"}{"\n"}
-{"  rows examined/returned    1.2 →    3,400  "}<span class="bad">{"a plan went sequential"}</span>{"\n"}
-{"  replication lag .....  40 ms  (flat)      "}<span class="good">{"writes are fine"}</span>{"\n"}
-{"  lock wait time ......  flat              "}<span class="good">{"nothing is blocking"}</span>{"\n"}
-{"\n"}
-<b>{"verdict: READ-BOUND"}</b>{" → index the query, then cache, then replicas"}{"\n"}
-{"\n"}
-</pre>
+This is the one that settles arguments. Split your latency percentiles by statement type and look at what degraded *when the trouble started*, not what is slowest in absolute terms. Writes are often slower than reads on a healthy system; that's normal and tells you nothing. If SELECT p99 went from 40 ms to 600 ms while INSERT p99 barely moved, you are read-bound. If your writes are the ones climbing while reads hold steady, you are write-bound. `pg_stat_statements` (ordered by `total_exec_time`, not `mean_exec_time` — the query that costs you most is usually a fast one run absurdly often) or the MySQL slow query log will point at the specific statements.
 
-<h3>What each answer sends you to</h3>
-  
-    
+### 3. Replication lag climbing vs. lock wait time climbing
 
-* <strong>Read-bound → indexes, then cache, then replicas.</strong> In that order, and the order is not negotiable. Indexing is free and can be 100×. <a href="understanding-caching.html">Caching</a> removes the query entirely and needs no new database. Replicas are last because they're the first move that adds a distributed system, replication lag, and a whole class of read-your-writes bugs to your life.
+These two are near-perfect discriminators. **Replication lag rising** means the primary is generating write-ahead log faster than replicas can apply it — that is a write-volume problem by definition, and it is a leading indicator you'll hit the write ceiling. **Lock wait time rising** means writes are contending with each other or with long-running readers: check `pg_stat_activity` for `wait_event_type = 'Lock'`, or `SHOW ENGINE INNODB STATUS` for row-lock waits. Contention is a write-shaped problem too, but it's usually fixed by shortening transactions rather than by buying hardware.
 
+### 4. Buffer cache hit ratio
 
-    
+From `pg_stat_database`: `blks_hit / (blks_hit + blks_read)`, or InnoDB's buffer pool hit rate. For an OLTP workload you want this above about 99%. When it starts falling, your working set has outgrown RAM and reads that used to be memory hits are now disk reads — a read-side problem that vertical scaling (more RAM) fixes instantly and cheaply. One honest caveat: Postgres counts a "miss" whenever it goes to the operating system, and the OS page cache may still serve it from memory, so the true disk-read count is lower than this ratio suggests. Use the trend, not the value.
 
-* <strong>Write-bound → batching, then vertical, then partitioning, then sharding.</strong> Batching first, because the cheapest write is the one that shares a transaction and an <code>fsync</code> with 999 others — a <a href="message-queues.html">queue</a> in front of the database turns a spiky per-request write into a steady batched one. Then vertical: faster NVMe and more RAM move the write ceiling further than people expect. Then partitioning, which fixes size and maintenance but not throughput. Then sharding, which is the only thing on this list that actually multiplies write capacity. <strong>Read replicas do nothing for you here</strong> — every replica applies every write, so they add write work rather than absorbing it.
+### 5. Rows examined per row returned
 
+The single most diagnostic number in this entire guide. For each expensive query, divide the rows the database *touched* by the rows it *gave back* — `Rows_examined` vs. `Rows_sent` in the MySQL slow log, or `Rows Removed by Filter` in `EXPLAIN (ANALYZE, BUFFERS)`. Near 1 is healthy. Above 100 means the database is doing a hundred times more work than the answer requires, and the fix is an index or a rewritten query — not a bigger machine, not replicas, and absolutely not sharding.
 
-  
-<div class="note warn">
-<span class="label">The third answer nobody expects</span>
-    Sometimes you are neither. If the database's own CPU, I/O, and lock waits are all unremarkable but your application's latency is terrible, the bottleneck is in front of the database — connection-pool queueing, an N+1 loop issuing 400 tiny queries per request, or a missing timeout letting one slow endpoint hold every connection. That's the cold open at the top of this page, and no rung of this ladder fixes it. See <a href="#gotchas">the gotchas</a>.
-</div>
+```trace
+**$ triage — pg_stat_database delta, 09:00 → 10:00**
+  rows returned by reads .............. 4,120,000,000
+  rows inserted + updated + deleted ...     3,900,000   ≈ 1000:1
+
+**$ which p99 moved (pg_stat_statements)**
+  SELECT p99 ..........  42 ms  →  610 ms   ~~◀ this one~~
+  INSERT p99 ..........   6 ms  →    7 ms   ++unchanged++
+
+**$ supporting signals**
+  buffer cache hit ....  99.6%  →  91.2%    working set left RAM
+  rows examined/returned    1.2 →    3,400  ~~a plan went sequential~~
+  replication lag .....  40 ms  (flat)      ++writes are fine++
+  lock wait time ......  flat              ++nothing is blocking++
+
+**verdict: READ-BOUND** → index the query, then cache, then replicas
+```
+
+### What each answer sends you to
+
+- **Read-bound → indexes, then cache, then replicas.** In that order, and the order is not negotiable. Indexing is free and can be 100×. [Caching](/guides/understanding-caching/) removes the query entirely and needs no new database. Replicas are last because they're the first move that adds a distributed system, replication lag, and a whole class of read-your-writes bugs to your life.
+- **Write-bound → batching, then vertical, then partitioning, then sharding.** Batching first, because the cheapest write is the one that shares a transaction and an `fsync` with 999 others — a [queue](/guides/message-queues/) in front of the database turns a spiky per-request write into a steady batched one. Then vertical: faster NVMe and more RAM move the write ceiling further than people expect. Then partitioning, which fixes size and maintenance but not throughput. Then sharding, which is the only thing on this list that actually multiplies write capacity. **Read replicas do nothing for you here** — every replica applies every write, so they add write work rather than absorbing it.
+
+<Note type="warn" label="The third answer nobody expects">
+
+Sometimes you are neither. If the database's own CPU, I/O, and lock waits are all unremarkable but your application's latency is terrible, the bottleneck is in front of the database — connection-pool queueing, an N+1 loop issuing 400 tiny queries per request, or a missing timeout letting one slow endpoint hold every connection. That's the cold open at the top of this page, and no rung of this ladder fixes it. See [the gotchas](#gotchas).
+
+</Note>
 
 </Collapse>
+
 <Collapse id="rule-zero" title="3. Rule zero: make one box faster before you add boxes">
-<p>Before any distributed anything, exhaust the cheap wins on a single database. They routinely buy 10–100× and cost a fraction of the complexity.</p>
-<div class="cards">
-<div class="card"><h4>Indexing</h4><p>The single biggest lever. An index lets the DB jump to the rows it needs instead of scanning the whole table. Most "the database is slow" problems are really "this query has no usable index."</p></div>
-<div class="card"><h4>Query &amp; schema tuning</h4><p>Fix N+1 queries, avoid <code>SELECT *</code>, read the query plan (<code>EXPLAIN</code>), remove accidental full scans. Free performance hiding in plain sight.</p></div>
-<div class="card"><h4>Vertical scaling (scale up)</h4><p>Move to a bigger machine — more CPU, RAM, faster NVMe. Zero code change. The ceiling is real (and pricey at the top), but it buys you time.</p></div>
-<div class="card"><h4>Connection pooling</h4><p>Each DB connection costs memory; thousands of app instances can exhaust the server. A pooler (PgBouncer, RDS Proxy) multiplexes many clients onto few connections.</p></div>
-</div>
-<div class="note">
-<span class="label">Do this first, always</span>
-    A well-indexed query on a single beefy box beats a poorly-designed sharded cluster every time. Sharding a slow query just gives you many slow queries.
+
+Before any distributed anything, exhaust the cheap wins on a single database. They routinely buy 10–100× and cost a fraction of the complexity.
+
+<CardGrid>
+  <Card title="Indexing">
+    The single biggest lever. An index lets the DB jump to the rows it needs instead of scanning the whole table. Most "the database is slow" problems are really "this query has no usable index."
+  </Card>
+  <Card title="Query & schema tuning">
+    Fix N+1 queries, avoid `SELECT *`, read the query plan (`EXPLAIN`), remove accidental full scans. Free performance hiding in plain sight.
+  </Card>
+  <Card title="Vertical scaling (scale up)">
+    Move to a bigger machine — more CPU, RAM, faster NVMe. Zero code change. The ceiling is real (and pricey at the top), but it buys you time.
+  </Card>
+  <Card title="Connection pooling">
+    Each DB connection costs memory; thousands of app instances can exhaust the server. A pooler (PgBouncer, RDS Proxy) multiplexes many clients onto few connections.
+  </Card>
+</CardGrid>
+
+<Note label="Do this first, always">
+
+A well-indexed query on a single beefy box beats a poorly-designed sharded cluster every time. Sharding a slow query just gives you many slow queries.
+
 <Question q="Check yourself: Your p99 doubled after you raised the connection pool from 20 to 200. Throughput didn't change. Why?">
+
 Because 20 was already more than enough, and 200 doesn't create parallelism the database can use. Concurrency = throughput × latency, so 2,000 queries/second at 4 ms each is only 8 queries genuinely in flight. Past the point where the database can execute work in parallel — bounded by cores, disk queue depth, and lock contention — extra connections just interleave the same work into more slices, adding context switches and (in Postgres, where each connection is a process) real scheduler overhead. Total throughput stays flat while every individual query takes longer, which is exactly the shape of a p99 that doubles for no visible reason. The bigger loss is that the queue moved from your application, where you can time it out and shed it, into the database, where you can't.
+
 </Question>
-</div>
+
+</Note>
 
 </Collapse>
+
 <Collapse id="worked-index" title="4. Worked example: the index that isn't used">
-<p>"We have an index on that" is one of the most confidently wrong sentences in software. Having an index and <em>using</em> an index are separate facts, and only one of them makes queries fast. Here are the two ways it goes wrong, both of which look completely fine in code review.</p>
 
-<h3>Case 1: the composite index and the leftmost prefix</h3>
-<p>You have an <code>events</code> table, 40 million rows, and an index that was created for a dashboard query:</p>
+"We have an index on that" is one of the most confidently wrong sentences in software. Having an index and *using* an index are separate facts, and only one of them makes queries fast. Here are the two ways it goes wrong, both of which look completely fine in code review.
 
+### Case 1: the composite index and the leftmost prefix
+
+You have an `events` table, 40 million rows, and an index that was created for a dashboard query:
 
 ```sql
 CREATE INDEX idx_events_org_created ON events (org_id, created_at);
@@ -163,32 +182,31 @@ SELECT * FROM events
 WHERE  created_at > now() - interval '7 days';
 ```
 
+A composite B-tree index is sorted by its columns *in order*: first by `org_id`, and only within each `org_id` by `created_at`. Think of a phone book sorted by last name, then first name. Ask it for everyone called Okafor and it's instant. Ask it for everyone called James, with no last name, and the sort order is worthless — the Jameses are scattered across every page, so you may as well read the whole book. That's the **leftmost-prefix rule**: an index on `(a, b, c)` can serve predicates on `a`, on `a AND b`, and on `a AND b AND c`, but not on `b` alone or `c` alone. Some engines can partially work around this with a skip scan when the leading column has very few distinct values — MySQL 8.0, Oracle, and PostgreSQL 18 all have one — but it's a consolation prize, not a design you should rely on. The fix is a second index on `(created_at)`, or reordering the columns if the single-column query is the important one.
 
-<p>A composite B-tree index is sorted by its columns <em>in order</em>: first by <code>org_id</code>, and only within each <code>org_id</code> by <code>created_at</code>. Think of a phone book sorted by last name, then first name. Ask it for everyone called Okafor and it's instant. Ask it for everyone called James, with no last name, and the sort order is worthless — the Jameses are scattered across every page, so you may as well read the whole book. That's the <strong>leftmost-prefix rule</strong>: an index on <code>(a, b, c)</code> can serve predicates on <code>a</code>, on <code>a AND b</code>, and on <code>a AND b AND c</code>, but not on <code>b</code> alone or <code>c</code> alone. Some engines can partially work around this with a skip scan when the leading column has very few distinct values — MySQL 8.0, Oracle, and PostgreSQL 18 all have one — but it's a consolation prize, not a design you should rely on. The fix is a second index on <code>(created_at)</code>, or reordering the columns if the single-column query is the important one.</p>
-<p>Here's what the arbiter says. Before:</p>
-<pre class="trace">
-{"\n"}
-{"Seq Scan on events  (cost=0.00..982431.00 rows=1204 width=88)"}{"\n"}
-{"                    (actual time=0.031.."}<span class="bad">{"4128.774"}</span>{" rows=1187 loops=1)"}{"\n"}
-{"  Filter: (created_at &gt; (now() - '7 days'::interval))"}{"\n"}
-{"  "}<span class="bad">{"Rows Removed by Filter: 39998813"}</span>{"\n"}
-{"Execution Time: "}<span class="bad">{"4131.006 ms"}</span>{"\n"}
-{"\n"}
-</pre>
-<p>Forty million rows touched to return 1,187. After <code>CREATE INDEX idx_events_created ON events (created_at);</code>:</p>
-<pre class="trace">
-{"\n"}
-{"Index Scan using idx_events_created on events"}{"\n"}
-{"  (cost=0.44..421.90 rows=1204 width=88)"}{"\n"}
-{"  (actual time=0.028.."}<span class="good">{"1.902"}</span>{" rows=1187 loops=1)"}{"\n"}
-{"  Index Cond: (created_at &gt; (now() - '7 days'::interval))"}{"\n"}
-{"Execution Time: "}<span class="good">{"2.140 ms"}</span>{"\n"}
-{"\n"}
-</pre>
+Here's what the arbiter says. Before:
 
-<h3>Case 2: the function that hides the column</h3>
-<p>This one is subtler, because the index is on exactly the column you're filtering on:</p>
+```trace
+Seq Scan on events  (cost=0.00..982431.00 rows=1204 width=88)
+                    (actual time=0.031..~~4128.774~~ rows=1187 loops=1)
+  Filter: (created_at > (now() - '7 days'::interval))
+  ~~Rows Removed by Filter: 39998813~~
+Execution Time: ~~4131.006 ms~~
+```
 
+Forty million rows touched to return 1,187. After `CREATE INDEX idx_events_created ON events (created_at);`:
+
+```trace
+Index Scan using idx_events_created on events
+  (cost=0.44..421.90 rows=1204 width=88)
+  (actual time=0.028..++1.902++ rows=1187 loops=1)
+  Index Cond: (created_at > (now() - '7 days'::interval))
+Execution Time: ++2.140 ms++
+```
+
+### Case 2: the function that hides the column
+
+This one is subtler, because the index is on exactly the column you're filtering on:
 
 ```sql
 CREATE INDEX idx_users_email ON users (email);
@@ -197,327 +215,261 @@ CREATE INDEX idx_users_email ON users (email);
 SELECT * FROM users WHERE lower(email) = 'ada@example.com';
 ```
 
-
-<p>The index stores the values of <code>email</code>, verbatim. It has never seen <code>lower(email)</code> — as far as the planner is concerned that's a different expression, computed per row, and the only way to compute it for every row is to read every row. Same bug, different costumes: <code>WHERE created_at::date = '2026-01-01'</code>, <code>WHERE substr(sku, 1, 3) = 'ABC'</code>, and the classic <code>WHERE account_number = 12345</code> where <code>account_number</code> is a <code>varchar</code> and the implicit cast quietly wraps the column. The fix is to index the expression you actually query, or to stop applying the function:</p>
-
+The index stores the values of `email`, verbatim. It has never seen `lower(email)` — as far as the planner is concerned that's a different expression, computed per row, and the only way to compute it for every row is to read every row. Same bug, different costumes: `WHERE created_at::date = '2026-01-01'`, `WHERE substr(sku, 1, 3) = 'ABC'`, and the classic `WHERE account_number = 12345` where `account_number` is a `varchar` and the implicit cast quietly wraps the column. The fix is to index the expression you actually query, or to stop applying the function:
 
 ```sql
 CREATE INDEX idx_users_email_lower ON users (lower(email));
 -- or normalise on write, or use a case-insensitive column type (citext)
 ```
 
+<Note type="key" label="EXPLAIN is the arbiter, and dev data will lie to you">
 
+Never reason about index usage from first principles — run `EXPLAIN (ANALYZE, BUFFERS)` and read what the planner actually chose. Two things to watch for. First, `EXPLAIN` alone gives estimates; `ANALYZE` executes the query and gives you real row counts and timings (it also really runs the statement, so wrap writes in a transaction you roll back). Second, on a 5,000-row development table the planner will correctly choose a sequential scan no matter how perfect your index is, because reading the whole thing is genuinely cheaper. Index decisions have to be validated against production-shaped data volumes, or you're testing the wrong database.
 
-<div class="note key">
-<span class="label">EXPLAIN is the arbiter, and dev data will lie to you</span>
-    Never reason about index usage from first principles — run <code>EXPLAIN (ANALYZE, BUFFERS)</code> and read what the planner actually chose. Two things to watch for. First, <code>EXPLAIN</code> alone gives estimates; <code>ANALYZE</code> executes the query and gives you real row counts and timings (it also really runs the statement, so wrap writes in a transaction you roll back). Second, on a 5,000-row development table the planner will correctly choose a sequential scan no matter how perfect your index is, because reading the whole thing is genuinely cheaper. Index decisions have to be validated against production-shaped data volumes, or you're testing the wrong database.
-</div>
+</Note>
 
 </Collapse>
-<Collapse id="replicas" title="5. Read replicas &amp; replication">
+
+<Collapse id="replicas" title="5. Read replicas & replication">
 
 <DiagramDatabaseScaling1 />
 
-<p>The first distributed move, and the answer to <em>read</em> pressure. You keep one <strong>primary</strong> (a.k.a. leader) that takes all writes, and add <strong>replicas</strong> (followers) that receive a stream of those changes and serve read-only queries. Point your reporting, search, and read-heavy traffic at the replicas; the primary breathes easier.</p>
+The first distributed move, and the answer to *read* pressure. You keep one **primary** (a.k.a. leader) that takes all writes, and add **replicas** (followers) that receive a stream of those changes and serve read-only queries. Point your reporting, search, and read-heavy traffic at the replicas; the primary breathes easier.
 
-<div class="stack">
-<div class="layer">
-<div class="idx">W</div>
-<div class="body"><h4>Primary (leader)</h4><p>All writes go here. It's still the single write bottleneck — replicas don't help write load.</p></div>
-<div class="speed">source of truth</div>
-</div>
-<div class="arrow">↓ streams changes to ↓</div>
-<div class="layer">
-<div class="idx">R</div>
-<div class="body"><h4>Replica(s) (followers)</h4><p>Read-only copies. Add more to scale reads horizontally. Can also be promoted to primary on failure.</p></div>
-<div class="speed">serve reads</div>
-</div>
-</div>
+<Stack>
+  <Layer idx="W" title="Primary (leader)" speed="source of truth">
+    All writes go here. It's still the single write bottleneck — replicas don't help write load.
+  </Layer>
+  <Arrow>↓ streams changes to ↓</Arrow>
+  <Layer idx="R" title="Replica(s) (followers)" speed="serve reads">
+    Read-only copies. Add more to scale reads horizontally. Can also be promoted to primary on failure.
+  </Layer>
+</Stack>
 
-<h3>Synchronous vs. asynchronous replication</h3>
-<p>How the primary waits for replicas defines the core trade-off:</p>
-  
-    
+### Synchronous vs. asynchronous replication
 
-* <strong>Asynchronous</strong> (the common default) — the primary commits and replies immediately, then ships changes to replicas after the fact. Fast, but replicas trail slightly.
+How the primary waits for replicas defines the core trade-off:
 
+- **Asynchronous** (the common default) — the primary commits and replies immediately, then ships changes to replicas after the fact. Fast, but replicas trail slightly.
+- **Synchronous** — the primary waits for a replica to confirm before acknowledging the write. Little to no data loss on failover (depending on quorum config), but every write is slower.
 
-    
+<Note type="warn" label="The gotcha: replication lag">
 
-* <strong>Synchronous</strong> — the primary waits for a replica to confirm before acknowledging the write. Little to no data loss on failover (depending on quorum config), but every write is slower.
+With async replication, a replica is a few milliseconds (sometimes seconds, under load) *behind* the primary. So a user who writes a comment and immediately reloads from a replica may not see it — a "read-your-own-writes" bug. Fixes: route reads that need freshness to the primary, "stick" a user to the primary briefly after they write, or wait for the replica to catch up. This is the same *eventual consistency* trade-off as [cache staleness](/guides/understanding-caching/), one layer down — and the same dial the [Consistency & CAP guide](/guides/consistency-cap/) turns. There's more to this than the usual one-paragraph treatment; see [the gotchas](#gotchas) for why this bug only ever appears in production.
 
+</Note>
 
-  
-
-<div class="note warn">
-<span class="label">The gotcha: replication lag</span>
-    With async replication, a replica is a few milliseconds (sometimes seconds, under load) <em>behind</em> the primary. So a user who writes a comment and immediately reloads from a replica may not see it — a "read-your-own-writes" bug. Fixes: route reads that need freshness to the primary, "stick" a user to the primary briefly after they write, or wait for the replica to catch up. This is the same <em>eventual consistency</em> trade-off as <a href="understanding-caching.html">cache staleness</a>, one layer down — and the same dial the <a href="consistency-cap.html">Consistency &amp; CAP guide</a> turns. There's more to this than the usual one-paragraph treatment; see <a href="#gotchas">the gotchas</a> for why this bug only ever appears in production.
-</div>
-
-<p>Replicas scale reads, add read capacity cheaply, and give you a failover target — but they do <strong>nothing</strong> for write throughput or total data size. When those are the problem, you have to split the data itself.</p>
+Replicas scale reads, add read capacity cheaply, and give you a failover target — but they do **nothing** for write throughput or total data size. When those are the problem, you have to split the data itself.
 
 <Question q="Check yourself: Reads are slow. You add three read replicas. Nothing improves. What did you get wrong?">
-Almost certainly the diagnosis. A replica runs the same schema and the same query plan as the primary, so if the query is doing a sequential scan over 40 million rows, you have just bought three more machines to do that badly in parallel. Replicas add read <em>capacity</em>; they do nothing about work per query. Check rows examined per row returned before you check anything else. The other common answer is route mapping: traffic still goes to the primary because nothing routes it, or the queries sit inside transactions, which most routers pin to the primary by default.
+
+Almost certainly the diagnosis. A replica runs the same schema and the same query plan as the primary, so if the query is doing a sequential scan over 40 million rows, you have just bought three more machines to do that badly in parallel. Replicas add read *capacity*; they do nothing about work per query. Check rows examined per row returned before you check anything else. The other common answer is route mapping: traffic still goes to the primary because nothing routes it, or the queries sit inside transactions, which most routers pin to the primary by default.
+
 </Question>
 
-
 </Collapse>
+
 <Collapse id="partition" title="6. Partitioning: splitting a table">
 
 <DiagramDatabaseScaling2 />
 
-<p>Partitioning breaks one big table into smaller pieces. Two flavors, often confused:</p>
-  
-    
+Partitioning breaks one big table into smaller pieces. Two flavors, often confused:
 
-* <strong>Vertical partitioning</strong> — split by <em>columns / tables</em>: move different groups of tables (or rarely-used wide columns) onto separate databases. E.g. put "billing" tables on one DB and "content" tables on another. Figma started here.
+- **Vertical partitioning** — split by *columns / tables*: move different groups of tables (or rarely-used wide columns) onto separate databases. E.g. put "billing" tables on one DB and "content" tables on another. Figma started here.
+- **Horizontal partitioning** — split by *rows*: keep the same columns but divide rows across partitions by a key (e.g. by month, or by a hash). Within a single database engine this is just called "partitioning"; the app still queries one logical table and the engine prunes to the relevant partition.
 
-
-    
-
-* <strong>Horizontal partitioning</strong> — split by <em>rows</em>: keep the same columns but divide rows across partitions by a key (e.g. by month, or by a hash). Within a single database engine this is just called "partitioning"; the app still queries one logical table and the engine prunes to the relevant partition.
-
-
-  
-<p>Horizontal partitioning within one server helps with table size, index bloat, and lifecycle management (drop last year's partition instantly). But it's still one machine's CPU and IOPS. When you need to spread rows across <em>separate machines</em>, horizontal partitioning becomes <strong>sharding</strong>.</p>
+Horizontal partitioning within one server helps with table size, index bloat, and lifecycle management (drop last year's partition instantly). But it's still one machine's CPU and IOPS. When you need to spread rows across *separate machines*, horizontal partitioning becomes **sharding**.
 
 </Collapse>
+
 <Collapse id="sharding" title="7. Sharding: splitting across machines">
 
-<div class="note wild">
-<span class="label">◈ In the wild · Figma</span>
-    Figma ran a <em>single</em> Postgres instance on AWS's largest box in 2020. They first scaled by <strong>vertical partitioning</strong> — splitting tables like "Files" and "Organizations" onto separate databases — reaching about a dozen databases with replicas and caching by late 2022. But some tables hit terabytes and billions of rows, bumping into RDS IOPS limits and Postgres vacuum problems that partitioning couldn't fix. So they built <strong>horizontal sharding</strong> in-house: multiple shard keys (UserID, FileID, OrgID) rather than one, hashed for even distribution, with "colos" grouping related tables so joins stay within a shard — and a routing service, DBProxy. They deliberately chose this over CockroachDB or Vitess to stay on their known Postgres. First table sharded in September 2023 with ~10 seconds of partial impact. <a href="https://www.figma.com/blog/how-figmas-databases-team-lived-to-tell-the-scale/">(Figma Engineering)</a>
-</div>
+<Note type="wild" label="◈ In the wild · Figma">
 
-<p>Sharding is horizontal partitioning taken across independent database servers. Each <strong>shard</strong> holds a slice of the rows and runs on its own hardware, so writes, storage, and IOPS all scale out. It's the most powerful move — and by far the most complex. This is the top of the ladder for a reason.</p>
+Figma ran a *single* Postgres instance on AWS's largest box in 2020. They first scaled by **vertical partitioning** — splitting tables like "Files" and "Organizations" onto separate databases — reaching about a dozen databases with replicas and caching by late 2022. But some tables hit terabytes and billions of rows, bumping into RDS IOPS limits and Postgres vacuum problems that partitioning couldn't fix. So they built **horizontal sharding** in-house: multiple shard keys (UserID, FileID, OrgID) rather than one, hashed for even distribution, with "colos" grouping related tables so joins stay within a shard — and a routing service, DBProxy. They deliberately chose this over CockroachDB or Vitess to stay on their known Postgres. First table sharded in September 2023 with ~10 seconds of partial impact. [(Figma Engineering)](https://www.figma.com/blog/how-figmas-databases-team-lived-to-tell-the-scale/)
 
-<h3>The shard key is everything</h3>
-<p>You pick a <strong>shard key</strong> (user ID, org ID, channel ID…) and a function that maps each row's key to a shard. Every design decision flows from this choice, because it determines how evenly load spreads and which queries stay cheap.</p>
+</Note>
 
-<div class="note wild">
-<span class="label">◈ In the wild · Discord</span>
-    Discord stores billions and then trillions of chat messages, and its shard key is effectively a channel paired with a time bucket: messages are partitioned by channel and bucketed by time, which keeps one conversation's history together on a single shard while spreading the overall load across the cluster. Getting there took two migrations — MongoDB gave way to Cassandra, and Cassandra later gave way to ScyllaDB, a C++, Cassandra-compatible store, to tame tail latencies and the operational load of running the cluster. It's a clean illustration of the rule that the shard key should match the boundary your reads already draw. <a href="https://discord.com/blog/how-discord-stores-trillions-of-messages">(Discord Engineering)</a>
-</div>
+Sharding is horizontal partitioning taken across independent database servers. Each **shard** holds a slice of the rows and runs on its own hardware, so writes, storage, and IOPS all scale out. It's the most powerful move — and by far the most complex. This is the top of the ladder for a reason.
 
-<div class="table-scroll">
-<table>
-<thead><tr><th>Strategy</th><th>How it maps</th><th>Strength</th><th>Weakness</th></tr></thead>
-<tbody>
-<tr><td><strong>Range</strong></td><td>Contiguous key ranges (A–M, N–Z; or by date)</td><td>Fast range scans; easy to reason about</td><td>Hot spots — recent dates or popular ranges overload one shard</td></tr>
-<tr><td><strong>Hash</strong></td><td>Hash the key, mod by shard count</td><td>Very even distribution; no hot ranges</td><td>Range queries hit every shard; resharding reshuffles everything</td></tr>
-<tr><td><strong>Directory</strong></td><td>A lookup table maps key → shard</td><td>Flexible; can rebalance individual keys</td><td>The lookup service is a new dependency &amp; potential bottleneck</td></tr>
-</tbody>
-</table>
-</div>
+### The shard key is everything
 
-<h3>Why sharding is hard — the four taxes you pay</h3>
-  
-    
+You pick a **shard key** (user ID, org ID, channel ID…) and a function that maps each row's key to a shard. Every design decision flows from this choice, because it determines how evenly load spreads and which queries stay cheap.
 
-* <strong>Hot shards / hot keys</strong> — if one tenant, channel, or celebrity dominates, their shard melts while others idle. Hashing helps distribute keys, but a single hot <em>key</em> still lands on one shard. (This is the DB-level twin of the <a href="understanding-caching.html">"hot key" cache problem</a>.)
+<Note type="wild" label="◈ In the wild · Discord">
 
+Discord stores billions and then trillions of chat messages, and its shard key is effectively a channel paired with a time bucket: messages are partitioned by channel and bucketed by time, which keeps one conversation's history together on a single shard while spreading the overall load across the cluster. Getting there took two migrations — MongoDB gave way to Cassandra, and Cassandra later gave way to ScyllaDB, a C++, Cassandra-compatible store, to tame tail latencies and the operational load of running the cluster. It's a clean illustration of the rule that the shard key should match the boundary your reads already draw. [(Discord Engineering)](https://discord.com/blog/how-discord-stores-trillions-of-messages)
 
-    
+</Note>
 
-* <strong>Cross-shard queries &amp; joins</strong> — a query spanning shards must fan out and merge results; joins across shards are painful or impossible. Every accidental cross-shard join becomes an app-level problem.
+<Table>
 
+| Strategy | How it maps | Strength | Weakness |
+| -------- | ----------- | -------- | -------- |
+| **Range** | Contiguous key ranges (A–M, N–Z; or by date) | Fast range scans; easy to reason about | Hot spots — recent dates or popular ranges overload one shard |
+| **Hash** | Hash the key, mod by shard count | Very even distribution; no hot ranges | Range queries hit every shard; resharding reshuffles everything |
+| **Directory** | A lookup table maps key → shard | Flexible; can rebalance individual keys | The lookup service is a new dependency & potential bottleneck |
 
-    
+</Table>
 
-* <strong>Distributed transactions</strong> — an atomic change touching two shards needs two-phase commit or careful redesign. Most teams avoid cross-shard transactions entirely by choosing the key so related data lives together. What that atomicity really costs you across a network is the subject of the <a href="consistency-cap.html">Consistency &amp; CAP guide</a>.
+### Why sharding is hard — the four taxes you pay
 
+- **Hot shards / hot keys** — if one tenant, channel, or celebrity dominates, their shard melts while others idle. Hashing helps distribute keys, but a single hot *key* still lands on one shard. (This is the DB-level twin of the ["hot key" cache problem](/guides/understanding-caching/).)
+- **Cross-shard queries & joins** — a query spanning shards must fan out and merge results; joins across shards are painful or impossible. Every accidental cross-shard join becomes an app-level problem.
+- **Distributed transactions** — an atomic change touching two shards needs two-phase commit or careful redesign. Most teams avoid cross-shard transactions entirely by choosing the key so related data lives together. What that atomicity really costs you across a network is the subject of the [Consistency & CAP guide](/guides/consistency-cap/).
+- **Rebalancing & resharding** — adding shards means moving live data without downtime. Consistent hashing and logical-vs-physical shard separation exist largely to make this survivable.
 
-    
+<Note label="The pro move: logical vs. physical shards">
 
-* <strong>Rebalancing &amp; resharding</strong> — adding shards means moving live data without downtime. Consistent hashing and logical-vs-physical shard separation exist largely to make this survivable.
+Create many *logical* shards up front (say 1,000) and pack them onto a few *physical* machines. To grow, you move logical shards to new machines — no re-hashing of keys. Instagram and Figma both lean on this split; it's what makes resharding a data-move instead of a rewrite.
 
+</Note>
 
-  
-
-<div class="note">
-<span class="label">The pro move: logical vs. physical shards</span>
-    Create many <em>logical</em> shards up front (say 1,000) and pack them onto a few <em>physical</em> machines. To grow, you move logical shards to new machines — no re-hashing of keys. Instagram and Figma both lean on this split; it's what makes resharding a data-move instead of a rewrite.
-</div>
-<p>One assumption underneath all of this deserves saying out loud: sharding presumes your application tier is stateless, so that any app server can talk to any shard and be replaced at will. If your app servers are still holding per-user state in local memory, fix that first — see the <a href="load-balancing.html">Load Balancing guide</a>. A sharded database behind sticky, stateful app servers is two hard problems wearing one trench coat.</p>
+One assumption underneath all of this deserves saying out loud: sharding presumes your application tier is stateless, so that any app server can talk to any shard and be replaced at will. If your app servers are still holding per-user state in local memory, fix that first — see the [Load Balancing guide](/guides/load-balancing/). A sharded database behind sticky, stateful app servers is two hard problems wearing one trench coat.
 
 </Collapse>
+
 <Collapse id="worked-shard" title="8. Worked example: picking a shard key, as arithmetic">
-<p>Shard-key choice is usually taught as a list of strategies. It's better understood as arithmetic plus a short list of queries you refuse to make slow. Let's do it properly on a Slack-shaped product: <strong>workspaces</strong> contain <strong>channels</strong>, channels contain <strong>messages</strong>, and everything a user does is scoped to one workspace at a time.</p>
 
-<h3>Step 1: the numbers</h3>
-<pre class="trace">
-{"\n"}
-<b>{"$ the shape of the data"}</b>{"\n"}
-{"  workspaces .......................... 250,000"}{"\n"}
-{"  messages / day ...................... 30,000,000"}{"\n"}
-{"  avg row + index overhead ............ 400 bytes"}{"\n"}
-{"  data added per day .................. 12 GB"}{"\n"}
-{"  retention ........................... 2 years (730 days)"}{"\n"}
-{"\n"}
-<b>{"$ therefore"}</b>{"\n"}
-{"  total rows .......... 30M × 730 ..... 21,900,000,000"}{"\n"}
-{"  total size .......... 21.9B × 400B .. ~8.8 TB"}{"\n"}
-{"  comfortable data per shard .......... ~1.5 TB"}{"\n"}
-{"  minimum shards ...... 8.8 / 1.5 ..... 5.9  →  "}<b>{"6"}</b>{"\n"}
-{"  provisioned (headroom, power of two)  "}<b>{"16"}</b>{"\n"}
-{"  logical shards ...................... 1,024  (64 per machine)"}{"\n"}
-{"\n"}
-<b>{"$ write rate"}</b>{"\n"}
-{"  average ............. 30M / 86,400 .. ~350 writes/s"}{"\n"}
-{"  peak (4× average) ................... ~1,400 writes/s"}{"\n"}
-{"  per shard at 16 shards ..............   ~90 writes/s"}{"\n"}
-{"\n"}
-</pre>
-<p>Read that last line again, because it's the most useful thing in this section. Ninety writes per second is <em>nothing</em>. A laptop does ninety writes per second. You are not sharding because of write throughput — you are sharding because 8.8 TB of hot data with its indexes does not fit comfortably on one machine, and because a table of 22 billion rows makes every maintenance operation, backup, and schema change a negotiation. Knowing <em>which</em> constraint is forcing your hand changes what a good shard key looks like.</p>
+Shard-key choice is usually taught as a list of strategies. It's better understood as arithmetic plus a short list of queries you refuse to make slow. Let's do it properly on a Slack-shaped product: **workspaces** contain **channels**, channels contain **messages**, and everything a user does is scoped to one workspace at a time.
 
-<h3>Step 2: the candidates</h3>
-<p>For each key, ask two questions: which queries stay on one shard, and what does the distribution actually look like?</p>
-<div class="table-scroll">
-<table>
-<thead><tr><th>Shard key</th><th>What stays single-shard</th><th>What breaks</th><th>Verdict</th></tr></thead>
-<tbody>
-<tr>
-<td><strong>message_id</strong> (hashed)</td>
-<td>Fetching one message by ID. That's the whole list.</td>
-<td>"Last 50 messages in this channel" — the single most common query in the product — must ask all 16 shards, sort the merged result, and discard almost all of it. Every read is scatter-gather.</td>
-<td><span class="pill bad">no</span> Perfect distribution, useless access pattern</td>
-</tr>
-<tr>
-<td><strong>time / message_id range</strong></td>
-<td>Recent-history reads land on the newest shard. Dropping old data is instant.</td>
-<td>100% of writes go to whichever shard holds "now". You have built a 16-machine cluster with one machine doing all the work — the exact hot spot you were escaping. Deep scrollback fans out.</td>
-<td><span class="pill bad">no</span> Great for archival partitioning, fatal as a shard key</td>
-</tr>
-<tr>
-<td><strong>user_id</strong></td>
-<td>"Everything I ever posted." Writes distribute beautifully — users are numerous and roughly interchangeable.</td>
-<td>A channel's messages are written by hundreds of different users, so they land on every shard. Rendering one channel is a fan-out to all 16, every time. You've optimised for a page nobody opens.</td>
-<td><span class="pill bad">no</span> Distribution is not the constraint</td>
-</tr>
-<tr>
-<td><strong>channel_id</strong></td>
-<td>Channel history — the hot query — is one shard, one index scan. Very good.</td>
-<td>Anything workspace-wide fans out: unread badges across 40 channels, "mark all read", workspace search, permission checks against a membership table that lives somewhere else entirely.</td>
-<td><span class="pill mid">close</span> Right instinct, one level too fine</td>
-</tr>
-<tr>
-<td><strong>workspace_id</strong></td>
-<td>Channels, memberships, messages, unread state, and search for a given workspace all sit on one machine. Nearly every query the product issues is already workspace-scoped, so nearly every query is single-shard — and you can still run ordinary ACID transactions and joins <em>within</em> a workspace.</td>
-<td>Distribution is a power law, not a uniform one, and cross-workspace queries have nowhere to go.</td>
-<td><span class="pill good">yes</span> The access pattern decides it</td>
-</tr>
-</tbody>
-</table>
-</div>
+### Step 1: the numbers
 
-<h3>Step 3: what workspace_id costs you, stated honestly</h3>
-<p>This is the part that gets skipped, so here it is with numbers attached.</p>
-  
-    
+```trace
+**$ the shape of the data**
+  workspaces .......................... 250,000
+  messages / day ...................... 30,000,000
+  avg row + index overhead ............ 400 bytes
+  data added per day .................. 12 GB
+  retention ........................... 2 years (730 days)
 
-* <strong>One workspace can outgrow a shard.</strong> Workspace sizes follow a power law: the median workspace has a dozen people, and your largest customer has 200,000 seats generating 2 million messages a day. That's 800 MB/day, roughly 290 GB/year — survivable on storage, but it is <em>6.7% of all your writes on a single shard</em>, when an even split across 16 shards would be 6.25%. Your biggest customer, by themselves, is already more than one average shard's entire load. And you cannot split them without a second-level key. So you need a plan before you need it: a directory-style mapping so whales can be pinned to dedicated shards, and a sub-sharding scheme (by <code>channel_id</code>, within the workspace) for the day one customer stops fitting. Hash-and-forget is not available to you.
+**$ therefore**
+  total rows .......... 30M × 730 ..... 21,900,000,000
+  total size .......... 21.9B × 400B .. ~8.8 TB
+  comfortable data per shard .......... ~1.5 TB
+  minimum shards ...... 8.8 / 1.5 ..... 5.9  →  **6**
+  provisioned (headroom, power of two)  **16**
+  logical shards ...................... 1,024  (64 per machine)
 
+**$ write rate**
+  average ............. 30M / 86,400 .. ~350 writes/s
+  peak (4× average) ................... ~1,400 writes/s
+  per shard at 16 shards ..............   ~90 writes/s
+```
 
-    
+Read that last line again, because it's the most useful thing in this section. Ninety writes per second is *nothing*. A laptop does ninety writes per second. You are not sharding because of write throughput — you are sharding because 8.8 TB of hot data with its indexes does not fit comfortably on one machine, and because a table of 22 billion rows makes every maintenance operation, backup, and schema change a negotiation. Knowing *which* constraint is forcing your hand changes what a good shard key looks like.
 
-* <strong>Cross-workspace search becomes a fan-out.</strong> Any query that isn't scoped to one workspace — global admin search, "which workspaces use this integration", usage analytics, compliance export across an enterprise grid of 40 linked workspaces — now touches every shard and waits for the slowest one. The usual answer isn't to make that fast on the shards; it's to stop asking the shards. Push those into a dedicated search index or an analytics warehouse fed by change-data-capture, and let the sharded store answer only the workspace-scoped questions it's shaped for.
+### Step 2: the candidates
 
+For each key, ask two questions: which queries stay on one shard, and what does the distribution actually look like?
 
-    
+<Table>
 
-* <strong>Rebalancing is now a real activity.</strong> Because the distribution is uneven and changes as customers grow, you will move logical shards between machines on purpose, periodically, forever. That's the trade for keeping the hot path single-shard, and it's the right trade — but it's a job someone owns, not a config value.
+| Shard key | What stays single-shard | What breaks | Verdict |
+| --------- | ----------------------- | ----------- | ------- |
+| **message_id** (hashed) | Fetching one message by ID. That's the whole list. | "Last 50 messages in this channel" — the single most common query in the product — must ask all 16 shards, sort the merged result, and discard almost all of it. Every read is scatter-gather. | <Pill tone="bad">no</Pill> Perfect distribution, useless access pattern |
+| **time / message_id range** | Recent-history reads land on the newest shard. Dropping old data is instant. | 100% of writes go to whichever shard holds "now". You have built a 16-machine cluster with one machine doing all the work — the exact hot spot you were escaping. Deep scrollback fans out. | <Pill tone="bad">no</Pill> Great for archival partitioning, fatal as a shard key |
+| **user_id** | "Everything I ever posted." Writes distribute beautifully — users are numerous and roughly interchangeable. | A channel's messages are written by hundreds of different users, so they land on every shard. Rendering one channel is a fan-out to all 16, every time. You've optimised for a page nobody opens. | <Pill tone="bad">no</Pill> Distribution is not the constraint |
+| **channel_id** | Channel history — the hot query — is one shard, one index scan. Very good. | Anything workspace-wide fans out: unread badges across 40 channels, "mark all read", workspace search, permission checks against a membership table that lives somewhere else entirely. | <Pill tone="mid">close</Pill> Right instinct, one level too fine |
+| **workspace_id** | Channels, memberships, messages, unread state, and search for a given workspace all sit on one machine. Nearly every query the product issues is already workspace-scoped, so nearly every query is single-shard — and you can still run ordinary ACID transactions and joins *within* a workspace. | Distribution is a power law, not a uniform one, and cross-workspace queries have nowhere to go. | <Pill tone="good">yes</Pill> The access pattern decides it |
 
+</Table>
 
+### Step 3: what workspace_id costs you, stated honestly
 
-<Question q="Check yourself: You shard by <code>user_id</code>. One customer's shared service account generates most of their API traffic and melts the shard it lands on. What should you have done?">
-Hashing distributes <em>keys</em> evenly, not <em>load per key</em> — a single hot key always lands on exactly one shard no matter how good your hash is, so no hashing scheme was ever going to save you here. Hot keys need their own mechanism: a directory-style mapping so that key can be pinned to a dedicated shard, a second-level key to split it, or request coalescing and caching in front so the shard sees one query instead of a thousand. And there's a second mistake underneath: in a tenant-scoped product, <code>user_id</code> scatters each customer's data across every shard, so all your tenant-scoped queries were already fanning out. The tenant boundary was the shard key.
+This is the part that gets skipped, so here it is with numbers attached.
+
+- **One workspace can outgrow a shard.** Workspace sizes follow a power law: the median workspace has a dozen people, and your largest customer has 200,000 seats generating 2 million messages a day. That's 800 MB/day, roughly 290 GB/year — survivable on storage, but it is *6.7% of all your writes on a single shard*, when an even split across 16 shards would be 6.25%. Your biggest customer, by themselves, is already more than one average shard's entire load. And you cannot split them without a second-level key. So you need a plan before you need it: a directory-style mapping so whales can be pinned to dedicated shards, and a sub-sharding scheme (by `channel_id`, within the workspace) for the day one customer stops fitting. Hash-and-forget is not available to you.
+- **Cross-workspace search becomes a fan-out.** Any query that isn't scoped to one workspace — global admin search, "which workspaces use this integration", usage analytics, compliance export across an enterprise grid of 40 linked workspaces — now touches every shard and waits for the slowest one. The usual answer isn't to make that fast on the shards; it's to stop asking the shards. Push those into a dedicated search index or an analytics warehouse fed by change-data-capture, and let the sharded store answer only the workspace-scoped questions it's shaped for.
+- **Rebalancing is now a real activity.** Because the distribution is uneven and changes as customers grow, you will move logical shards between machines on purpose, periodically, forever. That's the trade for keeping the hot path single-shard, and it's the right trade — but it's a job someone owns, not a config value.
+
+<Question q="Check yourself: You shard by user_id. One customer's shared service account generates most of their API traffic and melts the shard it lands on. What should you have done?">
+
+Hashing distributes *keys* evenly, not *load per key* — a single hot key always lands on exactly one shard no matter how good your hash is, so no hashing scheme was ever going to save you here. Hot keys need their own mechanism: a directory-style mapping so that key can be pinned to a dedicated shard, a second-level key to split it, or request coalescing and caching in front so the shard sees one query instead of a thousand. And there's a second mistake underneath: in a tenant-scoped product, `user_id` scatters each customer's data across every shard, so all your tenant-scoped queries were already fanning out. The tenant boundary was the shard key.
+
 </Question>
 
-  
-<div class="note key">
-<span class="label">The rule underneath the arithmetic</span>
-    Pick the shard key that matches the boundary your product already draws around data. If almost every request is scoped to one workspace, one tenant, or one account, then that is your shard key — because it turns "distributed database" back into "a lot of small ordinary databases" for the 99% of queries that stay inside the boundary. Even distribution is a nice-to-have. Keeping the hot query on one shard is the requirement. Slack's own move onto Vitess used workspace as the dominant sharding key for exactly this reason.
-</div>
+<Note type="key" label="The rule underneath the arithmetic">
+
+Pick the shard key that matches the boundary your product already draws around data. If almost every request is scoped to one workspace, one tenant, or one account, then that is your shard key — because it turns "distributed database" back into "a lot of small ordinary databases" for the 99% of queries that stay inside the boundary. Even distribution is a nice-to-have. Keeping the hot query on one shard is the requirement. Slack's own move onto Vitess used workspace as the dominant sharding key for exactly this reason.
+
+</Note>
 
 </Collapse>
+
 <Collapse id="avoid" title="9. Avoiding the query entirely">
-<p>The cheapest query is the one you never run. Several techniques reduce database load without splitting it:</p>
-  
-    
 
-* <strong>Caching</strong> — put Redis/Memcached in front of the DB so hot reads never reach it. Often the highest-leverage move before you shard, and the rung immediately before replicas — see the <a href="understanding-caching.html">Caching guide</a>.
+The cheapest query is the one you never run. Several techniques reduce database load without splitting it:
 
-
-    
-
-* <strong>Denormalization</strong> — store data pre-joined/pre-computed so reads are a single lookup, trading write complexity and some redundancy for read speed. Standard in NoSQL data modeling.
-
-
-    
-
-* <strong>Materialized views</strong> — precompute an expensive aggregate/report and refresh it periodically, instead of recomputing per request.
-
-
-    
-
-* <strong>CQRS (read models)</strong> — separate the write model from purpose-built read models (often kept fresh via events), so reads and writes scale independently. The event stream that keeps them fresh is a <a href="message-queues.html">message queue</a>.
-
-
-    
-
-* <strong>Write buffering</strong> — put a queue between the request and the database so bursts are absorbed and writes arrive batched and steady instead of spiky. It converts a peak-throughput problem into a latency-budget problem, which is a much easier problem. Again: the <a href="message-queues.html">Message Queues guide</a>.
-
-
-  
+- **Caching** — put Redis/Memcached in front of the DB so hot reads never reach it. Often the highest-leverage move before you shard, and the rung immediately before replicas — see the [Caching guide](/guides/understanding-caching/).
+- **Denormalization** — store data pre-joined/pre-computed so reads are a single lookup, trading write complexity and some redundancy for read speed. Standard in NoSQL data modeling.
+- **Materialized views** — precompute an expensive aggregate/report and refresh it periodically, instead of recomputing per request.
+- **CQRS (read models)** — separate the write model from purpose-built read models (often kept fresh via events), so reads and writes scale independently. The event stream that keeps them fresh is a [message queue](/guides/message-queues/).
+- **Write buffering** — put a queue between the request and the database so bursts are absorbed and writes arrive batched and steady instead of spiky. It converts a peak-throughput problem into a latency-budget problem, which is a much easier problem. Again: the [Message Queues guide](/guides/message-queues/).
 
 </Collapse>
-<Collapse id="cap" title="10. CAP &amp; consistency: the trade-off underneath">
-<p>The moment your data lives on more than one node, the <strong>CAP theorem</strong> applies: when a network partition splits your nodes, you must choose between <strong>Consistency</strong> (every read sees the latest write) and <strong>Availability</strong> (every request still gets an answer). You can't have both during a partition.</p>
-<p>In practice this shows up as a spectrum you tune per workload:</p>
-  
-    
 
-* <strong>Strong consistency</strong> — always read the latest value. Simplest to reason about; costs latency and availability. Right for money, inventory, auth.
+<Collapse id="cap" title="10. CAP & consistency: the trade-off underneath">
 
+The moment your data lives on more than one node, the **CAP theorem** applies: when a network partition splits your nodes, you must choose between **Consistency** (every read sees the latest write) and **Availability** (every request still gets an answer). You can't have both during a partition.
 
-    
+In practice this shows up as a spectrum you tune per workload:
 
-* <strong>Eventual consistency</strong> — reads may be briefly stale but the system stays fast and available. Right for feeds, counts, timelines — the same call you made with cache TTLs and replication lag.
+- **Strong consistency** — always read the latest value. Simplest to reason about; costs latency and availability. Right for money, inventory, auth.
+- **Eventual consistency** — reads may be briefly stale but the system stays fast and available. Right for feeds, counts, timelines — the same call you made with cache TTLs and replication lag.
 
-
-  
-<p>Replication lag, quorum reads/writes, and "tunable consistency" in databases like Cassandra are all just knobs on this one dial. The <a href="consistency-cap.html">Consistency &amp; CAP guide</a> takes this apart properly, including why "CP" and "AP" are less binary than the theorem makes them sound.</p>
+Replication lag, quorum reads/writes, and "tunable consistency" in databases like Cassandra are all just knobs on this one dial. The [Consistency & CAP guide](/guides/consistency-cap/) takes this apart properly, including why "CP" and "AP" are less binary than the theorem makes them sound.
 
 </Collapse>
-<Collapse id="managed" title="11. Distributed SQL &amp; NoSQL: scaling as a built-in">
-<p>Instead of bolting sharding onto a single-node database, you can adopt an engine designed to scale horizontally from the start:</p>
-<div class="cards">
-<div class="card"><h4>Distributed / NewSQL</h4><p>Spanner, CockroachDB, TiDB, YugabyteDB — SQL and transactions, but data auto-shards and replicates across nodes. You get horizontal scale without hand-rolling a shard router.</p></div>
-<div class="card"><h4>Sharding middleware</h4><p>Vitess (born at YouTube for MySQL) and Citus (for Postgres) add sharding on top of engines you already know, transparently routing queries.</p></div>
-<div class="card"><h4>Wide-column NoSQL</h4><p>Cassandra, ScyllaDB, DynamoDB, Bigtable — built for massive write throughput and horizontal scale, at the cost of flexible queries and (often) strong consistency.</p></div>
-<div class="card"><h4>The trade-off</h4><p>These solve distribution for you, but impose their data model and consistency rules. You trade freedom and familiarity for scale that "just works."</p></div>
-</div>
+
+<Collapse id="managed" title="11. Distributed SQL & NoSQL: scaling as a built-in">
+
+Instead of bolting sharding onto a single-node database, you can adopt an engine designed to scale horizontally from the start:
+
+<CardGrid>
+  <Card title="Distributed / NewSQL">
+    Spanner, CockroachDB, TiDB, YugabyteDB — SQL and transactions, but data auto-shards and replicates across nodes. You get horizontal scale without hand-rolling a shard router.
+  </Card>
+  <Card title="Sharding middleware">
+    Vitess (born at YouTube for MySQL) and Citus (for Postgres) add sharding on top of engines you already know, transparently routing queries.
+  </Card>
+  <Card title="Wide-column NoSQL">
+    Cassandra, ScyllaDB, DynamoDB, Bigtable — built for massive write throughput and horizontal scale, at the cost of flexible queries and (often) strong consistency.
+  </Card>
+  <Card title="The trade-off">
+    These solve distribution for you, but impose their data model and consistency rules. You trade freedom and familiarity for scale that "just works."
+  </Card>
+</CardGrid>
 
 </Collapse>
+
 <Collapse id="gotchas" title="12. The gotchas that bite later">
-<p>None of these appear in the architecture diagram. All of them show up in the incident channel.</p>
 
-<h3>Connection pool sizing is Little's Law, not a vibe</h3>
-<p>Pool sizes get chosen by doubling until the errors stop. There is an actual formula, and it's the one queueing theory has been quietly holding out the whole time: <strong>concurrency = throughput × latency</strong>. If you serve 2,000 queries per second and the average query takes 4 ms, then <code>2,000 × 0.004 = 8</code> queries are in flight at any instant. Eight. A pool of 20 is comfortable headroom; a pool of 200 is 192 connections that will never be simultaneously useful.</p>
-<p>And an oversized pool isn't merely wasteful, it's actively harmful. A database can only do so much genuine parallel work — bounded by cores, by disk queue depth, by lock contention on the hot rows. Beyond that point, extra concurrent queries don't get executed in parallel, they get <em>interleaved</em>: the same total work, sliced into more pieces, with context switches and cache-line thrash between the slices. In Postgres each connection is a separate OS process with its own memory; 200 of them on a 16-core box means the scheduler spends real time deciding who runs next. Throughput stays flat while every individual query gets slower, so your p99 climbs even though nothing about the workload changed. The widely used rule of thumb (from HikariCP) is <code>(cores × 2) + effective_spindle_count</code> — a folk formula, not physics, but it lands in the right order of magnitude, which is tens, not hundreds.</p>
-<p>The part people miss: a <em>small</em> pool is a feature. When the pool is full, requests queue in your application, where you can see the queue, put a timeout on it, and shed load. When the pool is huge, the queue moves inside the database, where you can do none of those things.</p>
+None of these appear in the architecture diagram. All of them show up in the incident channel.
 
-<h3>Idle-in-transaction is a slow leak</h3>
-<p>A connection sitting in state <code>idle in transaction</code> has begun a transaction, read something, and then gone quiet — usually because the code made an HTTP call, or hit a breakpoint, or threw an exception on a path that forgot to roll back. It looks harmless in the connection list. It is not. That transaction holds a snapshot, and while it does, <code>VACUUM</code> cannot reclaim any row version that became dead <em>after</em> it started — not just in that table, anywhere in the database. So the dead tuples accumulate, the table and its indexes bloat, and every sequential scan against them now reads pages of garbage. Queries get slower with no code change and no traffic change, which makes it a genuinely awful thing to debug.</p>
-<p>Long-running read-only transactions do the same thing, and so does a replica running a long analytical query with <code>hot_standby_feedback</code> on — that pins the <em>primary's</em> vacuum horizon from another machine. Defences: set <code>idle_in_transaction_session_timeout</code> and <code>statement_timeout</code>, never perform network I/O inside a transaction, and alert on <code>pg_stat_activity</code> rows where <code>state = 'idle in transaction'</code> and <code>xact_start</code> is older than a minute.</p>
+### Connection pool sizing is Little's Law, not a vibe
 
-<h3>Online schema migration: <code>ALTER TABLE</code> is an outage waiting for a big enough table</h3>
-<p>On a small table, <code>ALTER TABLE</code> is instant and you learn nothing. On a hot 40-million-row table it can take an exclusive lock for minutes while it rewrites the file — and in Postgres the failure mode is worse than the wait. The lock request <em>queues</em>, and because it's an <code>ACCESS EXCLUSIVE</code> lock, every query that arrives after it queues behind it. So a migration that spends 30 seconds waiting politely for one slow <code>SELECT</code> to finish has blocked every read and write on that table for those 30 seconds. Your migration didn't need to run slowly to cause an outage; it only needed to <em>wait</em>.</p>
-<p>What to do. Set a short <code>lock_timeout</code> on migrations and retry, so a blocked migration fails fast instead of building a queue behind it. Prefer the operations your engine has made cheap: modern Postgres adds a column with a constant default as a metadata-only change, MySQL 8 has <code>ALGORITHM=INSTANT</code> for some changes, and both support building indexes without blocking writes (<code>CREATE INDEX CONCURRENTLY</code> in Postgres, online DDL in InnoDB). Add constraints as <code>NOT VALID</code> and <code>VALIDATE</code> them separately. And for the genuinely heavy changes on MySQL, use the tools built for precisely this — <strong><code>gh-ost</code></strong> and <strong><code>pt-online-schema-change</code></strong>, both of which build a shadow copy of the table, keep it in sync while it fills, and swap it in with a brief atomic rename.</p>
+Pool sizes get chosen by doubling until the errors stop. There is an actual formula, and it's the one queueing theory has been quietly holding out the whole time: **concurrency = throughput × latency**. If you serve 2,000 queries per second and the average query takes 4 ms, then `2,000 × 0.004 = 8` queries are in flight at any instant. Eight. A pool of 20 is comfortable headroom; a pool of 200 is 192 connections that will never be simultaneously useful.
 
-<h3><code>OFFSET</code> pagination degrades linearly, and it is everywhere</h3>
-<p>This is the single most common cause of a slow endpoint in a maturing product, and it ships in every tutorial:</p>
+And an oversized pool isn't merely wasteful, it's actively harmful. A database can only do so much genuine parallel work — bounded by cores, by disk queue depth, by lock contention on the hot rows. Beyond that point, extra concurrent queries don't get executed in parallel, they get *interleaved*: the same total work, sliced into more pieces, with context switches and cache-line thrash between the slices. In Postgres each connection is a separate OS process with its own memory; 200 of them on a 16-core box means the scheduler spends real time deciding who runs next. Throughput stays flat while every individual query gets slower, so your p99 climbs even though nothing about the workload changed. The widely used rule of thumb (from HikariCP) is `(cores × 2) + effective_spindle_count` — a folk formula, not physics, but it lands in the right order of magnitude, which is tens, not hundreds.
 
+The part people miss: a *small* pool is a feature. When the pool is full, requests queue in your application, where you can see the queue, put a timeout on it, and shed load. When the pool is huge, the queue moves inside the database, where you can do none of those things.
+
+### Idle-in-transaction is a slow leak
+
+A connection sitting in state `idle in transaction` has begun a transaction, read something, and then gone quiet — usually because the code made an HTTP call, or hit a breakpoint, or threw an exception on a path that forgot to roll back. It looks harmless in the connection list. It is not. That transaction holds a snapshot, and while it does, `VACUUM` cannot reclaim any row version that became dead *after* it started — not just in that table, anywhere in the database. So the dead tuples accumulate, the table and its indexes bloat, and every sequential scan against them now reads pages of garbage. Queries get slower with no code change and no traffic change, which makes it a genuinely awful thing to debug.
+
+Long-running read-only transactions do the same thing, and so does a replica running a long analytical query with `hot_standby_feedback` on — that pins the *primary's* vacuum horizon from another machine. Defences: set `idle_in_transaction_session_timeout` and `statement_timeout`, never perform network I/O inside a transaction, and alert on `pg_stat_activity` rows where `state = 'idle in transaction'` and `xact_start` is older than a minute.
+
+### Online schema migration: `ALTER TABLE` is an outage waiting for a big enough table
+
+On a small table, `ALTER TABLE` is instant and you learn nothing. On a hot 40-million-row table it can take an exclusive lock for minutes while it rewrites the file — and in Postgres the failure mode is worse than the wait. The lock request *queues*, and because it's an `ACCESS EXCLUSIVE` lock, every query that arrives after it queues behind it. So a migration that spends 30 seconds waiting politely for one slow `SELECT` to finish has blocked every read and write on that table for those 30 seconds. Your migration didn't need to run slowly to cause an outage; it only needed to *wait*.
+
+What to do. Set a short `lock_timeout` on migrations and retry, so a blocked migration fails fast instead of building a queue behind it. Prefer the operations your engine has made cheap: modern Postgres adds a column with a constant default as a metadata-only change, MySQL 8 has `ALGORITHM=INSTANT` for some changes, and both support building indexes without blocking writes (`CREATE INDEX CONCURRENTLY` in Postgres, online DDL in InnoDB). Add constraints as `NOT VALID` and `VALIDATE` them separately. And for the genuinely heavy changes on MySQL, use the tools built for precisely this — **`gh-ost`** and **`pt-online-schema-change`**, both of which build a shadow copy of the table, keep it in sync while it fills, and swap it in with a brief atomic rename.
+
+### `OFFSET` pagination degrades linearly, and it is everywhere
+
+This is the single most common cause of a slow endpoint in a maturing product, and it ships in every tutorial:
 
 ```sql
 -- Page 5,000 at 20 per page.
@@ -526,10 +478,9 @@ ORDER BY created_at DESC
 LIMIT 20 OFFSET 100000;
 ```
 
+`OFFSET` is not a seek. The database has to produce the first 100,000 rows in sorted order and throw every one of them away before it can return the 20 you asked for. Page 1 is instant, page 100 is fine, page 5,000 does 5,000× the work of page 1 for an identical-looking response. Nobody notices during development because nobody clicks to page 5,000 — and then a crawler does, repeatedly, in parallel.
 
-<p><code>OFFSET</code> is not a seek. The database has to produce the first 100,000 rows in sorted order and throw every one of them away before it can return the 20 you asked for. Page 1 is instant, page 100 is fine, page 5,000 does 5,000× the work of page 1 for an identical-looking response. Nobody notices during development because nobody clicks to page 5,000 — and then a crawler does, repeatedly, in parallel.</p>
-<p><strong>Keyset</strong> (or "seek") pagination fixes it by remembering where you stopped instead of counting from the beginning:</p>
-
+**Keyset** (or "seek") pagination fixes it by remembering where you stopped instead of counting from the beginning:
 
 ```sql
 -- Simple case: a monotonic id.
@@ -545,174 +496,127 @@ ORDER BY created_at DESC, id DESC
 LIMIT  20;
 ```
 
+That's an index seek straight to the right position: constant cost regardless of depth, and it doesn't skip or duplicate rows when the underlying data changes mid-scroll, which `OFFSET` quietly does. The price is that you lose "jump to page 5,000" — you get next/previous, not random access. For infinite scroll, feeds, exports, and APIs, that's not a loss at all. For a UI that genuinely needs numbered pages, keep `OFFSET` but cap the depth.
 
-<p>That's an index seek straight to the right position: constant cost regardless of depth, and it doesn't skip or duplicate rows when the underlying data changes mid-scroll, which <code>OFFSET</code> quietly does. The price is that you lose "jump to page 5,000" — you get next/previous, not random access. For infinite scroll, feeds, exports, and APIs, that's not a loss at all. For a UI that genuinely needs numbered pages, keep <code>OFFSET</code> but cap the depth.</p>
+### Secondary indexes under sharding: pick your poison
 
-<h3>Secondary indexes under sharding: pick your poison</h3>
-<p>Once data is sharded, "add an index on <code>email</code>" stops being a one-line decision, because there are two completely different things that sentence could mean.</p>
-  
-    
+Once data is sharded, "add an index on `email`" stops being a one-line decision, because there are two completely different things that sentence could mean.
 
-* <strong>Local index</strong> — each shard indexes only its own rows. Cheap, and consistent for free because the index update happens in the same transaction as the write. But it can only be searched shard by shard, so any lookup that isn't on the shard key becomes scatter-gather: 16 shards, 16 queries, latency equal to the slowest of the 16, and 16× the total cluster work for one user's login-by-email. It works fine until that query gets popular, at which point a single lookup pattern is consuming the whole cluster.
+- **Local index** — each shard indexes only its own rows. Cheap, and consistent for free because the index update happens in the same transaction as the write. But it can only be searched shard by shard, so any lookup that isn't on the shard key becomes scatter-gather: 16 shards, 16 queries, latency equal to the slowest of the 16, and 16× the total cluster work for one user's login-by-email. It works fine until that query gets popular, at which point a single lookup pattern is consuming the whole cluster.
+- **Global index** — a separate structure keyed by the indexed column, mapping value → shard and primary key. One lookup, no fan-out. But it lives on different machines than the data it points at, which means every insert is now a distributed write. You get two options and no third: update the index asynchronously and accept that it's briefly wrong (so a just-created user isn't findable by email for a moment, and you now own that bug class), or run two-phase commit on every write and pay the latency plus a coordinator that can fail mid-commit. DynamoDB makes this trade in the open — global secondary indexes are eventually consistent by design, and local secondary indexes are strongly consistent but must share the partition key.
 
+A global index is not a feature you enable. It is a distributed system you now operate.
 
-    
+### Replication lag is not a constant
 
-* <strong>Global index</strong> — a separate structure keyed by the indexed column, mapping value → shard and primary key. One lookup, no fan-out. But it lives on different machines than the data it points at, which means every insert is now a distributed write. You get two options and no third: update the index asynchronously and accept that it's briefly wrong (so a just-created user isn't findable by email for a moment, and you now own that bug class), or run two-phase commit on every write and pay the latency plus a coordinator that can fail mid-commit. DynamoDB makes this trade in the open — global secondary indexes are eventually consistent by design, and local secondary indexes are strongly consistent but must share the partition key.
+The mental model that causes the bugs is "replicas are about 50 ms behind." They aren't. Lag is near zero, and near zero, and near zero — and then it is eleven seconds. It spikes when a backfill or bulk delete floods the write-ahead log; when a long query on the replica blocks log replay; when a vacuum generates a burst of changes; during failover; and generally whenever write volume exceeds what the replica's apply process can keep up with, which is often more single-threaded than the primary's write path.
 
+Combine those triggers and you get the defining property: **lag is worst exactly when load is highest.** Which means read-after-write bugs are invisible in development, invisible in staging, invisible in production at 4 AM — and appear for a fraction of users at peak, unreproducibly, in the exact window when you have the least attention to spare.
 
-  
-<p>A global index is not a feature you enable. It is a distributed system you now operate.</p>
-
-<h3>Replication lag is not a constant</h3>
-<p>The mental model that causes the bugs is "replicas are about 50 ms behind." They aren't. Lag is near zero, and near zero, and near zero — and then it is eleven seconds. It spikes when a backfill or bulk delete floods the write-ahead log; when a long query on the replica blocks log replay; when a vacuum generates a burst of changes; during failover; and generally whenever write volume exceeds what the replica's apply process can keep up with, which is often more single-threaded than the primary's write path.</p>
-<p>Combine those triggers and you get the defining property: <strong>lag is worst exactly when load is highest.</strong> Which means read-after-write bugs are invisible in development, invisible in staging, invisible in production at 4 AM — and appear for a fraction of users at peak, unreproducibly, in the exact window when you have the least attention to spare.</p>
-<p>Two real fixes. The simple one is a <strong>sticky primary window</strong>: after a user writes, route that user's reads to the primary for a few seconds. Cheap to implement, costs a little primary capacity, and covers the overwhelming majority of cases. The precise one is a <strong>version token</strong>: capture the write's position in the log at commit time — an LSN from <code>pg_current_wal_lsn()</code>, or a GTID in MySQL — carry it in the session or a cookie, and have the read path either wait for the replica to reach that position (<code>WAIT_FOR_EXECUTED_GTID_SET</code>, or comparing against <code>pg_last_wal_replay_lsn()</code>) or fall back to the primary if it hasn't. One more operational note: monitor lag in <em>bytes</em> of log distance as well as seconds. "Seconds behind" reports a cheerful zero on an idle system and is a lagging indicator on a busy one.</p>
+Two real fixes. The simple one is a **sticky primary window**: after a user writes, route that user's reads to the primary for a few seconds. Cheap to implement, costs a little primary capacity, and covers the overwhelming majority of cases. The precise one is a **version token**: capture the write's position in the log at commit time — an LSN from `pg_current_wal_lsn()`, or a GTID in MySQL — carry it in the session or a cookie, and have the read path either wait for the replica to reach that position (`WAIT_FOR_EXECUTED_GTID_SET`, or comparing against `pg_last_wal_replay_lsn()`) or fall back to the primary if it hasn't. One more operational note: monitor lag in *bytes* of log distance as well as seconds. "Seconds behind" reports a cheerful zero on an idle system and is a lagging indicator on a busy one.
 
 <Question q="Check yourself: A read-your-writes bug affects about 2% of users, only at peak, and has never once reproduced in staging. Where do you look?">
+
 Replication lag, and the reason it hides is that lag isn't a constant — it's near zero until it spikes, and it spikes under exactly the conditions you can't recreate: heavy write volume, a backfill flooding the log, a long analytical query on the replica blocking replay. Staging has no load, so staging has no lag, so staging has no bug. Fix it structurally rather than by chasing it: give each user a sticky window that routes their reads to the primary for a few seconds after they write, or carry a version token (a Postgres LSN, a MySQL GTID) captured at commit and make the read path wait for the replica to reach it or fall back to the primary.
+
 </Question>
 
+### The bills that arrive later
 
-<h3>The bills that arrive later</h3>
-<p>The decision to shard gets modelled as an engineering cost paid once. It is mostly a set of recurring costs paid by people who weren't in the room. None of these are hypothetical; all of them are boring.</p>
-  
-    
+The decision to shard gets modelled as an engineering cost paid once. It is mostly a set of recurring costs paid by people who weren't in the room. None of these are hypothetical; all of them are boring.
 
-* <strong>Data transfer.</strong> Shards spread across availability zones for durability means cross-AZ traffic, which is billed per gigabyte, in a line item that grows with every fan-out query you add. Cross-region replication is the same charge, continuously, forever. A scatter-gather query is no longer just slow — it has a price per execution.
+- **Data transfer.** Shards spread across availability zones for durability means cross-AZ traffic, which is billed per gigabyte, in a line item that grows with every fan-out query you add. Cross-region replication is the same charge, continuously, forever. A scatter-gather query is no longer just slow — it has a price per execution.
+- **Backup and restore multiply by shard count.** Sixteen shards is sixteen backup jobs, sixteen restore procedures, and a point-in-time recovery that has to be coordinated across all of them or you restore a cluster that's internally inconsistent. Your recovery time objective is now "the slowest shard's restore," and rehearsing it is a sixteen-fold exercise that nobody schedules.
+- **Every schema migration becomes N migrations.** And they can be half-applied: shard 7 has the new column, shard 8 doesn't, and your application must tolerate both states for as long as the rollout takes. That constraint never goes away — it changes how you write every migration from now on.
+- **Resharding is a project, not a task.** Going from 16 shards to 32 needs a plan, a backfill, a dual-write period, a cutover, and a rollback story. Weeks, with a named owner. Logical shards make it a data move rather than a rewrite — they do not make it free.
+- **Cross-shard transactions are either unavailable or a trap.** Where two-phase commit exists it's slow and it introduces a coordinator whose failure mid-commit leaves locks held on multiple machines. So in practice you design around it: sagas, idempotency keys, compensating actions, reconciliation jobs. That is permanent application complexity you now maintain, and it's the real reason the shard key matters so much — see [Consistency & CAP](/guides/consistency-cap/) for what you're actually buying, and [the Reliability toolkit](/guides/reliability-toolkit/) for the retry and timeout machinery you'll need around it.
+- **On-call surface.** One database with a replica is two things that can page you. Sixteen shards with replicas is thirty-two, each with its own failover, its own disk, and its own capacity to be the one that's different.
 
-
-    
-
-* <strong>Backup and restore multiply by shard count.</strong> Sixteen shards is sixteen backup jobs, sixteen restore procedures, and a point-in-time recovery that has to be coordinated across all of them or you restore a cluster that's internally inconsistent. Your recovery time objective is now "the slowest shard's restore," and rehearsing it is a sixteen-fold exercise that nobody schedules.
-
-
-    
-
-* <strong>Every schema migration becomes N migrations.</strong> And they can be half-applied: shard 7 has the new column, shard 8 doesn't, and your application must tolerate both states for as long as the rollout takes. That constraint never goes away — it changes how you write every migration from now on.
-
-
-    
-
-* <strong>Resharding is a project, not a task.</strong> Going from 16 shards to 32 needs a plan, a backfill, a dual-write period, a cutover, and a rollback story. Weeks, with a named owner. Logical shards make it a data move rather than a rewrite — they do not make it free.
-
-
-    
-
-* <strong>Cross-shard transactions are either unavailable or a trap.</strong> Where two-phase commit exists it's slow and it introduces a coordinator whose failure mid-commit leaves locks held on multiple machines. So in practice you design around it: sagas, idempotency keys, compensating actions, reconciliation jobs. That is permanent application complexity you now maintain, and it's the real reason the shard key matters so much — see <a href="consistency-cap.html">Consistency &amp; CAP</a> for what you're actually buying, and <a href="reliability-toolkit.html">the Reliability toolkit</a> for the retry and timeout machinery you'll need around it.
-
-
-    
-
-* <strong>On-call surface.</strong> One database with a replica is two things that can page you. Sixteen shards with replicas is thirty-two, each with its own failover, its own disk, and its own capacity to be the one that's different.
-
-
-  
-
-
-
-
-<div class="note key">
-<span class="label">The pattern across both</span>
-</div>
+<Note type="key" label="The pattern across both" />
 
 </Collapse>
+
 <Collapse id="ladder" title="13. The scaling ladder — where to start">
 
 <DiagramDatabaseScaling3 />
 
-<p>Climb in order. Stop the moment your load is handled; most systems never reach the top.</p>
-<div class="stack">
-<div class="layer"><div class="idx">1</div><div class="body"><h4>Index &amp; tune queries</h4><p>Fix the slow queries first. Often the only step you need.</p></div></div>
-<div class="arrow">↓ still slow?</div>
-<div class="layer"><div class="idx">2</div><div class="body"><h4>Scale up + pool connections</h4><p>Bigger box, connection pooler. Cheap, zero code change.</p></div></div>
-<div class="arrow">↓ read-bound?</div>
-<div class="layer"><div class="idx">3</div><div class="body"><h4>Add <a href="understanding-caching.html">caching</a></h4><p>Keep hot reads off the DB entirely. Highest leverage per unit of effort.</p></div></div>
-<div class="arrow">↓ still read-bound?</div>
-<div class="layer"><div class="idx">4</div><div class="body"><h4>Add read replicas</h4><p>Scale reads out; mind replication lag for fresh-read paths.</p></div></div>
-<div class="arrow">↓ write- or size-bound?</div>
-<div class="layer"><div class="idx">5</div><div class="body"><h4>Partition, then shard</h4><p>Split the data — vertically first, then horizontally across machines. Or adopt a distributed database that does it for you.</p></div></div>
-</div>
-<p>The best database architecture is the simplest one that meets your load and freshness needs. Add a rung only when the metrics — query latency, replica lag, CPU/IOPS saturation, write throughput — actually demand it.</p>
+Climb in order. Stop the moment your load is handled; most systems never reach the top.
+
+<Stack>
+  <Layer idx="1" title="Index & tune queries">
+    Fix the slow queries first. Often the only step you need.
+  </Layer>
+  <Arrow>↓ still slow?</Arrow>
+  <Layer idx="2" title="Scale up + pool connections">
+    Bigger box, connection pooler. Cheap, zero code change.
+  </Layer>
+  <Arrow>↓ read-bound?</Arrow>
+  <Layer idx="3">
+    <span slot="title">Add [caching](/guides/understanding-caching/)</span>
+
+    Keep hot reads off the DB entirely. Highest leverage per unit of effort.
+  </Layer>
+  <Arrow>↓ still read-bound?</Arrow>
+  <Layer idx="4" title="Add read replicas">
+    Scale reads out; mind replication lag for fresh-read paths.
+  </Layer>
+  <Arrow>↓ write- or size-bound?</Arrow>
+  <Layer idx="5" title="Partition, then shard">
+    Split the data — vertically first, then horizontally across machines. Or adopt a distributed database that does it for you.
+  </Layer>
+</Stack>
+
+The best database architecture is the simplest one that meets your load and freshness needs. Add a rung only when the metrics — query latency, replica lag, CPU/IOPS saturation, write throughput — actually demand it.
 
 </Collapse>
+
 <Collapse id="recap" title="14. Recap in 60 seconds">
-<div class="recap">
-    
-      
 
-* <strong>Rung 0 — Measure.</strong> Read/write mix from the engine's own counters, which p99 moved, rows examined per row returned. <em>Climb only on evidence;</em> the answer decides everything after this.
+<Recap>
 
+- **Rung 0 — Measure.** Read/write mix from the engine's own counters, which p99 moved, rows examined per row returned. *Climb only on evidence;* the answer decides everything after this.
+- **Rung 1 — Index and fix queries.** Most "slow database" is one missing or unusable index. *Climb when `EXPLAIN` shows an index scan and it's still not fast enough.*
+- **Rung 2 — Scale up, and right-size the pool.** More RAM fixes a falling cache hit ratio outright; the pool should be tens, not hundreds. *Climb when you're near the largest sensible instance or its IOPS ceiling.*
+- **Rung 3 — Cache.** The cheapest query is the one you never send. *Climb when the hit rate is already high and the remaining reads still saturate the box.*
+- **Rung 4 — Read replicas.** Scales reads, gives you a failover target, hands you replication lag and read-your-writes bugs in exchange. *Climb when the bottleneck moves to the write path — replicas cannot help there, they add to it.*
+- **Rung 5 — Partition, then shard.** On the write side, batch first (a queue in front turns spiky writes into steady ones), then partition for size and maintenance, then shard for genuine write and storage multiplication. *Climb only when one machine cannot hold the data or absorb the writes — and shard on the boundary your product already draws around data.*
+- **The costs are permanent, not one-off.** N shards means N backups, N migrations, resharding as a project, cross-shard transactions you design around forever, and a data-transfer line item that grows with every fan-out query.
 
-      
+</Recap>
 
-* <strong>Rung 1 — Index and fix queries.</strong> Most "slow database" is one missing or unusable index. <em>Climb when <code>EXPLAIN</code> shows an index scan and it's still not fast enough.</em>
+Numbers worth carrying in your head. These are **order-of-magnitude reference points, not benchmarks** — every one of them moves by 10× with different hardware, row widths, and workloads. Use them to know when a number is *surprising*, not to size a system.
 
+<Table numeric>
 
-      
+| Order of magnitude | What it is | What moves it |
+| ------------------ | ---------- | ------------- |
+| ~10<sup>8</sup> rows<br />(few hundred GB) | Comfortable ceiling for one well-indexed table on one box | B-tree point lookups stay cheap far past this — depth grows logarithmically. What degrades first is vacuum and maintenance time, index build times, and whether the working set still fits in RAM. |
+| 1,000–10,000<br />writes/s | Sustained single-row write transactions, one tuned OLTP instance on NVMe | Transaction size, group commit and `fsync` behaviour, row width, and index count — every extra index is another write per row. |
+| ~10<sup>5</sup><br />rows/s | Bulk ingest on that same box (`COPY` / multi-row `INSERT`) | The gap between this row and the one above it is the entire argument for batching before you shard. |
+| 10–30 per app instance<br />(tens server-side) | Connection pool size | Little's Law: throughput × latency. `(cores × 2) + spindles` is the folk formula. Past a few hundred server-side connections, put a pooler in front rather than raising the limit. |
+| &lt; 10 ms same-region<br />50–500 ms cross-region | Healthy async replication lag | RTT sets the cross-region floor. Bulk writes, long replica queries, and failover push it to seconds or minutes — usually at peak. Alert somewhere in the 1–5 s range, and track log *bytes* behind, not just seconds. |
+| &lt; 10 good<br />&gt; 100 broken | Rows examined per row returned | The most diagnostic ratio in this guide. Above 100 the fix is an index or a rewrite, never a bigger machine. |
+| &gt; 99% | Buffer cache hit ratio, OLTP | A falling ratio means the working set outgrew RAM. Usually the cheapest problem on this page to fix. |
+| 0.5–2 TB<br />few thousand writes/s | What one shard should top out at | The binding constraint is often none of those: it's "small enough to restore inside your recovery time objective." Size shards by how long they take to rebuild. |
+| ~10,000 rows | Offset depth where `OFFSET` pagination becomes visibly bad | Cost is linear in offset. Keyset pagination is flat at any depth; switch before a crawler finds it for you. |
 
-* <strong>Rung 2 — Scale up, and right-size the pool.</strong> More RAM fixes a falling cache hit ratio outright; the pool should be tens, not hundreds. <em>Climb when you're near the largest sensible instance or its IOPS ceiling.</em>
+</Table>
 
+If you can answer these without scrolling up, you have the guide.
 
-      
+<Note type="key" label="The one-liner to remember">
 
-* <strong>Rung 3 — Cache.</strong> The cheapest query is the one you never send. <em>Climb when the hit rate is already high and the remaining reads still saturate the box.</em>
+Every rung of this ladder trades a simple problem for a harder one, so make each rung earn its place with a measurement. In practice, most "we need to shard" turns out to be one missing index, one unbounded query, and a connection pool sized by superstition.
 
-
-      
-
-* <strong>Rung 4 — Read replicas.</strong> Scales reads, gives you a failover target, hands you replication lag and read-your-writes bugs in exchange. <em>Climb when the bottleneck moves to the write path — replicas cannot help there, they add to it.</em>
-
-
-      
-
-* <strong>Rung 5 — Partition, then shard.</strong> On the write side, batch first (a queue in front turns spiky writes into steady ones), then partition for size and maintenance, then shard for genuine write and storage multiplication. <em>Climb only when one machine cannot hold the data or absorb the writes — and shard on the boundary your product already draws around data.</em>
-
-
-      
-
-* <strong>The costs are permanent, not one-off.</strong> N shards means N backups, N migrations, resharding as a project, cross-shard transactions you design around forever, and a data-transfer line item that grows with every fan-out query.
-
-
-    
-</div>
-
-<p>Numbers worth carrying in your head. These are <strong>order-of-magnitude reference points, not benchmarks</strong> — every one of them moves by 10× with different hardware, row widths, and workloads. Use them to know when a number is <em>surprising</em>, not to size a system.</p>
-<div class="table-scroll">
-<table class="num-table">
-<thead><tr><th>Order of magnitude</th><th>What it is</th><th>What moves it</th></tr></thead>
-<tbody>
-<tr><td>~10<sup>8</sup> rows<br />(few hundred GB)</td><td>Comfortable ceiling for one well-indexed table on one box</td><td>B-tree point lookups stay cheap far past this — depth grows logarithmically. What degrades first is vacuum and maintenance time, index build times, and whether the working set still fits in RAM.</td></tr>
-<tr><td>1,000–10,000<br />writes/s</td><td>Sustained single-row write transactions, one tuned OLTP instance on NVMe</td><td>Transaction size, group commit and <code>fsync</code> behaviour, row width, and index count — every extra index is another write per row.</td></tr>
-<tr><td>~10<sup>5</sup><br />rows/s</td><td>Bulk ingest on that same box (<code>COPY</code> / multi-row <code>INSERT</code>)</td><td>The gap between this row and the one above it is the entire argument for batching before you shard.</td></tr>
-<tr><td>10–30 per app instance<br />(tens server-side)</td><td>Connection pool size</td><td>Little's Law: throughput × latency. <code>(cores × 2) + spindles</code> is the folk formula. Past a few hundred server-side connections, put a pooler in front rather than raising the limit.</td></tr>
-<tr><td>&lt; 10 ms same-region<br />50–500 ms cross-region</td><td>Healthy async replication lag</td><td>RTT sets the cross-region floor. Bulk writes, long replica queries, and failover push it to seconds or minutes — usually at peak. Alert somewhere in the 1–5 s range, and track log <em>bytes</em> behind, not just seconds.</td></tr>
-<tr><td>&lt; 10 good<br />&gt; 100 broken</td><td>Rows examined per row returned</td><td>The most diagnostic ratio in this guide. Above 100 the fix is an index or a rewrite, never a bigger machine.</td></tr>
-<tr><td>&gt; 99%</td><td>Buffer cache hit ratio, OLTP</td><td>A falling ratio means the working set outgrew RAM. Usually the cheapest problem on this page to fix.</td></tr>
-<tr><td>0.5–2 TB<br />few thousand writes/s</td><td>What one shard should top out at</td><td>The binding constraint is often none of those: it's "small enough to restore inside your recovery time objective." Size shards by how long they take to rebuild.</td></tr>
-<tr><td>~10,000 rows</td><td>Offset depth where <code>OFFSET</code> pagination becomes visibly bad</td><td>Cost is linear in offset. Keyset pagination is flat at any depth; switch before a crawler finds it for you.</td></tr>
-</tbody>
-</table>
-</div>
-
-<p>If you can answer these without scrolling up, you have the guide.</p>
-
-
-
-
-
-
-
-<div class="note key">
-<span class="label">The one-liner to remember</span>
-    Every rung of this ladder trades a simple problem for a harder one, so make each rung earn its place with a measurement. In practice, most "we need to shard" turns out to be one missing index, one unbounded query, and a connection pool sized by superstition.
-</div>
+</Note>
 
 </Collapse>
-<hr />
-<Footer><a href="https://www.figma.com/blog/how-figmas-databases-team-lived-to-tell-the-scale/">Figma — How Figma's Databases Team Lived to Tell the Scale</a> ·
-<a href="https://slack.engineering/scaling-datastores-at-slack-with-vitess/">Slack — Scaling Datastores at Slack with Vitess</a> ·
-<a href="https://discord.com/blog/how-discord-stores-trillions-of-messages">Discord — How Discord Stores Trillions of Messages</a> ·
-<a href="https://westpoint.io/insights/scaling-relational-databases-sharding-partitioning-and-read-replicas-compared">Westpoint — Scaling Relational Databases Compared</a> ·
-<a href="https://vitess.io/">Vitess</a> ·
-<a href="https://blog.bytebytego.com/p/100x-scaling-how-figma-scaled-its">ByteByteGo — 100× Scaling: How Figma Scaled Its Databases</a></Footer>
+
+<Footer>
+  [Figma — How Figma's Databases Team Lived to Tell the Scale](https://www.figma.com/blog/how-figmas-databases-team-lived-to-tell-the-scale/) ·
+  [Slack — Scaling Datastores at Slack with Vitess](https://slack.engineering/scaling-datastores-at-slack-with-vitess/) ·
+  [Discord — How Discord Stores Trillions of Messages](https://discord.com/blog/how-discord-stores-trillions-of-messages) ·
+  [Westpoint — Scaling Relational Databases Compared](https://westpoint.io/insights/scaling-relational-databases-sharding-partitioning-and-read-replicas-compared) ·
+  [Vitess](https://vitess.io/) ·
+  [ByteByteGo — 100× Scaling: How Figma Scaled Its Databases](https://blog.bytebytego.com/p/100x-scaling-how-figma-scaled-its)
+</Footer>

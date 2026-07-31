@@ -4,7 +4,11 @@ title: "Load Balancing — A Practical Guide"
 description: "How one server becomes a thousand without the user ever noticing — and the surprisingly opinionated little box that makes it work."
 chapter: "3"
 current: "3. Load Balancing"
-series: "A companion to <em>Caching</em> and <em>Scaling Databases</em>."
+series:
+  lead: "A companion to"
+  guides:
+    - { slug: understanding-caching, label: "Caching" }
+    - database-scaling
 sections:
   - id: "why"
     title: "Why one server isn't enough"
@@ -17,9 +21,9 @@ sections:
   - id: "algos"
     title: "The algorithms"
   - id: "health"
-    title: "Health checks &amp; failover"
+    title: "Health checks & failover"
   - id: "sticky"
-    title: "Sticky sessions &amp; statelessness"
+    title: "Sticky sessions & statelessness"
   - id: "auto"
     title: "Autoscaling"
   - id: "gotchas"
@@ -29,410 +33,424 @@ sections:
   - id: "recap"
     title: "Recap in 60 seconds"
 ---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Question, Recap, Stack, Table } from '../../components';
 import DiagramLoadBalancing1 from '../../components/diagrams/DiagramLoadBalancing1.astro';
 import DiagramLoadBalancing2 from '../../components/diagrams/DiagramLoadBalancing2.astro';
-import Collapse from '../../components/Collapse.astro';
-import Question from '../../components/Question.astro';
-import Footer from '../../components/Footer.astro';
 
-<div class="coldopen">
-<span class="tag">◇ 3:00 AM · the launch that worked too well</span>
-<p>Your product hits the front page. Traffic 40×'s in ten minutes. Somewhere, a single server — the one you've been meaning to "clean up later" — glows red-hot, accepts one connection too many, and quietly dies. Every user gets a spinning wheel. The tragedy isn't that you had too many visitors. It's that you had exactly one server to greet them, and nobody was standing at the door directing traffic. That doorman is a load balancer, and this guide is about hiring one.</p>
-</div>
+<ColdOpen tag="◇ 3:00 AM · the launch that worked too well">
+
+Your product hits the front page. Traffic 40×'s in ten minutes. Somewhere, a single server — the one you've been meaning to "clean up later" — glows red-hot, accepts one connection too many, and quietly dies. Every user gets a spinning wheel. The tragedy isn't that you had too many visitors. It's that you had exactly one server to greet them, and nobody was standing at the door directing traffic. That doorman is a load balancer, and this guide is about hiring one.
+
+</ColdOpen>
 
 <Collapse id="why" title="1. Why one server isn't enough">
-<p>A single server has a ceiling: finite CPU, memory, and network. You can buy a bigger one (<em>vertical scaling</em>), but that ladder runs out — and a single anything is a single point of failure. The moment it reboots, your whole product is offline.</p>
-<p>The alternative is <strong>horizontal scaling</strong>: run many identical servers and split the work between them. It scales almost linearly and survives individual deaths. But it raises one immediate question — when a request arrives, <em>which</em> server should handle it? Answering that, well and instantly, millions of times a second, is the entire job of a load balancer.</p>
+
+A single server has a ceiling: finite CPU, memory, and network. You can buy a bigger one (*vertical scaling*), but that ladder runs out — and a single anything is a single point of failure. The moment it reboots, your whole product is offline.
+
+The alternative is **horizontal scaling**: run many identical servers and split the work between them. It scales almost linearly and survives individual deaths. But it raises one immediate question — when a request arrives, *which* server should handle it? Answering that, well and instantly, millions of times a second, is the entire job of a load balancer.
 
 </Collapse>
+
 <Collapse id="what" title="2. The load balancer, explained">
 
-<div class="note wild">
-<span class="label">◈ In the wild · Anycast + DNS at the Edge</span>
-    Before a request even reaches a traditional load balancer, providers like Cloudflare announce the <em>same</em> IP address from data centers worldwide (anycast), so the network itself routes you to the nearest physical location. Load balancing starts at the level of the internet's routing tables.
-</div>
+<Note type="wild" label="◈ In the wild · Anycast + DNS at the Edge">
 
-<p>A load balancer sits in front of your fleet of servers. Clients connect to <em>it</em>; it picks a healthy server and forwards the request. To the outside world there's one address; behind it, a crowd. Think of a restaurant host: diners don't wander in and fight over tables — the host seats them, keeps things even, and quietly skips the table with a broken chair.</p>
-<div class="stack">
-<div class="layer"><div class="idx">→</div><div class="body"><h4>Clients</h4><p>All hit one address (the load balancer's).</p></div></div>
-<div class="arrow">↓ distributes to ↓</div>
-<div class="layer"><div class="idx">LB</div><div class="body"><h4>Load balancer</h4><p>Picks a healthy backend per request, using an algorithm.</p></div><div class="speed">the doorman</div></div>
-<div class="arrow">↓ forwards to one of ↓</div>
-<div class="layer"><div class="idx">3×</div><div class="body"><h4>Server pool</h4><p>Identical, interchangeable app servers. Add more to scale.</p></div><div class="speed">the fleet</div></div>
-</div>
-<p>Because that one address is now itself a single point of failure, real deployments run the load balancer <em>redundantly</em> too (multiple LBs, DNS-level distribution, or a cloud service that handles this for you). Turtles, but only a couple deep.</p>
+Before a request even reaches a traditional load balancer, providers like Cloudflare announce the *same* IP address from data centers worldwide (anycast), so the network itself routes you to the nearest physical location. Load balancing starts at the level of the internet's routing tables.
+
+</Note>
+
+A load balancer sits in front of your fleet of servers. Clients connect to *it*; it picks a healthy server and forwards the request. To the outside world there's one address; behind it, a crowd. Think of a restaurant host: diners don't wander in and fight over tables — the host seats them, keeps things even, and quietly skips the table with a broken chair.
+
+<Stack>
+  <Layer idx="→" title="Clients">
+
+  All hit one address (the load balancer's).
+
+  </Layer>
+  <Arrow>↓ distributes to ↓</Arrow>
+  <Layer idx="LB" title="Load balancer" speed="the doorman">
+
+  Picks a healthy backend per request, using an algorithm.
+
+  </Layer>
+  <Arrow>↓ forwards to one of ↓</Arrow>
+  <Layer idx="3×" title="Server pool" speed="the fleet">
+
+  Identical, interchangeable app servers. Add more to scale.
+
+  </Layer>
+</Stack>
+
+Because that one address is now itself a single point of failure, real deployments run the load balancer *redundantly* too (multiple LBs, DNS-level distribution, or a cloud service that handles this for you). Turtles, but only a couple deep.
 
 </Collapse>
+
 <Collapse id="l4l7" title="3. L4 vs L7: two places to make the decision">
 
 <DiagramLoadBalancing1 />
 
-<p>Load balancers come in two broad flavors, named after layers of the networking stack. The difference is <em>how much of the request they bother to read.</em></p>
-<div class="cards">
-<div class="card"><h4>Layer 4 (transport)</h4><p>Routes by IP and port only. It doesn't open the envelope — just forwards packets. Blazing fast, protocol-agnostic, but can't make smart decisions based on <em>content</em>.</p></div>
-<div class="card"><h4>Layer 7 (application)</h4><p>Reads the actual HTTP request — URL, headers, cookies. Can route <code>/api</code> to one pool and <code>/images</code> to another, do TLS termination, rewrite, and inspect. Smarter, slightly slower.</p></div>
-</div>
-<p>Most modern web setups use L7 (Nginx, HAProxy, Envoy, AWS ALB) because content-aware routing is worth the tiny overhead. Reach for L4 (AWS NLB) when you need raw throughput or you're balancing non-HTTP traffic.</p>
+Load balancers come in two broad flavors, named after layers of the networking stack. The difference is *how much of the request they bother to read.*
+
+<CardGrid>
+  <Card title="Layer 4 (transport)">
+
+  Routes by IP and port only. It doesn't open the envelope — just forwards packets. Blazing fast, protocol-agnostic, but can't make smart decisions based on *content*.
+
+  </Card>
+  <Card title="Layer 7 (application)">
+
+  Reads the actual HTTP request — URL, headers, cookies. Can route `/api` to one pool and `/images` to another, do TLS termination, rewrite, and inspect. Smarter, slightly slower.
+
+  </Card>
+</CardGrid>
+
+Most modern web setups use L7 (Nginx, HAProxy, Envoy, AWS ALB) because content-aware routing is worth the tiny overhead. Reach for L4 (AWS NLB) when you need raw throughput or you're balancing non-HTTP traffic.
 
 <Question q="Check yourself: Your dashboard shows connections evenly spread across ten backends. One of them is at 90% CPU and the others are idle. What's happening?">
+
 You're balancing connections, not requests — an L4 hop in front of long-lived clients, and almost certainly HTTP/2 or gRPC, where one connection carries many concurrent streams. The connection counts are even and meaningless; the work behind them is not. Balance at L7 so the decision happens per request, or cap connection age so clients are periodically forced to reconnect and re-balance. Watch requests and in-flight count per backend, never connection count.
+
 </Question>
 
-
 </Collapse>
+
 <Collapse id="pick-a-layer" title="4. Which layer do you actually need?">
-<p>The two-card summary is fine for a whiteboard and useless when you're staring at a Terraform file. So here it is as a decision table. Find the thing you need in the left column; the right column is what it costs you.</p>
-<div class="table-scroll">
-<table>
-<thead><tr><th>You want to…</th><th>Layer 4</th><th>Layer 7</th><th>The cost</th></tr></thead>
-<tbody>
-<tr><td><strong>Route by URL path</strong> (<code>/api</code> here, <code>/img</code> there)</td><td>No — it never sees the URL</td><td>Yes</td><td>The LB must parse HTTP and terminate the client connection.</td></tr>
-<tr><td><strong>Terminate TLS</strong> at the edge</td><td>Pass-through only — each backend does its own handshake</td><td>Yes</td><td>The LB holds your private keys and pays the handshake CPU. Backend traffic is now plaintext unless you re-encrypt.</td></tr>
-<tr><td><strong>Retry a failed request</strong> on another backend</td><td>No — it can only fail the connection back to the client</td><td>Yes, for idempotent requests</td><td>Retries at multiple layers multiply. See <a href="#retry-amplification">retry amplification</a>.</td></tr>
-<tr><td><strong>Preserve the client's source IP</strong> with no extra work</td><td>Usually yes — packets reach the backend with the client's address intact</td><td>No — the backend sees the proxy; you read <code>X-Forwarded-For</code></td><td>At L7, an untrusted header becomes your identity source. At L4, any mode that rewrites the source (SNAT) needs the PROXY protocol. See <a href="#client-ip">client IP</a>.</td></tr>
-<tr><td><strong>Balance non-HTTP protocols</strong> (SMTP, MQTT, raw TCP, UDP)</td><td>Yes — it doesn't care what's inside</td><td>Only if the proxy speaks that protocol natively</td><td>You give up every content-based decision on that traffic.</td></tr>
-<tr><td><strong>The lowest possible added latency</strong></td><td>Yes — forwarding, sometimes in kernel or hardware</td><td>No — parse, buffer, re-emit</td><td>The L7 tax is small in absolute terms but real when your own p50 is single-digit milliseconds.</td></tr>
-<tr><td><strong>Inspect or rewrite headers</strong> (auth, tracing, canary flags)</td><td>No</td><td>Yes</td><td>Rewrites live in LB config, which is code nobody tests. Treat it as such.</td></tr>
-<tr><td><strong>Per-route rate limiting</strong></td><td>Only per-IP connection or packet limits</td><td>Yes — per path, per header, per token</td><td>Needs shared counters across LB instances, or you're limiting per-LB and multiplying your limit by the fleet size.</td></tr>
-</tbody>
-</table>
-</div>
-<p>The short version: <strong>if it's HTTP and you have opinions about it, go L7.</strong> Go L4 when you need protocol neutrality, source-IP fidelity for free, or throughput at a price per request that L7 can't touch. And note that "L4 or L7" isn't exclusive — a very common shape is an L4 balancer at the edge fronting a tier of L7 proxies, which is how you get anycast-scale ingress and content routing at the same time.</p>
+
+The two-card summary is fine for a whiteboard and useless when you're staring at a Terraform file. So here it is as a decision table. Find the thing you need in the left column; the right column is what it costs you.
+
+<Table>
+
+| You want to… | Layer 4 | Layer 7 | The cost |
+| ------------ | ------- | ------- | -------- |
+| **Route by URL path** (`/api` here, `/img` there) | No — it never sees the URL | Yes | The LB must parse HTTP and terminate the client connection. |
+| **Terminate TLS** at the edge | Pass-through only — each backend does its own handshake | Yes | The LB holds your private keys and pays the handshake CPU. Backend traffic is now plaintext unless you re-encrypt. |
+| **Retry a failed request** on another backend | No — it can only fail the connection back to the client | Yes, for idempotent requests | Retries at multiple layers multiply. See [retry amplification](#retry-amplification). |
+| **Preserve the client's source IP** with no extra work | Usually yes — packets reach the backend with the client's address intact | No — the backend sees the proxy; you read `X-Forwarded-For` | At L7, an untrusted header becomes your identity source. At L4, any mode that rewrites the source (SNAT) needs the PROXY protocol. See [client IP](#client-ip). |
+| **Balance non-HTTP protocols** (SMTP, MQTT, raw TCP, UDP) | Yes — it doesn't care what's inside | Only if the proxy speaks that protocol natively | You give up every content-based decision on that traffic. |
+| **The lowest possible added latency** | Yes — forwarding, sometimes in kernel or hardware | No — parse, buffer, re-emit | The L7 tax is small in absolute terms but real when your own p50 is single-digit milliseconds. |
+| **Inspect or rewrite headers** (auth, tracing, canary flags) | No | Yes | Rewrites live in LB config, which is code nobody tests. Treat it as such. |
+| **Per-route rate limiting** | Only per-IP connection or packet limits | Yes — per path, per header, per token | Needs shared counters across LB instances, or you're limiting per-LB and multiplying your limit by the fleet size. |
+
+</Table>
+
+The short version: **if it's HTTP and you have opinions about it, go L7.** Go L4 when you need protocol neutrality, source-IP fidelity for free, or throughput at a price per request that L7 can't touch. And note that "L4 or L7" isn't exclusive — a very common shape is an L4 balancer at the edge fronting a tier of L7 proxies, which is how you get anycast-scale ingress and content routing at the same time.
 
 </Collapse>
+
 <Collapse id="algos" title="5. The algorithms: how it picks">
 
 <DiagramLoadBalancing2 />
 
-<p>"Pick a healthy server" hides a real decision. The strategy matters more than it looks, because the naive choice quietly punishes you under uneven load.</p>
-<div class="table-scroll">
-<table>
-<thead><tr><th>Algorithm</th><th>How it chooses</th><th>Notes &amp; trade-off</th></tr></thead>
-<tbody>
-<tr><td><strong>Round robin</strong></td><td>Next server in rotation, over and over.</td><td>Simple and common default, but ignores that requests differ — a server stuck with 10 heavy queries still gets more.</td></tr>
-<tr><td><strong>Least connections</strong></td><td>The server currently handling the fewest requests.</td><td>Often the better default; needs accurate live counts, and can dogpile a just-recovered (near-empty) server.</td></tr>
-<tr><td><strong>Weighted</strong></td><td>Bigger servers get a bigger share.</td><td>Great for mixed hardware — but only if you set the weights right.</td></tr>
-<tr><td><strong>IP hash</strong></td><td>Hash the client's IP → always the same server.</td><td>Gives stickiness, but uneven if a few IPs dominate (corporate NATs).</td></tr>
-<tr><td><strong>Consistent hashing</strong></td><td>Hash onto a ring so adding/removing a server reshuffles minimal keys.</td><td>The clever one — keeps caches warm when the fleet changes size; needs virtual nodes to spread evenly.</td></tr>
-</tbody>
-</table>
-</div>
-<div class="note key">
-<span class="label">Why consistent hashing is a big deal</span>
-    With plain "hash mod N," adding one server changes <em>N</em> in the formula and remaps almost every key to a new server — every cache goes cold at once (hello, <em>thundering herd</em> from the <a href="understanding-caching.html">Caching guide</a>). Consistent hashing moves only a small slice of keys when the fleet grows or shrinks. It's the trick behind distributed caches, CDNs, and databases like Cassandra.
-</div>
-<div class="note wild">
-<span class="label">◈ In the wild · Google Maglev</span>
-    Maglev is Google's own software network load balancer — it runs on ordinary commodity servers rather than dedicated hardware, and fronts a large share of Google's incoming traffic. It leans on exactly the idea above: consistent hashing chooses the backend, but Maglev pairs it with per-connection tracking, so growing or shrinking the fleet reshuffles only a small fraction of connections while every packet of a given flow still lands on the same backend. It's a good illustration of why the "minimal reshuffling" property is worth the extra machinery at scale (<a href="https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/">Google's Maglev paper</a>).
-</div>
+"Pick a healthy server" hides a real decision. The strategy matters more than it looks, because the naive choice quietly punishes you under uneven load.
+
+<Table>
+
+| Algorithm | How it chooses | Notes & trade-off |
+| --------- | -------------- | ----------------- |
+| **Round robin** | Next server in rotation, over and over. | Simple and common default, but ignores that requests differ — a server stuck with 10 heavy queries still gets more. |
+| **Least connections** | The server currently handling the fewest requests. | Often the better default; needs accurate live counts, and can dogpile a just-recovered (near-empty) server. |
+| **Weighted** | Bigger servers get a bigger share. | Great for mixed hardware — but only if you set the weights right. |
+| **IP hash** | Hash the client's IP → always the same server. | Gives stickiness, but uneven if a few IPs dominate (corporate NATs). |
+| **Consistent hashing** | Hash onto a ring so adding/removing a server reshuffles minimal keys. | The clever one — keeps caches warm when the fleet changes size; needs virtual nodes to spread evenly. |
+
+</Table>
+
+<Note type="key" label="Why consistent hashing is a big deal">
+
+With plain "hash mod N," adding one server changes *N* in the formula and remaps almost every key to a new server — every cache goes cold at once (hello, *thundering herd* from the [Caching guide](/guides/understanding-caching/)). Consistent hashing moves only a small slice of keys when the fleet grows or shrinks. It's the trick behind distributed caches, CDNs, and databases like Cassandra.
+
+</Note>
+
+<Note type="wild" label="◈ In the wild · Google Maglev">
+
+Maglev is Google's own software network load balancer — it runs on ordinary commodity servers rather than dedicated hardware, and fronts a large share of Google's incoming traffic. It leans on exactly the idea above: consistent hashing chooses the backend, but Maglev pairs it with per-connection tracking, so growing or shrinking the fleet reshuffles only a small fraction of connections while every packet of a given flow still lands on the same backend. It's a good illustration of why the "minimal reshuffling" property is worth the extra machinery at scale ([Google's Maglev paper](https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/)).
+
+</Note>
 
 </Collapse>
-<Collapse id="health" title="6. Health checks &amp; failover">
 
-<div class="note wild">
-<span class="label">◈ In the wild · The health check endpoint</span>
-    Almost every service you've ever used has an unglamorous <code>/health</code> URL that a load balancer hits every few seconds. It is the most-visited page in your entire system, and no human will ever look at it.
-</div>
+<Collapse id="health" title="6. Health checks & failover">
 
+<Note type="wild" label="◈ In the wild · The health check endpoint">
 
-<div class="note war">
-<span class="label">War story · the doorman who quit</span>
-    A load balancer's health checks assume a dead server <em>stops answering</em>. The nastier failure is the server that keeps answering but returns garbage or hangs at 30 seconds — "brownout," not blackout. Netflix engineered around exactly this with adaptive concurrency limits and circuit breakers, because a slow server that a load balancer keeps feeding is more dangerous than one that cleanly dies. (More in <a href="reliability-toolkit.html">the Reliability guide</a>.)
-</div>
+Almost every service you've ever used has an unglamorous `/health` URL that a load balancer hits every few seconds. It is the most-visited page in your entire system, and no human will ever look at it.
 
-<p>A load balancer is only as good as its ability to notice a server has died. It constantly pokes each backend — "you alive? <code>GET /health</code>" — and the instant one stops answering, it's pulled from rotation. Traffic silently reroutes to healthy servers; users never see the corpse.</p>
-<p>This is the quiet superpower: <strong>failover for free.</strong> A server can crash at 3 AM and, if you've got spare capacity, nobody wakes up. The subtlety is designing the health check well — a shallow "is the port open?" check will happily send traffic to a server whose database connection is dead but whose web process is technically running. Good health checks test the thing that actually matters.</p>
-<div class="note warn">
-<span class="label">The gotcha: don't health-check yourself to death</span>
-    Health checks that are too aggressive, or that hit a shared dependency, can <em>cause</em> the overload they're meant to detect — thousands of checks hammering one database. And if a check flaps, servers yo-yo in and out of rotation. Tune the interval and thresholds.
-</div>
+</Note>
 
-</Collapse>
-<Collapse id="sticky" title="7. Sticky sessions &amp; the case for statelessness">
-<p>Here's a trap. Say a user logs in and their session lives in <em>that specific server's</em> memory. Now the load balancer's next request from them lands on a different server, which has never heard of them. Suddenly they're logged out. Rude.</p>
-<p>Two ways out:</p>
-  
-    
+<Note type="war" label="War story · the doorman who quit">
 
-* <strong>Sticky sessions</strong> — pin each user to the same server (via a cookie or IP hash). Works, but it's a band-aid: that server now can't be replaced without logging people out, and load gets lumpy.
+A load balancer's health checks assume a dead server *stops answering*. The nastier failure is the server that keeps answering but returns garbage or hangs at 30 seconds — "brownout," not blackout. Netflix engineered around exactly this with adaptive concurrency limits and circuit breakers, because a slow server that a load balancer keeps feeding is more dangerous than one that cleanly dies. (More in [the Reliability guide](/guides/reliability-toolkit/).)
 
+</Note>
 
-    
+A load balancer is only as good as its ability to notice a server has died. It constantly pokes each backend — "you alive? `GET /health`" — and the instant one stops answering, it's pulled from rotation. Traffic silently reroutes to healthy servers; users never see the corpse.
 
-* <strong>Statelessness</strong> — the real fix. Keep <em>no</em> per-user state on the app server. Push sessions into a shared store — Redis, a signed cookie, a database. See <a href="understanding-caching.html">the Caching guide</a> for how that shared store is built and what happens when it's cold. Now every server is truly interchangeable and any of them can serve any request.
+This is the quiet superpower: **failover for free.** A server can crash at 3 AM and, if you've got spare capacity, nobody wakes up. The subtlety is designing the health check well — a shallow "is the port open?" check will happily send traffic to a server whose database connection is dead but whose web process is technically running. Good health checks test the thing that actually matters.
 
+<Note type="warn" label="The gotcha: don't health-check yourself to death">
 
-  
-<div class="note key">
-<span class="label">The thread that connects every guide</span>
-    Statelessness is <em>why</em> caching and horizontal scaling exist as a pair. Move session state into a shared cache (<a href="understanding-caching.html">Caching guide</a>) and your app servers become disposable clones a load balancer can shuffle freely. It also cashes out one layer down: every sharding and read-replica scheme in <a href="database-scaling.html">the Database Scaling guide</a> quietly assumes the app tier is stateless, because a shard map only works if any app server can be pointed at any shard. Fast, scalable, resilient — all unlocked by refusing to remember anything locally.
-</div>
+Health checks that are too aggressive, or that hit a shared dependency, can *cause* the overload they're meant to detect — thousands of checks hammering one database. And if a check flaps, servers yo-yo in and out of rotation. Tune the interval and thresholds.
+
+</Note>
 
 </Collapse>
+
+<Collapse id="sticky" title="7. Sticky sessions & the case for statelessness">
+
+Here's a trap. Say a user logs in and their session lives in *that specific server's* memory. Now the load balancer's next request from them lands on a different server, which has never heard of them. Suddenly they're logged out. Rude.
+
+Two ways out:
+
+- **Sticky sessions** — pin each user to the same server (via a cookie or IP hash). Works, but it's a band-aid: that server now can't be replaced without logging people out, and load gets lumpy.
+
+- **Statelessness** — the real fix. Keep *no* per-user state on the app server. Push sessions into a shared store — Redis, a signed cookie, a database. See [the Caching guide](/guides/understanding-caching/) for how that shared store is built and what happens when it's cold. Now every server is truly interchangeable and any of them can serve any request.
+
+<Note type="key" label="The thread that connects every guide">
+
+Statelessness is *why* caching and horizontal scaling exist as a pair. Move session state into a shared cache ([Caching guide](/guides/understanding-caching/)) and your app servers become disposable clones a load balancer can shuffle freely. It also cashes out one layer down: every sharding and read-replica scheme in [the Database Scaling guide](/guides/database-scaling/) quietly assumes the app tier is stateless, because a shard map only works if any app server can be pointed at any shard. Fast, scalable, resilient — all unlocked by refusing to remember anything locally.
+
+</Note>
+
+</Collapse>
+
 <Collapse id="auto" title="8. Autoscaling: the fleet that breathes">
-<p>Once servers are stateless and disposable, you can add and remove them automatically based on load. Traffic climbs at lunchtime → spin up five more servers → the load balancer folds them into rotation as their health checks pass. Traffic drops at 2 AM → scale back down and stop paying for idle machines.</p>
-<p>The catch is <strong>cold starts</strong> (new servers boot with empty caches and briefly run slow — see <a href="understanding-caching.html">the Caching guide</a>) and the lag between "we're overloaded" and "new capacity is ready." Good autoscaling scales up <em>early</em> on a leading signal, and down <em>slowly</em> so a brief dip doesn't kill servers you'll want back in five minutes.</p>
-<p>And be clear-eyed about what autoscaling is for. It absorbs the shape of a normal day — the lunchtime ramp, the Monday morning wall, the marketing email. It does not save you from a fleet collapsing in real time, because a new instance needs minutes and a collapse needs seconds. That's a different tool, and it's in <a href="#death-spiral">the death spiral</a> below.</p>
+
+Once servers are stateless and disposable, you can add and remove them automatically based on load. Traffic climbs at lunchtime → spin up five more servers → the load balancer folds them into rotation as their health checks pass. Traffic drops at 2 AM → scale back down and stop paying for idle machines.
+
+The catch is **cold starts** (new servers boot with empty caches and briefly run slow — see [the Caching guide](/guides/understanding-caching/)) and the lag between "we're overloaded" and "new capacity is ready." Good autoscaling scales up *early* on a leading signal, and down *slowly* so a brief dip doesn't kill servers you'll want back in five minutes.
+
+And be clear-eyed about what autoscaling is for. It absorbs the shape of a normal day — the lunchtime ramp, the Monday morning wall, the marketing email. It does not save you from a fleet collapsing in real time, because a new instance needs minutes and a collapse needs seconds. That's a different tool, and it's in [the death spiral](#death-spiral) below.
 
 </Collapse>
+
 <Collapse id="gotchas" title="9. The gotchas nobody diagrams">
-<p>Everything above is the version that fits on a slide. What follows is the version that pages you. Each of these is a real production failure mode with a specific setting attached to it.</p>
+
+Everything above is the version that fits on a slide. What follows is the version that pages you. Each of these is a real production failure mode with a specific setting attached to it.
 
 <h3 id="draining">Connection draining, or: why every deploy has an error spike</h3>
-<p>You remove an instance — a rolling deploy, a scale-in, a health check that flipped. The naive implementation cuts it out of rotation and stops the process. Every request that was <em>already in flight</em> on that box dies mid-sentence. The client gets a reset or a 502, and because a rolling deploy does this to each instance in turn, the spike is proportional to your fleet size and it happens on every single release. Teams live with this for years and call it "deploy noise."</p>
-<p>The correct sequence has three steps, in order. The instance starts <strong>failing its readiness check</strong> (or is explicitly marked draining), so the load balancer stops sending it <em>new</em> requests. It keeps serving the connections it already has. Only when those finish — or a <strong>drain timeout</strong> expires — does the process exit.</p>
-<p>The knob has a different name everywhere: <em>deregistration delay</em> on an AWS target group (default 300s), <em>drain timeout</em> in HAProxy and Envoy, <code>terminationGracePeriodSeconds</code> plus a <code>preStop</code> hook in Kubernetes. Set it longer than your slowest normal request and shorter than your patience for a deploy. And note the ordering trap: the pod must fail readiness <em>before</em> it gets SIGTERM, or the load balancer is still sending it traffic while it's shutting down — which is the same error spike with more steps.</p>
+
+You remove an instance — a rolling deploy, a scale-in, a health check that flipped. The naive implementation cuts it out of rotation and stops the process. Every request that was *already in flight* on that box dies mid-sentence. The client gets a reset or a 502, and because a rolling deploy does this to each instance in turn, the spike is proportional to your fleet size and it happens on every single release. Teams live with this for years and call it "deploy noise."
+
+The correct sequence has three steps, in order. The instance starts **failing its readiness check** (or is explicitly marked draining), so the load balancer stops sending it *new* requests. It keeps serving the connections it already has. Only when those finish — or a **drain timeout** expires — does the process exit.
+
+The knob has a different name everywhere: *deregistration delay* on an AWS target group (default 300s), *drain timeout* in HAProxy and Envoy, `terminationGracePeriodSeconds` plus a `preStop` hook in Kubernetes. Set it longer than your slowest normal request and shorter than your patience for a deploy. And note the ordering trap: the pod must fail readiness *before* it gets SIGTERM, or the load balancer is still sending it traffic while it's shutting down — which is the same error spike with more steps.
 
 <h3 id="liveness-readiness">Liveness and readiness are different questions</h3>
-<p>Liveness asks: <em>should I be restarted?</em> Readiness asks: <em>should I get traffic right now?</em> These are not the same question and wiring them to the same handler produces two distinct outages.</p>
-<p>Conflate them one way and an instance that is merely <strong>warming up</strong> — filling a connection pool, loading a model, JIT-compiling — gets killed by the liveness probe before it ever serves a request. Deploy, crash-loop, repeat. Conflate them the other way and a <strong>saturated</strong> instance keeps receiving requests because the process is technically alive, which is exactly the failure the cascade below is built on.</p>
-<p>A readiness handler that returns a static <code>200</code> from a constant string tells you the process is running and the port is open. That's it. It cannot tell you whether a request would succeed, because it doesn't do anything a request does. A useful readiness check touches what the request path touches: can I take a connection from the pool, is config loaded, is the cache client connected, is my in-flight count below the line where I stop being useful.</p>
-<div class="note warn">
-<span class="label">…but not too deep</span>
-    If every instance's readiness check queries the same database, and that database has a bad ten seconds, every instance fails readiness at the same moment and the load balancer has nothing left to send traffic to. A shared dependency turns a dependency blip into a total outage. Check the dependency, cache the result for a few seconds so you're not hammering it, and don't fail readiness for anything you can serve degraded.
-</div>
+
+Liveness asks: *should I be restarted?* Readiness asks: *should I get traffic right now?* These are not the same question and wiring them to the same handler produces two distinct outages.
+
+Conflate them one way and an instance that is merely **warming up** — filling a connection pool, loading a model, JIT-compiling — gets killed by the liveness probe before it ever serves a request. Deploy, crash-loop, repeat. Conflate them the other way and a **saturated** instance keeps receiving requests because the process is technically alive, which is exactly the failure the cascade below is built on.
+
+A readiness handler that returns a static `200` from a constant string tells you the process is running and the port is open. That's it. It cannot tell you whether a request would succeed, because it doesn't do anything a request does. A useful readiness check touches what the request path touches: can I take a connection from the pool, is config loaded, is the cache client connected, is my in-flight count below the line where I stop being useful.
+
+<Note type="warn" label="…but not too deep">
+
+If every instance's readiness check queries the same database, and that database has a bad ten seconds, every instance fails readiness at the same moment and the load balancer has nothing left to send traffic to. A shared dependency turns a dependency blip into a total outage. Check the dependency, cache the result for a few seconds so you're not hammering it, and don't fail readiness for anything you can serve degraded.
+
+</Note>
 
 <h3 id="fail-open">Fail-open and the panic threshold</h3>
-<p>If health checks are the only thing standing between you and an outage, then a bug in the health check <em>is</em> an outage. A config push that changes the health path. A certificate that expires on the health port. A probe timeout tuned for an idle box, now being evaluated on a busy one. Any of these can mark one hundred percent of your fleet unhealthy inside a single check interval, and a strictly correct load balancer will then dutifully send traffic to nobody.</p>
-<p>Real proxies refuse to be that correct. Envoy has a <strong>panic threshold</strong>, default 50%: once fewer than half the hosts in a cluster are healthy, it stops honouring health status and load balances across <em>all</em> hosts, sick ones included. The reasoning is blunt and right — if most of your fleet appears dead, the likelier explanation is that your health checking is broken, and a degraded backend beats no backend. Whatever proxy you run, find out what it does when zero hosts are healthy, and find out before the day it matters.</p>
+
+If health checks are the only thing standing between you and an outage, then a bug in the health check *is* an outage. A config push that changes the health path. A certificate that expires on the health port. A probe timeout tuned for an idle box, now being evaluated on a busy one. Any of these can mark one hundred percent of your fleet unhealthy inside a single check interval, and a strictly correct load balancer will then dutifully send traffic to nobody.
+
+Real proxies refuse to be that correct. Envoy has a **panic threshold**, default 50%: once fewer than half the hosts in a cluster are healthy, it stops honouring health status and load balances across *all* hosts, sick ones included. The reasoning is blunt and right — if most of your fleet appears dead, the likelier explanation is that your health checking is broken, and a degraded backend beats no backend. Whatever proxy you run, find out what it does when zero hosts are healthy, and find out before the day it matters.
 
 <h3 id="slow-start">Slow start: don't hand a cold instance the firehose</h3>
-<p>A freshly added instance has empty caches, empty connection pools, and a JIT that hasn't compiled anything hot. It is the slowest machine in your fleet and it is also, to a least-connections balancer, the emptiest one. So the balancer points the firehose at it. It falls over, fails its health check, restarts, comes back cold, and does it again — a loop you can watch on a graph for hours.</p>
-<p>The fix is <strong>slow start</strong>: ramp the new instance's share from near-zero to full over a window — thirty seconds to a couple of minutes is the usual range. Nginx Plus, Envoy, and AWS ALB target groups all have a setting for it. The complementary fix is on the instance itself: warm your caches and pools <em>before</em> you report ready. Readiness is a promise. Don't make it early.</p>
+
+A freshly added instance has empty caches, empty connection pools, and a JIT that hasn't compiled anything hot. It is the slowest machine in your fleet and it is also, to a least-connections balancer, the emptiest one. So the balancer points the firehose at it. It falls over, fails its health check, restarts, comes back cold, and does it again — a loop you can watch on a graph for hours.
+
+The fix is **slow start**: ramp the new instance's share from near-zero to full over a window — thirty seconds to a couple of minutes is the usual range. Nginx Plus, Envoy, and AWS ALB target groups all have a setting for it. The complementary fix is on the instance itself: warm your caches and pools *before* you report ready. Readiness is a promise. Don't make it early.
 
 <h3 id="keepalive-l4">Keepalive and HTTP/2 quietly defeat L4 round robin</h3>
-<p>An L4 balancer distributes <em>connections</em>, not requests. It makes one decision, at connection setup, and every byte on that connection goes to the same backend for as long as it lives.</p>
-<p>With HTTP/1.1 keepalive that's already thousands of requests riding a single decision. With <strong>HTTP/2 or gRPC</strong> it's far worse: one connection multiplexes many concurrent streams, so a client that connected at 03:00 keeps hammering the one backend it was assigned, indefinitely. Add capacity and the new instance gets nothing at all — nobody is opening new connections, so there is nothing to balance.</p>
-<p>The tell is a dashboard that lies to you in a very specific way: connections per backend are beautifully even, and CPU is 90% on one box and 8% on the others. Three fixes, roughly in order of preference. Balance at <strong>L7</strong>, so the decision is made per request (or per HTTP/2 stream) rather than per connection. Set a <strong>maximum connection age or max requests per connection</strong>, so clients are periodically forced to reconnect and get re-balanced. Or move the decision to the client — a service mesh sidecar or a client-side balancer that knows about streams.</p>
+
+An L4 balancer distributes *connections*, not requests. It makes one decision, at connection setup, and every byte on that connection goes to the same backend for as long as it lives.
+
+With HTTP/1.1 keepalive that's already thousands of requests riding a single decision. With **HTTP/2 or gRPC** it's far worse: one connection multiplexes many concurrent streams, so a client that connected at 03:00 keeps hammering the one backend it was assigned, indefinitely. Add capacity and the new instance gets nothing at all — nobody is opening new connections, so there is nothing to balance.
+
+The tell is a dashboard that lies to you in a very specific way: connections per backend are beautifully even, and CPU is 90% on one box and 8% on the others. Three fixes, roughly in order of preference. Balance at **L7**, so the decision is made per request (or per HTTP/2 stream) rather than per connection. Set a **maximum connection age or max requests per connection**, so clients are periodically forced to reconnect and get re-balanced. Or move the decision to the client — a service mesh sidecar or a client-side balancer that knows about streams.
 
 <h3 id="client-ip">The client's IP disappears at L7</h3>
-<p>Once an L7 proxy terminates the client connection, your backend's socket shows the <em>proxy's</em> address. Every access log, every rate limit, every geo-block is now pointed at your own load balancer. The standard fix is <code>X-Forwarded-For</code>: the proxy appends the client's address to the header as the request passes through.</p>
-<p>Now the trap. <code>X-Forwarded-For</code> is a header, and headers are whatever the sender says they are. If you read it naively on a request that arrived from the internet, anyone can send <code>X-Forwarded-For: 203.0.113.9</code> and your rate limiter, your geo-block, and your audit log all believe them — which is to say your rate limiting is now optional. Your edge proxy must overwrite or normalise the header, and everything behind it must count from the trusted end and trust only the number of hops you actually operate. Nginx expresses this as <code>set_real_ip_from</code> plus <code>real_ip_recursive</code>; Envoy as <code>xff_num_trusted_hops</code>. Get the hop count wrong and you are trusting an attacker-supplied value again, just with more configuration.</p>
-<p>At L4 the equivalent is the <strong>PROXY protocol</strong>: the balancer prepends a small fixed header to the TCP stream carrying the original source and destination addresses, before any application bytes. Because it sits underneath the application protocol it works for anything — SMTP, Postgres, raw TCP — but the backend must be configured to expect it, and must accept it <em>only</em> from the proxy, for exactly the same spoofing reason.</p>
+
+Once an L7 proxy terminates the client connection, your backend's socket shows the *proxy's* address. Every access log, every rate limit, every geo-block is now pointed at your own load balancer. The standard fix is `X-Forwarded-For`: the proxy appends the client's address to the header as the request passes through.
+
+Now the trap. `X-Forwarded-For` is a header, and headers are whatever the sender says they are. If you read it naively on a request that arrived from the internet, anyone can send `X-Forwarded-For: 203.0.113.9` and your rate limiter, your geo-block, and your audit log all believe them — which is to say your rate limiting is now optional. Your edge proxy must overwrite or normalise the header, and everything behind it must count from the trusted end and trust only the number of hops you actually operate. Nginx expresses this as `set_real_ip_from` plus `real_ip_recursive`; Envoy as `xff_num_trusted_hops`. Get the hop count wrong and you are trusting an attacker-supplied value again, just with more configuration.
+
+At L4 the equivalent is the **PROXY protocol**: the balancer prepends a small fixed header to the TCP stream carrying the original source and destination addresses, before any application bytes. Because it sits underneath the application protocol it works for anything — SMTP, Postgres, raw TCP — but the backend must be configured to expect it, and must accept it *only* from the proxy, for exactly the same spoofing reason.
 
 <h3 id="retry-amplification">Retry amplification</h3>
-<p>Retries are individually reasonable and collectively catastrophic. The mobile SDK retries. The CDN retries. The API gateway retries. The service client retries. The database driver retries. Three layers that each make three attempts is 3³ = <strong>27 requests for one user action</strong> — and they arrive during precisely the window when the system is already failing, which is when a 27× multiplier is least survivable.</p>
-<p>They're also <em>correlated</em>. Everyone's timeout fires at roughly the same moment, so the retries land as a synchronised wave rather than a smear. That's a retry storm, and it is how a five-second dependency blip becomes a twenty-minute outage.</p>
-<p>Three fixes, and you want all of them. <strong>Retry at exactly one layer</strong> and make every other layer fail fast — pick the layer with the most context, usually the one closest to the caller who can actually do something about it. Put a <strong>retry budget</strong> on that layer: cap retries as a fraction of successful traffic, so a total outage multiplies load by nothing at all rather than by three (Envoy's default budget is 20% of active requests; Finagle popularised the idea). And add <strong>jitter</strong> to your backoff so the wave spreads out instead of arriving as a spike. The full treatment — circuit breakers, budgets, shedding — is in <a href="reliability-toolkit.html">the Reliability guide</a>.</p>
+
+Retries are individually reasonable and collectively catastrophic. The mobile SDK retries. The CDN retries. The API gateway retries. The service client retries. The database driver retries. Three layers that each make three attempts is 3³ = **27 requests for one user action** — and they arrive during precisely the window when the system is already failing, which is when a 27× multiplier is least survivable.
+
+They're also *correlated*. Everyone's timeout fires at roughly the same moment, so the retries land as a synchronised wave rather than a smear. That's a retry storm, and it is how a five-second dependency blip becomes a twenty-minute outage.
+
+Three fixes, and you want all of them. **Retry at exactly one layer** and make every other layer fail fast — pick the layer with the most context, usually the one closest to the caller who can actually do something about it. Put a **retry budget** on that layer: cap retries as a fraction of successful traffic, so a total outage multiplies load by nothing at all rather than by three (Envoy's default budget is 20% of active requests; Finagle popularised the idea). And add **jitter** to your backoff so the wave spreads out instead of arriving as a spike. The full treatment — circuit breakers, budgets, shedding — is in [the Reliability guide](/guides/reliability-toolkit/).
 
 <h3 id="p2c">Least connections doesn't scale — use the power of two choices</h3>
-<p>True least-connections needs to know every backend's current load at the instant of the decision. That's easy with one load balancer and impossible with a tier of them: each has only its own view, and if they all independently spot the same emptiest server, they all stampede it simultaneously. It's the same mechanism that makes least-connections dogpile a just-restarted instance, only now with a multiplier.</p>
-<p><strong>Power of two random choices</strong> is the fix, and it is almost insultingly simple: pick two backends uniformly at random, compare only those two, send the request to whichever has fewer outstanding requests. No global state, no coordination, no single "best" server for everyone to converge on. The theoretical result (Azar, Broder, Karlin and Upfal, 1994) is that this is not a small improvement over pure random — it's an exponential one. Throwing <em>n</em> requests at <em>n</em> servers uniformly at random leaves the worst-loaded server with roughly log <em>n</em> / log log <em>n</em> of them; sampling two and taking the lighter drops that to roughly log log <em>n</em>. A second sample buys you most of the distance to perfect balance. A third buys almost nothing.</p>
-<p>This is what large systems actually run: Nginx (<code>random two least_conn</code>), HAProxy (<code>balance random</code>), Envoy (its <code>LEAST_REQUEST</code> policy samples two hosts by default), and most client-side balancers in a service mesh. If you're picking an algorithm and you don't have a specific reason for something else, pick this one.</p>
+
+True least-connections needs to know every backend's current load at the instant of the decision. That's easy with one load balancer and impossible with a tier of them: each has only its own view, and if they all independently spot the same emptiest server, they all stampede it simultaneously. It's the same mechanism that makes least-connections dogpile a just-restarted instance, only now with a multiplier.
+
+**Power of two random choices** is the fix, and it is almost insultingly simple: pick two backends uniformly at random, compare only those two, send the request to whichever has fewer outstanding requests. No global state, no coordination, no single "best" server for everyone to converge on. The theoretical result (Azar, Broder, Karlin and Upfal, 1994) is that this is not a small improvement over pure random — it's an exponential one. Throwing *n* requests at *n* servers uniformly at random leaves the worst-loaded server with roughly log *n* / log log *n* of them; sampling two and taking the lighter drops that to roughly log log *n*. A second sample buys you most of the distance to perfect balance. A third buys almost nothing.
+
+This is what large systems actually run: Nginx (`random two least_conn`), HAProxy (`balance random`), Envoy (its `LEAST_REQUEST` policy samples two hosts by default), and most client-side balancers in a service mesh. If you're picking an algorithm and you don't have a specific reason for something else, pick this one.
 
 <h3 id="death-spiral">The capacity death spiral</h3>
-<p>Ten instances, each at 70% CPU. One dies. The other nine now carry its share and sit at 78%. Latency rises; requests queue; queued requests hold memory, connections, and thread slots, so the next instance saturates and drops out too. Now eight are at 87%. Then seven, at 100% — and there is no seven-instance configuration that serves this traffic. Every removal makes the next removal more likely, and sooner. The load balancer's failover, which is genuinely the right behaviour when one box dies in a healthy fleet, becomes the transmission mechanism.</p>
-<p>Autoscaling cannot save you here and it's worth being precise about why. A scale-up needs a metric window (tens of seconds), then an instance boot, then application start, then cache warm, then enough consecutive passing health checks to be added. Minutes, at best. The collapse runs in seconds. By the time the new capacity is ready there's nothing left to relieve.</p>
-<p>The only thing that operates on the right timescale is <strong>refusing work</strong>. Load shedding: when the queue is longer than you can serve inside your latency budget, return <code>503</code> to the excess immediately rather than accepting everything and serving none of it. Per-instance concurrency limits: a hard cap on in-flight requests, so an instance degrades predictably instead of falling over. Both trade visible errors for a surviving fleet, which is a trade people resist right up until the first time they watch the alternative. Details in <a href="reliability-toolkit.html">the Reliability guide</a>.</p>
+
+Ten instances, each at 70% CPU. One dies. The other nine now carry its share and sit at 78%. Latency rises; requests queue; queued requests hold memory, connections, and thread slots, so the next instance saturates and drops out too. Now eight are at 87%. Then seven, at 100% — and there is no seven-instance configuration that serves this traffic. Every removal makes the next removal more likely, and sooner. The load balancer's failover, which is genuinely the right behaviour when one box dies in a healthy fleet, becomes the transmission mechanism.
+
+Autoscaling cannot save you here and it's worth being precise about why. A scale-up needs a metric window (tens of seconds), then an instance boot, then application start, then cache warm, then enough consecutive passing health checks to be added. Minutes, at best. The collapse runs in seconds. By the time the new capacity is ready there's nothing left to relieve.
+
+The only thing that operates on the right timescale is **refusing work**. Load shedding: when the queue is longer than you can serve inside your latency budget, return `503` to the excess immediately rather than accepting everything and serving none of it. Per-instance concurrency limits: a hard cap on in-flight requests, so an instance degrades predictably instead of falling over. Both trade visible errors for a surviving fleet, which is a trade people resist right up until the first time they watch the alternative. Details in [the Reliability guide](/guides/reliability-toolkit/).
 
 </Collapse>
+
 <Collapse id="cascade" title="10. Anatomy of a cascade: 03:14 to 03:19">
-<p>Back to the launch that worked too well. Here is what actually happened between the moment the graph went vertical and the moment it came back — every step of it a mechanism from the sections above. Six instances, round robin, health check every 10 seconds with an unhealthy threshold of 3. Each instance tops out around 2,800 requests per second.</p>
-<pre class="trace">
-<b>{"03:14:02"}</b>{"  6 instances · round robin · all green"}{"\n"}
-{"          offered 12,400 rps · p99 240ms · cpu 74%"}{"\n"}
-{"\n"}
-<b>{"03:14:38"}</b>{"  web-03 heap 91%, GC pausing every 400ms"}{"\n"}
-{"          web-03 p99: 240ms -> 2.1s"}{"\n"}
-{"          GET /health -> 200 OK in 3ms"}{"\n"}
-{"          (the handler returns a constant. it always will.)"}{"\n"}
-{"\n"}
-<b>{"03:15:05"}</b>{"  "}<span class="bad">{"LB still sends web-03 exactly 1/6 of traffic"}</span>{"\n"}
-{"          round robin counts requests, not seconds"}{"\n"}
-{"          web-03 in-flight: 41 -> 900"}{"\n"}
-{"\n"}
-<b>{"03:15:31"}</b>{"  clients hit the 3s timeout. clients retry."}{"\n"}
-{"          "}<span class="bad">{"offered 12,400 -> 15,100 rps"}</span>{"\n"}
-{"          demand did not change. the retries did."}{"\n"}
-{"          the five healthy boxes: 2,517 rps each, 90% cpu"}{"\n"}
-{"\n"}
-<b>{"03:16:12"}</b>{"  web-03's health check finally times out"}{"\n"}
-{"          strike 1 of 3 · 10s interval"}{"\n"}
-{"\n"}
-<b>{"03:16:32"}</b>{"  "}<span class="bad">{"strike 3 · web-03 removed from the pool"}</span>{"\n"}
-{"          900 in-flight requests killed, not drained"}{"\n"}
-{"          the edge hands every one of them a 502"}{"\n"}
-{"\n"}
-<b>{"03:16:33"}</b>{"  web-03's share redistributes to 5 survivors"}{"\n"}
-{"          15,100 / 5 = 3,020 rps each"}{"\n"}
-{"          "}<span class="bad">{"each can serve 2,800. that is 108% of capacity."}</span>{"\n"}
-{"          "}<span class="bad">{"the removal that was supposed to help"}</span>{"\n"}
-{"          "}<span class="bad">{"is now the thing making it worse"}</span>{"\n"}
-{"\n"}
-<b>{"03:17:04"}</b>{"  web-05 queue passes its latency budget"}{"\n"}
-{"          p99 4.8s · clients time out · clients retry"}{"\n"}
-{"          "}<span class="bad">{"offered 15,100 -> 18,600 rps"}</span>{"\n"}
-{"\n"}
-<b>{"03:17:58"}</b>{"  "}<span class="bad">{"web-05 removed · 4 instances left"}</span>{"\n"}
-{"          capacity 11,200 rps. arriving: 18,600 rps."}{"\n"}
-{"          there is no 4-instance answer to this"}{"\n"}
-{"\n"}
-<b>{"03:18:10"}</b>{"  autoscaler fires · +6 requested"}{"\n"}
-{"          boot, app start, cache warm, 3 passing checks"}{"\n"}
-{"          "}<span class="bad">{"eta ~4 minutes. the collapse took 86 seconds."}</span>{"\n"}
-{"\n"}
-<b>{"03:18:24"}</b>{"  "}<span class="good">{"concurrency limit engaged"}</span>{"\n"}
-{"          "}<span class="good">{"750 in-flight per instance, hard cap"}</span>{"\n"}
-{"          past the cap: 503 in 2ms, no queue slot"}{"\n"}
-{"\n"}
-<b>{"03:18:25"}</b>{"  "}<span class="bad">{"40% of requests get an immediate 503"}</span>{"\n"}
-{"          "}<span class="good">{"60% get a real answer in 270ms"}</span>{"\n"}
-{"          queues drain · heaps stop climbing"}{"\n"}
-{"\n"}
-<b>{"03:18:52"}</b>{"  "}<span class="good">{"clients stop timing out, so they stop retrying"}</span>{"\n"}
-{"          "}<span class="good">{"offered 18,600 -> 12,600 rps"}</span>{"\n"}
-{"          most of the \"traffic spike\" was our own echo"}{"\n"}
-{"          still shedding ~11%. no longer collapsing."}{"\n"}
-{"\n"}
-<b>{"03:19:05"}</b>{"  "}<span class="good">{"web-03 and web-05 back · warm before ready"}</span>{"\n"}
-{"          readiness now fails at heap &gt; 85% or in-flight &gt; 600"}{"\n"}
-{"          slow start: 0 -> full share over 30s"}{"\n"}
-{"\n"}
-<b>{"03:19:41"}</b>{"  "}<span class="good">{"6 healthy · 12,400 rps · p99 250ms · shedding off"}</span>{"\n"}
-{"          the +6 instances land at 03:22 and are scaled"}{"\n"}
-{"          back down at 03:41. they were never the fix."}{"\n"}
-</pre>
+
+Back to the launch that worked too well. Here is what actually happened between the moment the graph went vertical and the moment it came back — every step of it a mechanism from the sections above. Six instances, round robin, health check every 10 seconds with an unhealthy threshold of 3. Each instance tops out around 2,800 requests per second.
+
+```trace
+**03:14:02**  6 instances · round robin · all green
+          offered 12,400 rps · p99 240ms · cpu 74%
+
+**03:14:38**  web-03 heap 91%, GC pausing every 400ms
+          web-03 p99: 240ms -> 2.1s
+          GET /health -> 200 OK in 3ms
+          (the handler returns a constant. it always will.)
+
+**03:15:05**  ~~LB still sends web-03 exactly 1/6 of traffic~~
+          round robin counts requests, not seconds
+          web-03 in-flight: 41 -> 900
+
+**03:15:31**  clients hit the 3s timeout. clients retry.
+          ~~offered 12,400 -> 15,100 rps~~
+          demand did not change. the retries did.
+          the five healthy boxes: 2,517 rps each, 90% cpu
+
+**03:16:12**  web-03's health check finally times out
+          strike 1 of 3 · 10s interval
+
+**03:16:32**  ~~strike 3 · web-03 removed from the pool~~
+          900 in-flight requests killed, not drained
+          the edge hands every one of them a 502
+
+**03:16:33**  web-03's share redistributes to 5 survivors
+          15,100 / 5 = 3,020 rps each
+          ~~each can serve 2,800. that is 108% of capacity.~~
+          ~~the removal that was supposed to help~~
+          ~~is now the thing making it worse~~
+
+**03:17:04**  web-05 queue passes its latency budget
+          p99 4.8s · clients time out · clients retry
+          ~~offered 15,100 -> 18,600 rps~~
+
+**03:17:58**  ~~web-05 removed · 4 instances left~~
+          capacity 11,200 rps. arriving: 18,600 rps.
+          there is no 4-instance answer to this
+
+**03:18:10**  autoscaler fires · +6 requested
+          boot, app start, cache warm, 3 passing checks
+          ~~eta ~4 minutes. the collapse took 86 seconds.~~
+
+**03:18:24**  ++concurrency limit engaged++
+          ++750 in-flight per instance, hard cap++
+          past the cap: 503 in 2ms, no queue slot
+
+**03:18:25**  ~~40% of requests get an immediate 503~~
+          ++60% get a real answer in 270ms++
+          queues drain · heaps stop climbing
+
+**03:18:52**  ++clients stop timing out, so they stop retrying++
+          ++offered 18,600 -> 12,600 rps++
+          most of the "traffic spike" was our own echo
+          still shedding ~11%. no longer collapsing.
+
+**03:19:05**  ++web-03 and web-05 back · warm before ready++
+          readiness now fails at heap > 85% or in-flight > 600
+          slow start: 0 -> full share over 30s
+
+**03:19:41**  ++6 healthy · 12,400 rps · p99 250ms · shedding off++
+          the +6 instances land at 03:22 and are scaled
+          back down at 03:41. they were never the fix.
+```
+
 <h3 id="cascade-mechanisms">What you just watched</h3>
-<p>Nine minutes, and almost none of it was a capacity problem. Naming the parts:</p>
-  
-    
 
-* <strong>03:14:38 — a health check that measured the wrong thing.</strong> web-03 was answering <code>/health</code> in 3ms while answering real requests in 2.1 seconds, because the health handler returns a constant and a constant is always fast. See <a href="#health">health checks</a> and <a href="#liveness-readiness">liveness vs readiness</a>.
+Nine minutes, and almost none of it was a capacity problem. Naming the parts:
 
+- **03:14:38 — a health check that measured the wrong thing.** web-03 was answering `/health` in 3ms while answering real requests in 2.1 seconds, because the health handler returns a constant and a constant is always fast. See [health checks](#health) and [liveness vs readiness](#liveness-readiness).
 
-    
+- **03:15:05 — round robin is blind to work.** It counts requests handed out, not time spent. A backend taking 2.1 seconds per request receives exactly as many as one taking 20ms. Least-connections or [power of two choices](#p2c) would have starved web-03 automatically, because its in-flight count was screaming. See [the algorithms](#algos).
 
-* <strong>03:15:05 — round robin is blind to work.</strong> It counts requests handed out, not time spent. A backend taking 2.1 seconds per request receives exactly as many as one taking 20ms. Least-connections or <a href="#p2c">power of two choices</a> would have starved web-03 automatically, because its in-flight count was screaming. See <a href="#algos">the algorithms</a>.
+- **03:15:31 and 03:17:04 — retry amplification.** Offered load went from 12,400 to 18,600 rps without one extra user showing up. Half the "spike" was the system talking to itself. See [retry amplification](#retry-amplification).
 
+- **03:16:32 — no connection draining.** 900 in-flight requests were terminated at the instant of removal instead of being allowed to finish. Every one became a visible 502. See [connection draining](#draining).
 
-    
+- **03:16:33 to 03:17:58 — the death spiral.** Removing the sick instance moved its traffic onto five survivors who were already at 90%. Failover is correct behaviour in a healthy fleet and a detonator in a saturated one. See [the capacity death spiral](#death-spiral).
 
-* <strong>03:15:31 and 03:17:04 — retry amplification.</strong> Offered load went from 12,400 to 18,600 rps without one extra user showing up. Half the "spike" was the system talking to itself. See <a href="#retry-amplification">retry amplification</a>.
+- **03:18:10 — autoscaling on the wrong timescale.** Four minutes of provisioning against an 86-second collapse. It arrived after the incident was over and cost money for a day. See [autoscaling](#auto).
 
+- **03:18:24 — what actually stopped it.** A concurrency cap and load shedding, both of which act in milliseconds because they are just refusals. The instant clients stopped timing out, they stopped retrying, and the offered load fell by a third on its own. See [shedding](#death-spiral) and [the Reliability guide](/guides/reliability-toolkit/).
 
-    
+- **03:19:05 — the two changes that make it not happen again.** A readiness check that fails while the instance is *degrading* rather than after it's unusable, so the balancer stops feeding a box that can't keep up; and [slow start](#slow-start), so a cold instance isn't handed a full share the second it comes back.
 
-* <strong>03:16:32 — no connection draining.</strong> 900 in-flight requests were terminated at the instant of removal instead of being allowed to finish. Every one became a visible 502. See <a href="#draining">connection draining</a>.
+<Note type="key" label="The uncomfortable part">
 
+Every single default in that timeline was a reasonable default. Round robin, a fast health endpoint, remove-on-unhealthy, retry-on-failure, scale-up-on-CPU. Nothing was misconfigured in the sense of being obviously wrong. Cascades are what reasonable defaults do when they compose.
 
-    
-
-* <strong>03:16:33 to 03:17:58 — the death spiral.</strong> Removing the sick instance moved its traffic onto five survivors who were already at 90%. Failover is correct behaviour in a healthy fleet and a detonator in a saturated one. See <a href="#death-spiral">the capacity death spiral</a>.
-
-
-    
-
-* <strong>03:18:10 — autoscaling on the wrong timescale.</strong> Four minutes of provisioning against an 86-second collapse. It arrived after the incident was over and cost money for a day. See <a href="#auto">autoscaling</a>.
-
-
-    
-
-* <strong>03:18:24 — what actually stopped it.</strong> A concurrency cap and load shedding, both of which act in milliseconds because they are just refusals. The instant clients stopped timing out, they stopped retrying, and the offered load fell by a third on its own. See <a href="#death-spiral">shedding</a> and <a href="reliability-toolkit.html">the Reliability guide</a>.
-
-
-    
-
-* <strong>03:19:05 — the two changes that make it not happen again.</strong> A readiness check that fails while the instance is <em>degrading</em> rather than after it's unusable, so the balancer stops feeding a box that can't keep up; and <a href="#slow-start">slow start</a>, so a cold instance isn't handed a full share the second it comes back.
-
-
-  
-<div class="note key">
-<span class="label">The uncomfortable part</span>
-    Every single default in that timeline was a reasonable default. Round robin, a fast health endpoint, remove-on-unhealthy, retry-on-failure, scale-up-on-CPU. Nothing was misconfigured in the sense of being obviously wrong. Cascades are what reasonable defaults do when they compose.
-</div>
-
-
-<div class="note war">
-</div>
-
-
-<div class="note key">
-</div>
+</Note>
 
 </Collapse>
+
 <Collapse id="recap" title="11. Recap in 60 seconds">
-<div class="recap">
-    
-      
 
-* <strong>The job</strong> is to answer "which backend?" correctly, instantly, millions of times a second — and to notice when the answer stops being a backend at all.
+<Recap>
 
+- **The job** is to answer "which backend?" correctly, instantly, millions of times a second — and to notice when the answer stops being a backend at all.
 
-      
+- **L4 forwards packets, L7 reads requests.** Content routing, TLS termination, header rewrites, per-route limits and cross-backend retries are all L7. Protocol neutrality, source-IP fidelity and minimum latency are all L4. Edge L4 in front of a tier of L7 proxies is a very common shape.
 
-* <strong>L4 forwards packets, L7 reads requests.</strong> Content routing, TLS termination, header rewrites, per-route limits and cross-backend retries are all L7. Protocol neutrality, source-IP fidelity and minimum latency are all L4. Edge L4 in front of a tier of L7 proxies is a very common shape.
+- **Round robin is blind to work.** A backend taking 100× longer gets the same number of requests. Prefer least-connections, and implement it as [power of two random choices](#p2c) so it survives a tier of load balancers.
 
+- **Consistent hashing** is what stops a fleet size change from invalidating every cache key at once.
 
-      
+- **Sticky sessions are a band-aid.** Push session state into a shared cache and every server becomes interchangeable — which is also what sharding in [the Database guide](/guides/database-scaling/) assumes.
 
-* <strong>Round robin is blind to work.</strong> A backend taking 100× longer gets the same number of requests. Prefer least-connections, and implement it as <a href="#p2c">power of two random choices</a> so it survives a tier of load balancers.
+- **Liveness ≠ readiness.** "Restart me?" and "send me traffic?" are different questions. A static 200 answers neither.
 
+- **Removal is not free.** Drain first, or every deploy is an error spike. And the traffic you remove lands on instances that may not have room for it.
 
-      
+- **Health checks can fail open.** If every host looks unhealthy, the likeliest bug is in the checker. Know what your proxy does at zero healthy hosts.
 
-* <strong>Consistent hashing</strong> is what stops a fleet size change from invalidating every cache key at once.
+- **Retries multiply.** Retry at one layer, cap it with a budget, jitter the backoff.
 
+- **Only refusal is fast enough.** Autoscaling takes minutes; a cascade takes seconds. Shed load and cap concurrency per instance.
 
-      
+</Recap>
 
-* <strong>Sticky sessions are a band-aid.</strong> Push session state into a shared cache and every server becomes interchangeable — which is also what sharding in <a href="database-scaling.html">the Database guide</a> assumes.
+And a handful of numbers worth carrying around. These are **order-of-magnitude starting points, not benchmarks** — every one of them should end up tuned to your own request profile, and none of them is a target to hit.
 
+<Table numeric>
 
-      
+| Number | What it is | Why roughly that |
+| ------ | ---------- | ---------------- |
+| 5–10s | Health-check interval | Fast enough to catch a death within one page load's patience; slow enough that a 500-instance fleet isn't a DDoS against its own health endpoint. |
+| 2–3 fails | Unhealthy threshold | One failed check is noise. Two or three is a signal. Combined with the interval this sets your detection time: 3 × 10s ≈ 30 seconds to eject. |
+| 2 passes | Healthy threshold | Coming back should be easier than going away, but not instant, or a flapping instance oscillates in and out of rotation. |
+| 30–120s | Deregistration delay / drain timeout | Longer than your slowest ordinary request, shorter than your appetite for a rolling deploy. AWS defaults to 300s, which is usually far more than a web tier needs. Long-poll or streaming endpoints need more. |
+| 30–300s | Slow-start ramp for a new instance | Long enough to fill pools and warm caches under gradually increasing real traffic. Match it to how long your p99 actually takes to settle after a restart. |
+| ~10–100µs | Added latency, L4 hop | Forwarding with no parsing, often in kernel space or on the NIC. Effectively free next to a network round trip. |
+| ~0.5–2ms | Added latency, L7 hop | Parse, route, re-emit, plus buffering. Small in absolute terms, and material only when your own p50 is single-digit milliseconds or you're chaining several proxies. |
+| 1–5ms | TLS handshake CPU at the terminator | Per new connection, not per request — which is exactly why connection reuse and session resumption matter so much at the edge. |
+| 10–20% | Retry budget, as a share of traffic | Enough headroom to paper over ordinary blips; low enough that a total outage cannot multiply offered load. Envoy defaults to 20%. |
 
-* <strong>Liveness ≠ readiness.</strong> "Restart me?" and "send me traffic?" are different questions. A static 200 answers neither.
+</Table>
 
-
-      
-
-* <strong>Removal is not free.</strong> Drain first, or every deploy is an error spike. And the traffic you remove lands on instances that may not have room for it.
-
-
-      
-
-* <strong>Health checks can fail open.</strong> If every host looks unhealthy, the likeliest bug is in the checker. Know what your proxy does at zero healthy hosts.
-
-
-      
-
-* <strong>Retries multiply.</strong> Retry at one layer, cap it with a budget, jitter the backoff.
-
-
-      
-
-* <strong>Only refusal is fast enough.</strong> Autoscaling takes minutes; a cascade takes seconds. Shed load and cap concurrency per instance.
-
-
-    
-</div>
-<p>And a handful of numbers worth carrying around. These are <strong>order-of-magnitude starting points, not benchmarks</strong> — every one of them should end up tuned to your own request profile, and none of them is a target to hit.</p>
-<div class="table-scroll">
-<table class="num-table">
-<thead><tr><th>Number</th><th>What it is</th><th>Why roughly that</th></tr></thead>
-<tbody>
-<tr><td>5–10s</td><td>Health-check interval</td><td>Fast enough to catch a death within one page load's patience; slow enough that a 500-instance fleet isn't a DDoS against its own health endpoint.</td></tr>
-<tr><td>2–3 fails</td><td>Unhealthy threshold</td><td>One failed check is noise. Two or three is a signal. Combined with the interval this sets your detection time: 3 × 10s ≈ 30 seconds to eject.</td></tr>
-<tr><td>2 passes</td><td>Healthy threshold</td><td>Coming back should be easier than going away, but not instant, or a flapping instance oscillates in and out of rotation.</td></tr>
-<tr><td>30–120s</td><td>Deregistration delay / drain timeout</td><td>Longer than your slowest ordinary request, shorter than your appetite for a rolling deploy. AWS defaults to 300s, which is usually far more than a web tier needs. Long-poll or streaming endpoints need more.</td></tr>
-<tr><td>30–300s</td><td>Slow-start ramp for a new instance</td><td>Long enough to fill pools and warm caches under gradually increasing real traffic. Match it to how long your p99 actually takes to settle after a restart.</td></tr>
-<tr><td>~10–100µs</td><td>Added latency, L4 hop</td><td>Forwarding with no parsing, often in kernel space or on the NIC. Effectively free next to a network round trip.</td></tr>
-<tr><td>~0.5–2ms</td><td>Added latency, L7 hop</td><td>Parse, route, re-emit, plus buffering. Small in absolute terms, and material only when your own p50 is single-digit milliseconds or you're chaining several proxies.</td></tr>
-<tr><td>1–5ms</td><td>TLS handshake CPU at the terminator</td><td>Per new connection, not per request — which is exactly why connection reuse and session resumption matter so much at the edge.</td></tr>
-<tr><td>10–20%</td><td>Retry budget, as a share of traffic</td><td>Enough headroom to paper over ordinary blips; low enough that a total outage cannot multiply offered load. Envoy defaults to 20%.</td></tr>
-</tbody>
-</table>
-</div>
-
-<p>Six situations. Answer before you open them — the useful part is noticing which ones you can't.</p>
-
-
-
-
-
-
+Six situations. Answer before you open them — the useful part is noticing which ones you can't.
 
 </Collapse>
-<hr />
-<Footer><a href="https://research.google/pubs/pub44824/">Google — Maglev: A Fast and Reliable Network Load Balancer</a> ·
-<a href="https://www.nginx.com/resources/glossary/load-balancing/">NGINX — What Is Load Balancing?</a> ·
-<a href="https://aws.amazon.com/elasticloadbalancing/">AWS Elastic Load Balancing</a></Footer>
+
+<Footer>
+  [Google — Maglev: A Fast and Reliable Network Load Balancer](https://research.google/pubs/pub44824/) ·
+  [NGINX — What Is Load Balancing?](https://www.nginx.com/resources/glossary/load-balancing/) ·
+  [AWS Elastic Load Balancing](https://aws.amazon.com/elasticloadbalancing/)
+</Footer>

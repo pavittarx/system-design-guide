@@ -4,7 +4,14 @@ title: "Consistency & the CAP Theorem — A Practical Guide"
 description: "When your data lives in more than one place, \"what is the current value?\" stops being a simple question — and physics forces you to choose what you're willing to give up."
 chapter: "6"
 current: "6. Consistency & CAP"
-series: "The capstone to <em>Caching</em>, <em>Scaling Databases</em>, <em>Load Balancing</em>, <em>Message Queues</em>, and <em>Reliability</em>."
+series:
+  lead: "The capstone to"
+  guides:
+    - { slug: understanding-caching, label: "Caching" }
+    - database-scaling
+    - load-balancing
+    - { slug: message-queues, label: "Message Queues" }
+    - { slug: reliability-toolkit, label: "Reliability" }
 sections:
   - id: "what"
     title: "What \"consistency\" means"
@@ -23,151 +30,182 @@ sections:
   - id: "conflicts"
     title: "Clocks, vectors, CRDTs"
   - id: "fencing"
-    title: "Locks &amp; fencing tokens"
+    title: "Locks & fencing tokens"
   - id: "txn"
-    title: "Transactions, 2PC &amp; sagas"
+    title: "Transactions, 2PC & sagas"
   - id: "ryw"
     title: "Read-your-writes"
   - id: "recap"
     title: "Recap in 60 seconds"
 ---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Question, Recap, Stack, Statement, Table } from '../../components';
 import DiagramConsistencyCap1 from '../../components/diagrams/DiagramConsistencyCap1.astro';
 import DiagramConsistencyCap2 from '../../components/diagrams/DiagramConsistencyCap2.astro';
-import Collapse from '../../components/Collapse.astro';
-import Question from '../../components/Question.astro';
-import Footer from '../../components/Footer.astro';
 
-<div class="coldopen">
-<span class="tag">◇ the $100 that existed twice</span>
-<p>Your account has $100. You're at an ATM; your partner is at another across town. The two machines briefly can't reach the central system, but both let the withdrawal go through — better than freezing a customer's cash, right? You each take $100. The account is now at −$100, and the bank has handed out money it didn't have. Nobody wrote a bug. Two copies of "the balance" simply disagreed for a moment, and the system chose to <em>keep working</em> over staying <em>correct</em>. That choice — availability vs. consistency — is the whole subject of this guide.</p>
-</div>
+<ColdOpen tag="◇ the $100 that existed twice">
+
+Your account has $100. You're at an ATM; your partner is at another across town. The two machines briefly can't reach the central system, but both let the withdrawal go through — better than freezing a customer's cash, right? You each take $100. The account is now at −$100, and the bank has handed out money it didn't have. Nobody wrote a bug. Two copies of "the balance" simply disagreed for a moment, and the system chose to *keep working* over staying *correct*. That choice — availability vs. consistency — is the whole subject of this guide.
+
+</ColdOpen>
 
 <Collapse id="what" title="1. What &quot;consistency&quot; actually means">
-<p>On one machine, this is trivial: you write a value, you read it back, you get the value. The trouble starts the moment data is <em>copied</em> — to a replica, a cache, another region — which, as every other guide in this series showed, is exactly what you do to scale.</p>
-<p><strong>Consistency</strong>, in the distributed sense, asks: when I read, am I guaranteed to see the most recent write, no matter which copy I hit? If yes, the system is <em>strongly consistent</em> — it behaves as if there were one copy. If reads can be briefly stale, it's <em>eventually consistent</em>. You've met this exact trade-off already as <a href="understanding-caching.html">cache staleness</a> and <a href="database-scaling.html">replication lag</a>. This guide is the theory that unifies them.</p>
 
-<div class="note warn">
-<span class="label">Two different words, spelled the same</span>
-    The <strong>C in CAP is not the C in ACID</strong>, and almost every circular argument about consistency starts right here. CAP's C is <strong>linearizability</strong>: the system behaves as though there were exactly one copy of the data, and operations appear to take effect in an order that respects real time — if your write returned before my read started, I see your write. ACID's C is a completely different promise: <em>the database won't let you violate your own constraints</em> — foreign keys hold, <code>CHECK</code> passes, the balance doesn't go negative because you said it mustn't. One is about copies agreeing with each other; the other is about rules holding within one copy. A single-node Postgres gives you ACID's C in full and has nothing whatsoever to say about CAP's. When someone says "we need consistency," find out which word they're using before you design anything, because the two answers share no code.
-</div>
+On one machine, this is trivial: you write a value, you read it back, you get the value. The trouble starts the moment data is *copied* — to a replica, a cache, another region — which, as every other guide in this series showed, is exactly what you do to scale.
+
+**Consistency**, in the distributed sense, asks: when I read, am I guaranteed to see the most recent write, no matter which copy I hit? If yes, the system is *strongly consistent* — it behaves as if there were one copy. If reads can be briefly stale, it's *eventually consistent*. You've met this exact trade-off already as [cache staleness](/guides/understanding-caching/) and [replication lag](/guides/database-scaling/). This guide is the theory that unifies them.
+
+<Note type="warn" label="Two different words, spelled the same">
+
+The **C in CAP is not the C in ACID**, and almost every circular argument about consistency starts right here. CAP's C is **linearizability**: the system behaves as though there were exactly one copy of the data, and operations appear to take effect in an order that respects real time — if your write returned before my read started, I see your write. ACID's C is a completely different promise: *the database won't let you violate your own constraints* — foreign keys hold, `CHECK` passes, the balance doesn't go negative because you said it mustn't. One is about copies agreeing with each other; the other is about rules holding within one copy. A single-node Postgres gives you ACID's C in full and has nothing whatsoever to say about CAP's. When someone says "we need consistency," find out which word they're using before you design anything, because the two answers share no code.
+
+</Note>
 
 </Collapse>
+
 <Collapse id="cap" title="2. The CAP theorem">
-<p>The CAP theorem is the closest thing distributed systems has to a law of physics. It says a system can offer at most <strong>two of three</strong> guarantees:</p>
-<div class="cards">
-<div class="card"><h4>C — Consistency</h4><p>Every read sees the latest write. All copies agree.</p></div>
-<div class="card"><h4>A — Availability</h4><p>Every request gets a (non-error) response, even if some nodes are down.</p></div>
-<div class="card"><h4>P — Partition tolerance</h4><p>The system keeps working even when the network splits and nodes can't talk to each other.</p></div>
-</div>
-<div class="note warn">
-<span class="label">The part everyone gets wrong</span>
-    "Pick two" is misleading. In any real distributed system, <strong>P is not optional</strong> — networks <em>will</em> partition, and you don't get to opt out of reality. So the real choice is only ever between <strong>C and A</strong>, and only <em>during</em> a partition. That's it. That's the whole theorem, stripped of its mystique: <em>when the network breaks, do you return possibly-stale data (choose A) or refuse to answer (choose C)?</em>
-</div>
-<div class="note">
-<span class="label">The test that shows how little CAP tells you</span>
-    A single node on a single machine is <strong>trivially CP</strong>. It never disagrees with itself, so every read sees the latest write; and when you can't reach it, it's simply unavailable. Perfect consistency, achieved by doing nothing. That should be a useful embarrassment: "we're CP" describes what a system does in one rare situation and tells you nothing about its latency, throughput, durability, isolation level, or behaviour on an ordinary day. CAP is a constraint on the design space, not a description of a design. PACELC exists because people kept treating it as one.
-</div>
 
+The CAP theorem is the closest thing distributed systems has to a law of physics. It says a system can offer at most **two of three** guarantees:
 
-<div class="note wild" style="margin-top: 18px;">
-<span class="label">◈ In the wild · ATM Offline Withdrawal Limits</span>
-    Real-world ATMs explicitly configure offline limits to cap the bank's financial blast radius. When the central ledger connection is partitioned, ATMs enter AP mode and allow transactions up to $200. This deliberate business trade-off prioritizes customer availability over absolute ledger consistency.
-</div>
+<CardGrid>
+  <Card title="C — Consistency">
+    Every read sees the latest write. All copies agree.
+  </Card>
+  <Card title="A — Availability">
+    Every request gets a (non-error) response, even if some nodes are down.
+  </Card>
+  <Card title="P — Partition tolerance">
+    The system keeps working even when the network splits and nodes can't talk to each other.
+  </Card>
+</CardGrid>
 
+<Note type="warn" label="The part everyone gets wrong">
 
-<div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
-<DiagramConsistencyCap1 />
-</div>
+"Pick two" is misleading. In any real distributed system, **P is not optional** — networks *will* partition, and you don't get to opt out of reality. So the real choice is only ever between **C and A**, and only *during* a partition. That's it. That's the whole theorem, stripped of its mystique: *when the network breaks, do you return possibly-stale data (choose A) or refuse to answer (choose C)?*
+
+</Note>
+
+<Note label="The test that shows how little CAP tells you">
+
+A single node on a single machine is **trivially CP**. It never disagrees with itself, so every read sees the latest write; and when you can't reach it, it's simply unavailable. Perfect consistency, achieved by doing nothing. That should be a useful embarrassment: "we're CP" describes what a system does in one rare situation and tells you nothing about its latency, throughput, durability, isolation level, or behaviour on an ordinary day. CAP is a constraint on the design space, not a description of a design. PACELC exists because people kept treating it as one.
+
+</Note>
+
+<Note type="wild" label="◈ In the wild · ATM Offline Withdrawal Limits">
+
+Real-world ATMs explicitly configure offline limits to cap the bank's financial blast radius. When the central ledger connection is partitioned, ATMs enter AP mode and allow transactions up to $200. This deliberate business trade-off prioritizes customer availability over absolute ledger consistency.
+
+</Note>
+
+<Figure>
+  <DiagramConsistencyCap1 />
+</Figure>
 
 </Collapse>
+
 <Collapse id="partition" title="3. Why partitions aren't optional">
-<p>A network partition is any moment your nodes can't reliably reach each other — a cut cable, a bad switch, an overwhelmed link, a whole region going dark. Over enough machines and enough time, this is not a maybe. So every distributed database has already, quietly, made a CAP choice on your behalf:</p>
-  
-    
 
-* <strong>CP systems</strong> (choose Consistency) — during a partition, refuse reads/writes that can't be made safely. Correct, but some requests fail. Think: HBase, ZooKeeper, etcd, and RDBMS clusters run in CP mode.
+A network partition is any moment your nodes can't reliably reach each other — a cut cable, a bad switch, an overwhelmed link, a whole region going dark. Over enough machines and enough time, this is not a maybe. So every distributed database has already, quietly, made a CAP choice on your behalf:
 
+- **CP systems** (choose Consistency) — during a partition, refuse reads/writes that can't be made safely. Correct, but some requests fail. Think: HBase, ZooKeeper, etcd, and RDBMS clusters run in CP mode.
 
-    
+- **AP systems** (choose Availability) — during a partition, keep answering with whatever each node has, and reconcile later. Always up, sometimes stale. Think: Cassandra, DynamoDB, most caches and DNS.
 
-* <strong>AP systems</strong> (choose Availability) — during a partition, keep answering with whatever each node has, and reconcile later. Always up, sometimes stale. Think: Cassandra, DynamoDB, most caches and DNS.
+The ATM in the cold open chose **AP** — stay available, sort out the mess later. For a bank balance that's terrifying; for a shopping cart or a like-count it's exactly right. There is no universally correct answer, only a correct answer *for this data.* (A system that degrades to a cached or approximate answer instead of erroring is choosing A over C on purpose — that's the [graceful degradation](/guides/reliability-toolkit/) pattern wearing its CAP hat.)
 
+### Every partition is a timeout you configured
 
-  
-<p>The ATM in the cold open chose <strong>AP</strong> — stay available, sort out the mess later. For a bank balance that's terrifying; for a shopping cart or a like-count it's exactly right. There is no universally correct answer, only a correct answer <em>for this data.</em> (A system that degrades to a cached or approximate answer instead of erroring is choosing A over C on purpose — that's the <a href="reliability-toolkit.html">graceful degradation</a> pattern wearing its CAP hat.)</p>
+Here's the part the textbook diagrams skip. You never actually *observe* a partition. No packet arrives announcing that the network has split. What you observe is that a node *didn't answer inside a window* — and you chose that window. Set the failure detector to 500 ms and a long GC pause becomes a partition. Set it to 30 s and the same event becomes "a slow request," while a genuinely dead node keeps taking traffic for half a minute. Same network, same hardware, different config file, different number of partitions per week.
 
-<h3>Every partition is a timeout you configured</h3>
-<p>Here's the part the textbook diagrams skip. You never actually <em>observe</em> a partition. No packet arrives announcing that the network has split. What you observe is that a node <em>didn't answer inside a window</em> — and you chose that window. Set the failure detector to 500 ms and a long GC pause becomes a partition. Set it to 30 s and the same event becomes "a slow request," while a genuinely dead node keeps taking traffic for half a minute. Same network, same hardware, different config file, different number of partitions per week.</p>
-<p>This is <strong>gray failure</strong>: nodes are rarely up or down, they're slow, and from the outside "slow" and "gone" are the same observation. A node answering in four seconds is in some ways worse than a crashed one, because a crashed node is at least unambiguous. The consequence for CAP is worth sitting with — <strong>the P is not a natural phenomenon you detect, it's a threshold you set</strong>, usually by copying a default. Shorten it and you get more partitions, each resolved faster. Lengthen it and you get fewer partitions, each of which hurts for longer. There is no setting that gives you zero.</p>
+This is **gray failure**: nodes are rarely up or down, they're slow, and from the outside "slow" and "gone" are the same observation. A node answering in four seconds is in some ways worse than a crashed one, because a crashed node is at least unambiguous. The consequence for CAP is worth sitting with — **the P is not a natural phenomenon you detect, it's a threshold you set**, usually by copying a default. Shorten it and you get more partitions, each resolved faster. Lengthen it and you get fewer partitions, each of which hurts for longer. There is no setting that gives you zero.
 
+<Note type="wild" label="◈ In the wild · GitHub Split-Brain Outage">
 
-<div class="note wild" style="margin-top: 18px;">
-<span class="label">◈ In the wild · GitHub Split-Brain Outage</span>
-    On October 21, 2018, GitHub's network connection between hubs dropped for just 43 seconds. Database cluster automation detected the partition and promoted a West Coast replica to primary. When the East Coast network healed, writes had diverged on both coasts. Cleaning up the split-brain state safely required 24 hours of manual data reconciliation by engineers.
-</div>
+On October 21, 2018, GitHub's network connection between hubs dropped for just 43 seconds. Database cluster automation detected the partition and promoted a West Coast replica to primary. When the East Coast network healed, writes had diverged on both coasts. Cleaning up the split-brain state safely required 24 hours of manual data reconciliation by engineers.
 
+</Note>
 
 <Question q="Check yourself: Your monitoring shows partitions jumped 4× after a deploy that changed nothing about the network. What probably happened?">
+
 Somebody changed a timeout, or changed something that made responses slower until they crossed one. You never detect partitions; you detect non-answers within a window you chose, so partition count is a property of your failure detector as much as your network. Look for a shortened client or health-check timeout, a new synchronous call on a hot path, or a GC/heap change that lengthened pauses past the threshold. The fix is usually to tune the detector deliberately rather than to go hunting for a cable.
+
 </Question>
 
 </Collapse>
-<Collapse id="pacelc" title="4. PACELC: the sequel that tells the whole truth">
-<p>CAP has a blind spot: it only describes behavior <em>during</em> a partition, which is rare. What about the 99.9% of the time the network is fine? <strong>PACELC</strong> extends it with a brutally honest addendum:</p>
-<p style="text-align:center;font-size:1.05rem;"><em>If <strong>P</strong>artition, choose <strong>A</strong> or <strong>C</strong> — <strong>E</strong>lse (normal operation), choose <strong>L</strong>atency or <strong>C</strong>onsistency.</em></p>
-<p>In plain terms: even when everything is healthy, keeping all your copies perfectly in sync <em>costs time</em> — you have to wait for the other nodes to confirm. So there's a permanent, everyday trade-off between being <strong>fast</strong> and being <strong>perfectly consistent</strong>, partition or not. This is why strongly-consistent databases feel slower: they're paying the coordination tax on every write. Latency vs. consistency is the tax you pay all day; availability vs. consistency is the bill that comes due during a partition.</p>
-<div class="note key">
-<span class="label">The branch that actually runs</span>
-    Read PACELC again and notice which half of it fires more often. A partition is an <em>incident</em> — a handful of minutes a year if you're unlucky, and someone writes a postmortem about it. The <strong>else</strong> branch fires on every request, from every user, all day, forever. Does this read go to the leader or to a replica? Does this write return after one ack or after a majority? Does the cross-region hop happen before you answer or after? You will make that call several million times before lunch. A guide that teaches only CAP has taught you the branch that almost never fires and skipped the one you live in. If you take one sentence from this page: <strong>your everyday trade-off is L versus C, not A versus C.</strong>
-</div>
 
+<Collapse id="pacelc" title="4. PACELC: the sequel that tells the whole truth">
+
+CAP has a blind spot: it only describes behavior *during* a partition, which is rare. What about the 99.9% of the time the network is fine? **PACELC** extends it with a brutally honest addendum:
+
+<Statement>*If **P**artition, choose **A** or **C** — **E**lse (normal operation), choose **L**atency or **C**onsistency.*</Statement>
+
+In plain terms: even when everything is healthy, keeping all your copies perfectly in sync *costs time* — you have to wait for the other nodes to confirm. So there's a permanent, everyday trade-off between being **fast** and being **perfectly consistent**, partition or not. This is why strongly-consistent databases feel slower: they're paying the coordination tax on every write. Latency vs. consistency is the tax you pay all day; availability vs. consistency is the bill that comes due during a partition.
+
+<Note type="key" label="The branch that actually runs">
+
+Read PACELC again and notice which half of it fires more often. A partition is an *incident* — a handful of minutes a year if you're unlucky, and someone writes a postmortem about it. The **else** branch fires on every request, from every user, all day, forever. Does this read go to the leader or to a replica? Does this write return after one ack or after a majority? Does the cross-region hop happen before you answer or after? You will make that call several million times before lunch. A guide that teaches only CAP has taught you the branch that almost never fires and skipped the one you live in. If you take one sentence from this page: **your everyday trade-off is L versus C, not A versus C.**
+
+</Note>
 
 <Question q="Check yourself: Your team says &quot;we chose AP.&quot; What have they actually committed to on a normal, partition-free Tuesday?">
-Strictly speaking, nothing — CAP only describes behaviour during a partition, and partitions are rare. That's the trap: "we're AP" is a statement about a few minutes a year. What they've almost certainly <em>also</em> signed up for, without saying so, is the else-branch: low-latency writes that return before all replicas agree, which means stale reads and concurrent-write conflicts every single day. The right follow-up question is never "are we AP?" but "what's our conflict resolution rule, and who wrote it?"
+
+Strictly speaking, nothing — CAP only describes behaviour during a partition, and partitions are rare. That's the trap: "we're AP" is a statement about a few minutes a year. What they've almost certainly *also* signed up for, without saying so, is the else-branch: low-latency writes that return before all replicas agree, which means stale reads and concurrent-write conflicts every single day. The right follow-up question is never "are we AP?" but "what's our conflict resolution rule, and who wrote it?"
+
 </Question>
 
 </Collapse>
-<Collapse id="spectrum" title="5. The consistency spectrum">
-<p>"Strong vs. eventual" is a ladder, not a switch. Each rung below drops one promise and buys back coordination — which is to say, latency. Read it downward and watch what you're giving up.</p>
-<div class="stack">
-<div class="layer"><div class="idx">1</div><div class="body"><h4>Linearizable</h4><p>One global order that respects real time. If your write returned before my read began, I see it. This is CAP's C.</p></div><div class="speed">money · locks · leaders</div></div>
-<div class="arrow">↓ drop the real-time tie ↓</div>
-<div class="layer"><div class="idx">2</div><div class="body"><h4>Sequential</h4><p>Everyone agrees on one order of operations — but that order needn't match wall-clock reality. Stale, consistently.</p></div><div class="speed">rarely sold on its own</div></div>
-<div class="arrow">↓ drop the global order ↓</div>
-<div class="layer"><div class="idx">3</div><div class="body"><h4>Causal</h4><p>If A caused B, nobody sees B without A. Unrelated writes can land in any order. The reply never precedes the post.</p></div><div class="speed">threads · comments · chat</div></div>
-<div class="arrow">↓ drop cross-user guarantees ↓</div>
-<div class="layer"><div class="idx">4</div><div class="body"><h4>Read-your-writes &amp; monotonic reads</h4><p>You see your own changes, and time never runs backwards for you. Says nothing about anyone else's view.</p></div><div class="speed">the sane-UX floor</div></div>
-<div class="arrow">↓ drop per-session guarantees ↓</div>
-<div class="layer"><div class="idx">5</div><div class="body"><h4>Eventual</h4><p>If writes stop, copies converge. No promise about when, and no promise that a read won't go backwards on the way.</p></div><div class="speed">likes · feeds · view counts</div></div>
-</div>
-<p>Two things about this ladder catch people out. First, the session guarantees on rung 4 are <em>cheap</em> — they're mostly routing decisions, not consensus — which makes them the best value on the whole ladder. Second, "eventual" contains no bound at all: a replica that's been disconnected for six hours is still perfectly eventually consistent while it serves six-hour-old data.</p>
-<div class="note key">
-<span class="label">The pragmatic move</span>
-    You rarely need strong consistency <em>everywhere</em> — that's just paying maximum latency for data that doesn't need it. Pick per-feature: strong for money, inventory, and auth; read-your-writes for a user's own posts; plain eventual for like counts, feeds, and view tallies. The same tune you played with <a href="understanding-caching.html">cache TTLs</a> and <a href="database-scaling.html">read replicas</a>.
-</div>
 
-<div class="note wild">
-<span class="label">◈ In the wild · Amazon S3</span>
-    For roughly its first fourteen years, S3 sat lower on this ladder than most people realised: it was only eventually consistent for overwrites and listings, so you could write an object and briefly read back a stale version, or upload one and not yet see it in a bucket listing. Countless data pipelines were shaped around that footgun. In December 2020, <a href="https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/">AWS made S3 strongly read-after-write consistent</a> for every operation, automatically and at no extra cost or added latency. A whole rung of this spectrum quietly disappeared from a system millions of teams depend on.
-</div>
+<Collapse id="spectrum" title="5. The consistency spectrum">
+
+"Strong vs. eventual" is a ladder, not a switch. Each rung below drops one promise and buys back coordination — which is to say, latency. Read it downward and watch what you're giving up.
+
+<Stack>
+  <Layer idx="1" title="Linearizable" speed="money · locks · leaders">
+    One global order that respects real time. If your write returned before my read began, I see it. This is CAP's C.
+  </Layer>
+  <Arrow>↓ drop the real-time tie ↓</Arrow>
+  <Layer idx="2" title="Sequential" speed="rarely sold on its own">
+    Everyone agrees on one order of operations — but that order needn't match wall-clock reality. Stale, consistently.
+  </Layer>
+  <Arrow>↓ drop the global order ↓</Arrow>
+  <Layer idx="3" title="Causal" speed="threads · comments · chat">
+    If A caused B, nobody sees B without A. Unrelated writes can land in any order. The reply never precedes the post.
+  </Layer>
+  <Arrow>↓ drop cross-user guarantees ↓</Arrow>
+  <Layer idx="4" title="Read-your-writes & monotonic reads" speed="the sane-UX floor">
+    You see your own changes, and time never runs backwards for you. Says nothing about anyone else's view.
+  </Layer>
+  <Arrow>↓ drop per-session guarantees ↓</Arrow>
+  <Layer idx="5" title="Eventual" speed="likes · feeds · view counts">
+    If writes stop, copies converge. No promise about when, and no promise that a read won't go backwards on the way.
+  </Layer>
+</Stack>
+
+Two things about this ladder catch people out. First, the session guarantees on rung 4 are *cheap* — they're mostly routing decisions, not consensus — which makes them the best value on the whole ladder. Second, "eventual" contains no bound at all: a replica that's been disconnected for six hours is still perfectly eventually consistent while it serves six-hour-old data.
+
+<Note type="key" label="The pragmatic move">
+
+You rarely need strong consistency *everywhere* — that's just paying maximum latency for data that doesn't need it. Pick per-feature: strong for money, inventory, and auth; read-your-writes for a user's own posts; plain eventual for like counts, feeds, and view tallies. The same tune you played with [cache TTLs](/guides/understanding-caching/) and [read replicas](/guides/database-scaling/).
+
+</Note>
+
+<Note type="wild" label="◈ In the wild · Amazon S3">
+
+For roughly its first fourteen years, S3 sat lower on this ladder than most people realised: it was only eventually consistent for overwrites and listings, so you could write an object and briefly read back a stale version, or upload one and not yet see it in a bucket listing. Countless data pipelines were shaped around that footgun. In December 2020, [AWS made S3 strongly read-after-write consistent](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/) for every operation, automatically and at no extra cost or added latency. A whole rung of this spectrum quietly disappeared from a system millions of teams depend on.
+
+</Note>
 
 </Collapse>
+
 <Collapse id="quorum" title="6. Quorums: turning consistency into a dial">
-<p>Here's the elegant trick AP databases use to <em>tune</em> where they sit. Say each piece of data is replicated to <strong>N</strong> nodes. You get to choose how many must respond:</p>
-  
-    
 
-* <strong>W</strong> = how many replicas must confirm a <em>write</em> before it counts.
+Here's the elegant trick AP databases use to *tune* where they sit. Say each piece of data is replicated to **N** nodes. You get to choose how many must respond:
 
+- **W** = how many replicas must confirm a *write* before it counts.
 
-    
+- **R** = how many replicas you read from and compare.
 
-* <strong>R</strong> = how many replicas you read from and compare.
-
-
-  
-<p>The beautiful part: if <strong>R + W &gt; N</strong>, your read set is guaranteed to <em>overlap</em> the latest write on at least one node — so a read can return the latest <em>acknowledged</em> value on demand (which is a weaker promise than linearizability, and weaker still under failure — the next section walks a real one through a partition to show exactly where the edges are). Want speed instead? Lower R and W and accept staleness. One formula, a whole spectrum, chosen per query. Cassandra and DynamoDB expose exactly this.</p>
-  
+The beautiful part: if **R + W > N**, your read set is guaranteed to *overlap* the latest write on at least one node — so a read can return the latest *acknowledged* value on demand (which is a weaker promise than linearizability, and weaker still under failure — the next section walks a real one through a partition to show exactly where the edges are). Want speed instead? Lower R and W and accept staleness. One formula, a whole spectrum, chosen per query. Cassandra and DynamoDB expose exactly this.
 
 ```bash
 N = 3 replicas
@@ -175,288 +213,284 @@ W = 2, R = 2  →  R + W = 4 > 3  →  strong-ish, balanced
 W = 1, R = 1  →  R + W = 2 < 3  →  fast, possibly stale
 ```
 
-
-
 </Collapse>
+
 <Collapse id="trace" title="7. A quorum under partition, step by step">
-<p>Formulas are easy to nod along to and hard to actually believe. So here is <code>N=3, W=2, R=2</code> — the most common configuration in the world — walked through a real failure, one line at a time. Three replicas hold a key <code>x</code>, and one client writes it while another reads it.</p>
 
-<div class="stack">
-<div class="layer"><div class="idx">◇</div><div class="body"><h4>Client</h4><p>Doesn't know or care which replicas are healthy. Fires a request at all three and counts the answers.</p></div><div class="speed">needs 2 of 3</div></div>
-<div class="arrow">↓ write x (W=2) · read x (R=2) ↓</div>
-<div class="layer"><div class="idx">A</div><div class="body"><h4>Replica A</h4><p>Takes the write, answers the read. Stays reachable throughout.</p></div><div class="speed">majority side</div></div>
-<div class="layer"><div class="idx">B</div><div class="body"><h4>Replica B</h4><p>Takes the write too. When the network splits, B is on A's side of the cut.</p></div><div class="speed">majority side</div></div>
-<div class="arrow">– – – the network cuts here – – –</div>
-<div class="layer"><div class="idx">C</div><div class="body"><h4>Replica C</h4><p>Misses the write, serves stale data, and is later stranded on its own.</p></div><div class="speed">minority side</div></div>
-</div>
+Formulas are easy to nod along to and hard to actually believe. So here is `N=3, W=2, R=2` — the most common configuration in the world — walked through a real failure, one line at a time. Three replicas hold a key `x`, and one client writes it while another reads it.
 
-<pre class="trace">
-<b>{"setup"}</b>{"  N=3 (A B C)   W=2   R=2   x = 0 @ v1"}{"\n"}
-{"\n"}
-<b>{"t0"}</b>{" writer → write x=1"}{"\n"}
-{"     A ack   B ack   "}<span class="bad">{"C timeout"}</span>{"\n"}
-{"     2 acks ≥ W → "}<span class="good">{"client is told \"written\""}</span>{"\n"}
-{"     A:1@v2   B:1@v2   "}<span class="bad">{"C:0@v1  ← stale, no error"}</span>{"\n"}
-{"\n"}
-<b>{"t1"}</b>{" reader → read x, gets answers from A and C"}{"\n"}
-{"     A says 1@v2      "}<span class="bad">{"C says 0@v1"}</span>{"\n"}
-{"     R+W &gt; N, so the read set must contain a"}{"\n"}
-{"     node holding v2. It does: A."}{"\n"}
-{"     compare versions → "}<span class="good">{"return 1@v2"}</span>{"\n"}
-{"     "}<span class="good">{"read-repair: push 1@v2 to C in the background"}</span>{"\n"}
-{"\n"}
-<b>{"t2"}</b>{" "}<span class="bad">{"PARTITION      { A  B }  |  { C }"}</span>{"\n"}
-{"     majority side can still gather 2 acks"}{"\n"}
-{"     minority side can gather exactly 1"}{"\n"}
-{"\n"}
-<b>{"t2"}</b>{" read via A,B  → "}<span class="good">{"1@v2, served normally"}</span>{"\n"}
-{"     Most traffic never notices this outage at all."}{"\n"}
-{"\n"}
-<b>{"t3"}</b>{" write x=2 arrives at C. 1 ack. W=2 unmet."}{"\n"}
-{"     "}<b>{"CP"}</b>{" → "}<span class="bad">{"refuse it: \"not enough replicas\""}</span>{"\n"}
-{"          the caller gets an error; data stays sane"}{"\n"}
-{"     "}<b>{"AP"}</b>{" → accept it locally, sort it out later"}{"\n"}
-{"          "}<span class="bad">{"A,B: 1@v2    C: 2@v2'   diverged"}</span>{"\n"}
-{"\n"}
-<b>{"t4"}</b>{" partition heals"}{"\n"}
-{"     "}<b>{"CP"}</b>{" → "}<span class="good">{"nothing to merge. x = 1."}</span>{"\n"}
-{"     "}<b>{"AP"}</b>{" → two versions, neither descended from"}{"\n"}
-{"          the other. "}<span class="good">{"Something must now decide."}</span>{"\n"}
-{"          If that something is last-write-wins,"}{"\n"}
-{"          "}<span class="bad">{"one of the two writes is discarded,"}</span>{"\n"}
-{"          "}<span class="bad">{"with no error and no log line."}</span>{"\n"}
-</pre>
+<Stack>
+  <Layer idx="◇" title="Client" speed="needs 2 of 3">
+    Doesn't know or care which replicas are healthy. Fires a request at all three and counts the answers.
+  </Layer>
+  <Arrow>↓ write x (W=2) · read x (R=2) ↓</Arrow>
+  <Layer idx="A" title="Replica A" speed="majority side">
+    Takes the write, answers the read. Stays reachable throughout.
+  </Layer>
+  <Layer idx="B" title="Replica B" speed="majority side">
+    Takes the write too. When the network splits, B is on A's side of the cut.
+  </Layer>
+  <Arrow>– – – the network cuts here – – –</Arrow>
+  <Layer idx="C" title="Replica C" speed="minority side">
+    Misses the write, serves stale data, and is later stranded on its own.
+  </Layer>
+</Stack>
 
-<h3>What R + W &gt; N actually buys you</h3>
-<p>It buys you <strong>intersection</strong>, and only intersection. Any set of R nodes and any set of W nodes drawn from N must share at least one member, so the nodes you read from include at least one that acknowledged the most recent <em>successfully acknowledged</em> write. That's a genuine, useful property. It is also the entire property.</p>
-<p>Notice what that sentence doesn't say. It says a current copy is <em>present in the responses</em>, not that you can <em>identify</em> it — you still need versioning and a resolution rule to pick the winner out of the set, and if that rule is wrong the intersection guarantee doesn't save you. It says nothing about writes that <em>failed</em>: a write that reached one node out of three returns an error to the client but is not rolled back, so it can surface in a later read, or not, depending on which nodes answer. And it gives you nothing across operations — with reads landing on different node sets, two successive reads can go new-then-old until read-repair or anti-entropy catches up, which is a monotonicity violation, not a linearizability one, and users notice it.</p>
-<div class="note warn">
-<span class="label">Precision matters here</span>
-<strong>R + W &gt; N is not linearizability.</strong> Getting there needs more machinery: read-repair and anti-entropy so divergence actually converges rather than lingering; a conflict-resolution rule that doesn't silently drop data; and, for anything involving read-modify-write — increment a counter, check-and-set, reserve the last seat — a real consensus protocol, because no amount of quorum arithmetic gives you agreement on an <em>order</em>. Even for a plain read/write register, the classic construction only becomes linearizable when the reader writes the value it found back out to a quorum before returning it. Quorums are a dial for staleness. They are not a substitute for consensus, and a system that markets "tunable consistency" is selling you the dial, not the consensus.
-</div>
+```trace
+**setup**  N=3 (A B C)   W=2   R=2   x = 0 @ v1
 
-<h3>Sloppy quorums and hinted handoff</h3>
-<p>Now the part that quietly undoes the arithmetic. When the usual replicas for a key are unreachable, some Dynamo-style systems don't fail the write — they accept it on whichever N nodes they <em>can</em> reach, tagged with a hint saying "this really belongs to C," and hand it off once C returns. This is a <strong>sloppy quorum</strong> with <strong>hinted handoff</strong>, and it is excellent for durability and availability: your write is on disk somewhere, on the right number of machines, and it will get home.</p>
-<p>But during the handoff window, the write is sitting on nodes that are not in the key's replica set. A reader doing a strict R-of-N read against the proper replicas can intersect all it likes and still miss it. <strong>The R + W &gt; N intersection argument is simply not in force</strong> at exactly the moment you were counting on it — the failure that made you want the guarantee is the failure that suspends it. Worth knowing which of your systems does this by default, because most of them advertise the formula and bury the exception.</p>
+**t0** writer → write x=1
+     A ack   B ack   ~~C timeout~~
+     2 acks ≥ W → ++client is told "written"++
+     A:1@v2   B:1@v2   ~~C:0@v1  ← stale, no error~~
 
+**t1** reader → read x, gets answers from A and C
+     A says 1@v2      ~~C says 0@v1~~
+     R+W > N, so the read set must contain a
+     node holding v2. It does: A.
+     compare versions → ++return 1@v2++
+     ++read-repair: push 1@v2 to C in the background++
 
-<Question q="Check yourself: You run N=3, R=2, W=2 and you still lost an update. Name two ways that happens.">
-Easiest two: (1) last-write-wins plus clock skew — two writes conflicted, the resolution rule compared wall-clock timestamps from unsynchronised machines, and it kept the one that actually happened first. (2) A sloppy quorum — the write was accepted on substitute nodes during a blip, so the strict R-of-N read didn't intersect it during the handoff window. Two more, for credit: read-modify-write on a value read from a quorum has no atomicity, so two clients can both read 5 and both write 6; and a write that got only one ack and returned an error isn't rolled back, so it can win a later merge.
-</Question>
+**t2** ~~PARTITION      { A  B }  |  { C }~~
+     majority side can still gather 2 acks
+     minority side can gather exactly 1
 
-</Collapse>
-<Collapse id="conflicts" title="8. When writes collide: clocks, version vectors, CRDTs">
-<p>Line <code>t4</code> above ended with "something must now decide." That something deserves its own section, because the default answer is bad and almost nobody changes it.</p>
+**t2** read via A,B  → ++1@v2, served normally++
+     Most traffic never notices this outage at all.
 
-<h3>Last-write-wins is a data-loss policy with good branding</h3>
-<p>The obvious rule is: attach a wall-clock timestamp to every write, and when two versions conflict, keep the newer one. It's simple, it's stateless, and it's wrong in a way that produces no evidence.</p>
-<p>Consider two nodes whose clocks disagree by 300 ms — an entirely ordinary amount of NTP drift, and a rounding error compared to what a bad VM migration or a leap-second handler can do. A user updates their shipping address on node A at 12:00:00.000; A's clock is fast, so the write is stamped <code>12:00:00.300</code>. A moment later, genuinely afterwards, they correct a typo via node B at 12:00:00.150; B's clock is accurate, so that write is stamped <code>12:00:00.150</code>. Last-write-wins compares the stamps, keeps the address from A, and discards the correction. The package goes to the old address. There was no error, no retry, no warning, no log line — the system did precisely what it was configured to do, and the only artefact is a confused customer. <strong>With last-write-wins, your consistency guarantee is only as good as your clock synchronisation</strong>, and clock synchronisation is a best-effort background daemon.</p>
+**t3** write x=2 arrives at C. 1 ack. W=2 unmet.
+     **CP** → ~~refuse it: "not enough replicas"~~
+          the caller gets an error; data stays sane
+     **AP** → accept it locally, sort it out later
+          ~~A,B: 1@v2    C: 2@v2'   diverged~~
 
-<div class="note wild">
-<span class="label">◈ In the wild · Google Spanner</span>
-    Google Spanner takes the opposite bet: instead of hoping the clocks agree, it measures how much they might disagree. Its <a href="https://research.google/pubs/spanner-googles-globally-distributed-database-2/">TrueTime</a> API leans on GPS receivers and atomic clocks in every datacentre to put a hard bound on how wrong any clock can be, and a transaction simply waits out that small uncertainty window before it commits. Because every commit timestamp is only handed out once real time has definitely passed it, the timestamps never lie about ordering — which is exactly what lets Spanner offer globally distributed, externally consistent (linearizable) transactions. It is the honest inverse of last-write-wins: rather than trusting a clock, it prices in the doubt.
-</div>
-
-<h3>Logical clocks: ordering without trusting time</h3>
-<p>The fix in principle is to stop asking "when did this happen?" and start asking "what did this write know about?" A <strong>version vector</strong> tags each value with a per-replica counter, so when two versions meet you can compare them structurally: if one vector dominates the other on every entry, that write genuinely happened <em>after</em> — keep it, no clocks involved. If neither dominates, the writes are <strong>concurrent</strong>, and you now know something a timestamp could never tell you: this is a real conflict, not a slow packet. (Lamport clocks give you a total order that's consistent with causality, but they can't distinguish concurrent from ordered; vectors can, which is why they're the ones you want at a merge point.)</p>
-<p>The honest costs. Vectors grow with the number of writers — fine for a handful of replicas, awkward when every client is an actor, which is why real systems reach for dotted version vectors, pruning, and other machinery to stop the metadata outgrowing the data. And detection is not resolution: a version vector can tell you two writes are concurrent, but it has no opinion about what your business wants done about it. Riak's answer was to hand the application both siblings and let it decide, which is honest and is also why teams found it exhausting. Someone still has to write the merge function, and that function is where the actual correctness lives.</p>
-
-<h3>CRDTs: make the conflict impossible instead</h3>
-<p>The other move is to change the data type so there's nothing to resolve. A <strong>CRDT</strong> — conflict-free replicated data type — is one whose merge operation is commutative, associative and idempotent, meaning replicas that have seen the same set of updates in <em>any</em> order, with duplicates, end up identical. Order stops mattering, so divergence stops being a problem to fix and becomes a state to merge. It's the same instinct as making a queue consumer <a href="message-queues.html">idempotent</a>: design the operation so repetition and reordering are harmless, rather than building machinery to prevent them.</p>
-<p>The catalogue is real and in production. Counters that only grow, or a pair of them for increment-and-decrement. Sets with explicit add/remove tagging so a concurrent add and remove resolve by rule rather than by luck. And collaborative text — the reason two people can type in the same document and neither one's cursor jumps.</p>
-<div class="note warn">
-<span class="label">The limit, stated plainly</span>
-    Not every problem has a commutative formulation. CRDTs converge; they do not enforce invariants that span replicas. "The set of items in the cart" merges beautifully. "This balance must never go below zero" does not — two replicas can each independently approve a withdrawal that's fine locally and catastrophic jointly, and no merge function can retroactively make that legal, because the invariant was violated before the merge existed. Global invariants need coordination. Your bank balance is not a CRDT, and neither is the last seat on the flight.
-</div>
-
-
-<div class="note key">
-<span class="label">🛠️ Hands-On Lab: Build a Replicated PN-Counter CRDT</span>
-<p>Build this mini-project to implement conflict-free convergence across distributed instances:</p>
-    
-      
-
-* <strong>The Replicated Data Structure:</strong> Design a Positive-Negative Counter (PN-Counter) object representing increments and decrements from different nodes:
-```javascript
-{
-p: { "node_a": 15, "node_b": 7 },
-n: { "node_a": 2, "node_b": 0 }
-}
+**t4** partition heals
+     **CP** → ++nothing to merge. x = 1.++
+     **AP** → two versions, neither descended from
+          the other. ++Something must now decide.++
+          If that something is last-write-wins,
+          ~~one of the two writes is discarded,~~
+          ~~with no error and no log line.~~
 ```
 
+### What R + W > N actually buys you
 
-      
+It buys you **intersection**, and only intersection. Any set of R nodes and any set of W nodes drawn from N must share at least one member, so the nodes you read from include at least one that acknowledged the most recent *successfully acknowledged* write. That's a genuine, useful property. It is also the entire property.
 
-* <strong>The Value Function:</strong> Write a getter <code>value()</code> that sums all entries in <code>p</code> and subtracts the sum of all entries in <code>n</code> (e.g. <code>(15+7) - (2+0) = 20</code>).
+Notice what that sentence doesn't say. It says a current copy is *present in the responses*, not that you can *identify* it — you still need versioning and a resolution rule to pick the winner out of the set, and if that rule is wrong the intersection guarantee doesn't save you. It says nothing about writes that *failed*: a write that reached one node out of three returns an error to the client but is not rolled back, so it can surface in a later read, or not, depending on which nodes answer. And it gives you nothing across operations — with reads landing on different node sets, two successive reads can go new-then-old until read-repair or anti-entropy catches up, which is a monotonicity violation, not a linearizability one, and users notice it.
 
+<Note type="warn" label="Precision matters here">
 
-      
+**R + W > N is not linearizability.** Getting there needs more machinery: read-repair and anti-entropy so divergence actually converges rather than lingering; a conflict-resolution rule that doesn't silently drop data; and, for anything involving read-modify-write — increment a counter, check-and-set, reserve the last seat — a real consensus protocol, because no amount of quorum arithmetic gives you agreement on an *order*. Even for a plain read/write register, the classic construction only becomes linearizable when the reader writes the value it found back out to a quorum before returning it. Quorums are a dial for staleness. They are not a substitute for consensus, and a system that markets "tunable consistency" is selling you the dial, not the consensus.
 
-* <strong>The Merge Function:</strong> Write a function <code>merge(otherCounter)</code>. For both <code>p</code> and <code>n</code>, take the union of all keys and resolve conflicts by taking the maximum value for each key (e.g. <code>merged.p[node] = Math.max(this.p[node], otherCounter.p[node])</code>).
+</Note>
 
+### Sloppy quorums and hinted handoff
 
-      
+Now the part that quietly undoes the arithmetic. When the usual replicas for a key are unreachable, some Dynamo-style systems don't fail the write — they accept it on whichever N nodes they *can* reach, tagged with a hint saying "this really belongs to C," and hand it off once C returns. This is a **sloppy quorum** with **hinted handoff**, and it is excellent for durability and availability: your write is on disk somewhere, on the right number of machines, and it will get home.
 
-* <strong>Reconcile Network Partitions:</strong> Create two local PN-Counter instances (Node A and Node B). Increment Node A locally, decrement Node B locally, simulate a network partition heal by calling <code>A.merge(B)</code> and <code>B.merge(A)</code>, and verify that both converge to the exact same correct count without locking.
+But during the handoff window, the write is sitting on nodes that are not in the key's replica set. A reader doing a strict R-of-N read against the proper replicas can intersect all it likes and still miss it. **The R + W > N intersection argument is simply not in force** at exactly the moment you were counting on it — the failure that made you want the guarantee is the failure that suspends it. Worth knowing which of your systems does this by default, because most of them advertise the formula and bury the exception.
 
+<Question q="Check yourself: You run N=3, R=2, W=2 and you still lost an update. Name two ways that happens.">
 
-    
-<p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Include this CRDT implementation in your portfolio to showcase your understanding of coordinator-free conflict resolution.</p>
-</div>
+Easiest two: (1) last-write-wins plus clock skew — two writes conflicted, the resolution rule compared wall-clock timestamps from unsynchronised machines, and it kept the one that actually happened first. (2) A sloppy quorum — the write was accepted on substitute nodes during a blip, so the strict R-of-N read didn't intersect it during the handoff window. Two more, for credit: read-modify-write on a value read from a quorum has no atomicity, so two clients can both read 5 and both write 6; and a write that got only one ack and returned an error isn't rolled back, so it can win a later merge.
+
+</Question>
 
 </Collapse>
-<Collapse id="fencing" title="9. Locks aren't enough: fencing tokens">
-<p>Somewhere in your system there's a job that must only run once, guarded by a distributed lock. Here's why that lock, on its own, guarantees nothing.</p>
-<pre class="trace">
-<b>{"c1"}</b>{"   acquires lock, lease 10s, "}<b>{"token 33"}</b>{"\n"}
-<b>{"c1"}</b>{"   "}<span class="bad">{"stops. GC pause / VM freeze. 14 seconds."}</span>{"\n"}
-<b>{"+10s"}</b>{" lease expires. The lock service is right"}{"\n"}
-{"      to release it — c1 looks dead."}{"\n"}
-<b>{"c2"}</b>{"   acquires lock, "}<b>{"token 34"}</b>{"\n"}
-<b>{"c2"}</b>{"   write(data, token=34)  → "}<span class="good">{"accepted"}</span>{"\n"}
-<b>{"c1"}</b>{"   ...wakes up. Believes it still holds"}{"\n"}
-{"      the lock, because from c1's point of"}{"\n"}
-{"      view no time passed at all."}{"\n"}
-<b>{"c1"}</b>{"   write(data, token=33)  → "}<span class="good">{"rejected: 33 &lt; 34"}</span>{"\n"}
-{"\n"}
-<span class="bad">{"without the token, c1's write lands last and wins"}</span>{"\n"}
-</pre>
-<p>The lease didn't fail; it did its job. The problem is that <strong>"I hold the lock" is a statement about the past</strong>, and an arbitrary amount of wall-clock time can elapse between checking it and acting on it. A stop-the-world GC pause of several seconds is routine. A VM being live-migrated or a laptop lid closing can be worse. No amount of re-checking closes the gap, because the pause can always land between the check and the write.</p>
-<p>The fix is a <strong>fencing token</strong>: the lock service hands out a monotonically increasing number with every grant, the client passes it along with every write, and <em>the storage layer</em> remembers the highest token it has seen and rejects anything lower. Note where the enforcement lives — not in the client, which is the thing that can't be trusted, and not in the lock service, which isn't in the write path. The resource itself has to check. If your storage can't do that, you don't have mutual exclusion; you have a strong hint. This is the cleanest example in the whole guide of why distributed correctness is about what you can <em>enforce</em>, not what you can <em>agree</em>.</p>
 
+<Collapse id="conflicts" title="8. When writes collide: clocks, version vectors, CRDTs">
+
+Line `t4` above ended with "something must now decide." That something deserves its own section, because the default answer is bad and almost nobody changes it.
+
+### Last-write-wins is a data-loss policy with good branding
+
+The obvious rule is: attach a wall-clock timestamp to every write, and when two versions conflict, keep the newer one. It's simple, it's stateless, and it's wrong in a way that produces no evidence.
+
+Consider two nodes whose clocks disagree by 300 ms — an entirely ordinary amount of NTP drift, and a rounding error compared to what a bad VM migration or a leap-second handler can do. A user updates their shipping address on node A at 12:00:00.000; A's clock is fast, so the write is stamped `12:00:00.300`. A moment later, genuinely afterwards, they correct a typo via node B at 12:00:00.150; B's clock is accurate, so that write is stamped `12:00:00.150`. Last-write-wins compares the stamps, keeps the address from A, and discards the correction. The package goes to the old address. There was no error, no retry, no warning, no log line — the system did precisely what it was configured to do, and the only artefact is a confused customer. **With last-write-wins, your consistency guarantee is only as good as your clock synchronisation**, and clock synchronisation is a best-effort background daemon.
+
+<Note type="wild" label="◈ In the wild · Google Spanner">
+
+Google Spanner takes the opposite bet: instead of hoping the clocks agree, it measures how much they might disagree. Its [TrueTime](https://research.google/pubs/spanner-googles-globally-distributed-database-2/) API leans on GPS receivers and atomic clocks in every datacentre to put a hard bound on how wrong any clock can be, and a transaction simply waits out that small uncertainty window before it commits. Because every commit timestamp is only handed out once real time has definitely passed it, the timestamps never lie about ordering — which is exactly what lets Spanner offer globally distributed, externally consistent (linearizable) transactions. It is the honest inverse of last-write-wins: rather than trusting a clock, it prices in the doubt.
+
+</Note>
+
+### Logical clocks: ordering without trusting time
+
+The fix in principle is to stop asking "when did this happen?" and start asking "what did this write know about?" A **version vector** tags each value with a per-replica counter, so when two versions meet you can compare them structurally: if one vector dominates the other on every entry, that write genuinely happened *after* — keep it, no clocks involved. If neither dominates, the writes are **concurrent**, and you now know something a timestamp could never tell you: this is a real conflict, not a slow packet. (Lamport clocks give you a total order that's consistent with causality, but they can't distinguish concurrent from ordered; vectors can, which is why they're the ones you want at a merge point.)
+
+The honest costs. Vectors grow with the number of writers — fine for a handful of replicas, awkward when every client is an actor, which is why real systems reach for dotted version vectors, pruning, and other machinery to stop the metadata outgrowing the data. And detection is not resolution: a version vector can tell you two writes are concurrent, but it has no opinion about what your business wants done about it. Riak's answer was to hand the application both siblings and let it decide, which is honest and is also why teams found it exhausting. Someone still has to write the merge function, and that function is where the actual correctness lives.
+
+### CRDTs: make the conflict impossible instead
+
+The other move is to change the data type so there's nothing to resolve. A **CRDT** — conflict-free replicated data type — is one whose merge operation is commutative, associative and idempotent, meaning replicas that have seen the same set of updates in *any* order, with duplicates, end up identical. Order stops mattering, so divergence stops being a problem to fix and becomes a state to merge. It's the same instinct as making a queue consumer [idempotent](/guides/message-queues/): design the operation so repetition and reordering are harmless, rather than building machinery to prevent them.
+
+The catalogue is real and in production. Counters that only grow, or a pair of them for increment-and-decrement. Sets with explicit add/remove tagging so a concurrent add and remove resolve by rule rather than by luck. And collaborative text — the reason two people can type in the same document and neither one's cursor jumps.
+
+<Note type="warn" label="The limit, stated plainly">
+
+Not every problem has a commutative formulation. CRDTs converge; they do not enforce invariants that span replicas. "The set of items in the cart" merges beautifully. "This balance must never go below zero" does not — two replicas can each independently approve a withdrawal that's fine locally and catastrophic jointly, and no merge function can retroactively make that legal, because the invariant was violated before the merge existed. Global invariants need coordination. Your bank balance is not a CRDT, and neither is the last seat on the flight.
+
+</Note>
+
+<Lab
+  title="Build a Replicated PN-Counter CRDT"
+  tip="Include this CRDT implementation in your portfolio to showcase your understanding of coordinator-free conflict resolution."
+>
+
+Build this mini-project to implement conflict-free convergence across distributed instances:
+
+- **The Replicated Data Structure:** Design a Positive-Negative Counter (PN-Counter) object representing increments and decrements from different nodes:
+
+  ```javascript
+  {
+    p: { "node_a": 15, "node_b": 7 },
+    n: { "node_a": 2, "node_b": 0 }
+  }
+  ```
+
+- **The Value Function:** Write a getter `value()` that sums all entries in `p` and subtracts the sum of all entries in `n` (e.g. `(15+7) - (2+0) = 20`).
+
+- **The Merge Function:** Write a function `merge(otherCounter)`. For both `p` and `n`, take the union of all keys and resolve conflicts by taking the maximum value for each key (e.g. `merged.p[node] = Math.max(this.p[node], otherCounter.p[node])`).
+
+- **Reconcile Network Partitions:** Create two local PN-Counter instances (Node A and Node B). Increment Node A locally, decrement Node B locally, simulate a network partition heal by calling `A.merge(B)` and `B.merge(A)`, and verify that both converge to the exact same correct count without locking.
+
+</Lab>
+
+</Collapse>
+
+<Collapse id="fencing" title="9. Locks aren't enough: fencing tokens">
+
+Somewhere in your system there's a job that must only run once, guarded by a distributed lock. Here's why that lock, on its own, guarantees nothing.
+
+```trace
+**c1**   acquires lock, lease 10s, **token 33**
+**c1**   ~~stops. GC pause / VM freeze. 14 seconds.~~
+**+10s** lease expires. The lock service is right
+      to release it — c1 looks dead.
+**c2**   acquires lock, **token 34**
+**c2**   write(data, token=34)  → ++accepted++
+**c1**   ...wakes up. Believes it still holds
+      the lock, because from c1's point of
+      view no time passed at all.
+**c1**   write(data, token=33)  → ++rejected: 33 < 34++
+
+~~without the token, c1's write lands last and wins~~
+```
+
+The lease didn't fail; it did its job. The problem is that **"I hold the lock" is a statement about the past**, and an arbitrary amount of wall-clock time can elapse between checking it and acting on it. A stop-the-world GC pause of several seconds is routine. A VM being live-migrated or a laptop lid closing can be worse. No amount of re-checking closes the gap, because the pause can always land between the check and the write.
+
+The fix is a **fencing token**: the lock service hands out a monotonically increasing number with every grant, the client passes it along with every write, and *the storage layer* remembers the highest token it has seen and rejects anything lower. Note where the enforcement lives — not in the client, which is the thing that can't be trusted, and not in the lock service, which isn't in the write path. The resource itself has to check. If your storage can't do that, you don't have mutual exclusion; you have a strong hint. This is the cleanest example in the whole guide of why distributed correctness is about what you can *enforce*, not what you can *agree*.
 
 <Question q="Check yourself: A batch job holds a 10-second lease, freezes for 20 seconds, wakes up and writes. What must have been in place for that to be safe?">
+
 A fencing token, enforced at the storage layer. The lock service was right to expire the lease and right to grant it to someone else; nothing the client does can make "I hold the lock" true again, because the check happened 20 seconds ago. Safety requires that the resource itself track the highest token it has seen and reject the stale writer's lower one. If enforcement lives in the client or only in the lock service, you don't have mutual exclusion — you have an agreement between processes that one of them has stopped honouring.
+
 </Question>
 
 </Collapse>
+
 <Collapse id="txn" title="10. Transactions, 2PC, and sagas">
-<p>On a single database, <strong>ACID transactions</strong> make several changes all-or-nothing: transfer money between two accounts and either both sides happen or neither does. Bliss. But once those accounts live on different <a href="database-scaling.html">shards or services</a>, a single transaction can't span them cheaply — distributed transactions (two-phase commit) are slow and fragile.</p>
-<p>"Slow" is the complaint people repeat; the blocking window is the actual problem. In <strong>two-phase commit</strong>, the coordinator asks every participant to <em>prepare</em>. A participant that votes yes has made a durable promise that it <em>can</em> commit, and to keep that promise it holds its locks and waits. Now kill the coordinator between collecting the votes and broadcasting the decision. Every participant is stuck: it can't commit unilaterally, because someone else may have voted no; it can't abort, because someone else may already have been told to commit. So it holds those locks and blocks — potentially until a human intervenes. A protocol whose worst case is "rows are locked until the on-call engineer wakes up" is not one you want on your checkout path. (The modern answer is to make the coordinator itself a replicated, consensus-backed group so it can't simply vanish — which works, and costs you another round of coordination.)</p>
-<p>So distributed systems often trade the guarantee for a <strong>saga</strong>: break the operation into a sequence of local steps, each with a <em>compensating</em> undo. Charge the card → reserve the item → book shipping. If shipping fails, run the compensations backward: un-reserve the item, refund the card. You lose instant atomicity and gain <em>eventual</em> correctness — the system passes through briefly-inconsistent states but always lands somewhere valid. It's consistency rebuilt out of Lego instead of carved from marble.</p>
-<div class="note warn">
-<span class="label">Compensation is not rollback</span>
-    A rollback erases history: after an <code>ABORT</code>, nobody ever saw the intermediate state, because isolation hid it. A <strong>compensating transaction is a new, forward action that approximately undoes an old one</strong> — and in the gap between the two, the intermediate state was visible to everybody. Refunding a charge is not the same as never charging. The customer saw the charge, their bank saw it, the fraud model saw it, and if it pushed them into an overdraft the refund doesn't unpush them. Worse, some steps have no compensation at all: you cannot un-send an email, un-ship a parcel, or un-tell someone their loan was approved. The design consequence is concrete — <strong>order your saga so the reversible steps come first and the irreversible ones last</strong>, and where you can, reserve rather than commit (hold the seat, don't sell it) so the "undo" is releasing a hold instead of retracting a fact. And since compensations run in a failure path, they will themselves fail and be retried, which means they must be <a href="message-queues.html">idempotent</a> too.
-</div>
+
+On a single database, **ACID transactions** make several changes all-or-nothing: transfer money between two accounts and either both sides happen or neither does. Bliss. But once those accounts live on different [shards or services](/guides/database-scaling/), a single transaction can't span them cheaply — distributed transactions (two-phase commit) are slow and fragile.
+
+"Slow" is the complaint people repeat; the blocking window is the actual problem. In **two-phase commit**, the coordinator asks every participant to *prepare*. A participant that votes yes has made a durable promise that it *can* commit, and to keep that promise it holds its locks and waits. Now kill the coordinator between collecting the votes and broadcasting the decision. Every participant is stuck: it can't commit unilaterally, because someone else may have voted no; it can't abort, because someone else may already have been told to commit. So it holds those locks and blocks — potentially until a human intervenes. A protocol whose worst case is "rows are locked until the on-call engineer wakes up" is not one you want on your checkout path. (The modern answer is to make the coordinator itself a replicated, consensus-backed group so it can't simply vanish — which works, and costs you another round of coordination.)
+
+So distributed systems often trade the guarantee for a **saga**: break the operation into a sequence of local steps, each with a *compensating* undo. Charge the card → reserve the item → book shipping. If shipping fails, run the compensations backward: un-reserve the item, refund the card. You lose instant atomicity and gain *eventual* correctness — the system passes through briefly-inconsistent states but always lands somewhere valid. It's consistency rebuilt out of Lego instead of carved from marble.
+
+<Note type="warn" label="Compensation is not rollback">
+
+A rollback erases history: after an `ABORT`, nobody ever saw the intermediate state, because isolation hid it. A **compensating transaction is a new, forward action that approximately undoes an old one** — and in the gap between the two, the intermediate state was visible to everybody. Refunding a charge is not the same as never charging. The customer saw the charge, their bank saw it, the fraud model saw it, and if it pushed them into an overdraft the refund doesn't unpush them. Worse, some steps have no compensation at all: you cannot un-send an email, un-ship a parcel, or un-tell someone their loan was approved. The design consequence is concrete — **order your saga so the reversible steps come first and the irreversible ones last**, and where you can, reserve rather than commit (hold the seat, don't sell it) so the "undo" is releasing a hold instead of retracting a fact. And since compensations run in a failure path, they will themselves fail and be retried, which means they must be [idempotent](/guides/message-queues/) too.
+
+</Note>
 
 </Collapse>
+
 <Collapse id="ryw" title="11. Read-your-writes: the anomaly users actually notice">
-<p>Almost everything above is invisible to your users. This one is not, and it generates more support tickets than every other consistency bug combined.</p>
-<p>Someone posts a comment. The write goes to the primary. The page reloads, the read is load-balanced to a replica that's 200 ms behind, and their comment isn't there. From inside the system this is textbook, expected <a href="database-scaling.html">replication lag</a>, working exactly as designed. From outside it is "your site ate my comment" — so they post it again, and now you have a duplicate, which is a data problem born entirely from a perception problem.</p>
-<p>You've violated <strong>read-your-writes</strong> (rung 4 of the ladder), which is the cheapest guarantee on the whole spectrum and the one users treat as non-negotiable. Three ways to buy it back, in increasing order of correctness:</p>
-  
-    
 
-* <strong>Route the writer to the primary for a window.</strong> After a user writes, send <em>their</em> reads to the primary for the next few seconds — session-sticky routing, the same mechanism as in the <a href="load-balancing.html">Load Balancing guide</a>. Simple, and two catches: it adds read load to the node you least want loaded, and the window has to cover your <em>p99</em> lag, not your average, or you've just made the bug rarer and harder to reproduce.
+Almost everything above is invisible to your users. This one is not, and it generates more support tickets than every other consistency bug combined.
 
+Someone posts a comment. The write goes to the primary. The page reloads, the read is load-balanced to a replica that's 200 ms behind, and their comment isn't there. From inside the system this is textbook, expected [replication lag](/guides/database-scaling/), working exactly as designed. From outside it is "your site ate my comment" — so they post it again, and now you have a duplicate, which is a data problem born entirely from a perception problem.
 
-    
+You've violated **read-your-writes** (rung 4 of the ladder), which is the cheapest guarantee on the whole spectrum and the one users treat as non-negotiable. Three ways to buy it back, in increasing order of correctness:
 
-* <strong>Carry a version token.</strong> The write returns its position in the replication stream — an LSN in Postgres, a GTID in MySQL. The client hands that token back with the next read, and the router either waits for a replica to catch up to it or picks one that already has. This is the correct fix: it's precise, it degrades to "slightly slower read" rather than "wrong answer," and it costs you a token on the wire.
+- **Route the writer to the primary for a window.** After a user writes, send *their* reads to the primary for the next few seconds — session-sticky routing, the same mechanism as in the [Load Balancing guide](/guides/load-balancing/). Simple, and two catches: it adds read load to the node you least want loaded, and the window has to cover your *p99* lag, not your average, or you've just made the bug rarer and harder to reproduce.
 
+- **Carry a version token.** The write returns its position in the replication stream — an LSN in Postgres, a GTID in MySQL. The client hands that token back with the next read, and the router either waits for a replica to catch up to it or picks one that already has. This is the correct fix: it's precise, it degrades to "slightly slower read" rather than "wrong answer," and it costs you a token on the wire.
 
-    
+- **Pin the session to one replica** to get monotonic reads as well, so a refresh never shows *older* data than the previous one. Cheap, and it stacks with the above.
 
-* <strong>Pin the session to one replica</strong> to get monotonic reads as well, so a refresh never shows <em>older</em> data than the previous one. Cheap, and it stacks with the above.
+Rendering the new comment optimistically from the write response is worth doing for the feel of it, but be clear about what it is: it fixes the perception, not the data. Refresh on a second device and the ticket comes back.
 
-
-  
-<p>Rendering the new comment optimistically from the write response is worth doing for the feel of it, but be clear about what it is: it fixes the perception, not the data. Refresh on a second device and the ticket comes back.</p>
-
-
-<div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
-<DiagramConsistencyCap2 />
-</div>
-
+<Figure>
+  <DiagramConsistencyCap2 />
+</Figure>
 
 <Question q="Check yourself: A user posts a comment and doesn't see it on refresh. Which consistency model did you violate, and what's the cheapest fix?">
-Read-your-writes — the read went to a replica that hadn't applied their write yet. Cheapest real fix is session-sticky routing: send that user's reads to the primary for a few seconds after they write. Size the window against p99 replication lag, not the average, or you've made the bug rare instead of gone. The more correct version is to return the write's LSN/GTID and have the read wait for a replica that has reached it. Note the collateral damage of not fixing it: users re-submit, so a perception bug becomes duplicate rows.
-</Question>
 
+Read-your-writes — the read went to a replica that hadn't applied their write yet. Cheapest real fix is session-sticky routing: send that user's reads to the primary for a few seconds after they write. Size the window against p99 replication lag, not the average, or you've made the bug rare instead of gone. The more correct version is to return the write's LSN/GTID and have the read wait for a replica that has reached it. Note the collateral damage of not fixing it: users re-submit, so a perception bug becomes duplicate rows.
+
+</Question>
 
 <Question q="Check yourself: Product wants strong consistency across three continents with a p99 write latency under 50 ms. What do you tell them?">
+
 That it's a physics request, not an engineering one. A majority write across three continents needs at least one round trip to the second-closest region, which is 60–90 ms before your code does anything, and consensus protocols often want more than one round. Then negotiate the actual requirement: which specific data needs global agreement? Usually it's a thin slice — balances, unique names, seat inventory — that can be pinned to a home region and accessed strongly from there, while the other 95% goes regional with session guarantees. You shrink the strongly-consistent set until it fits the budget; you don't make the round trip shorter.
+
 </Question>
 
 </Collapse>
+
 <Collapse id="recap" title="12. Recap in 60 seconds">
-<div class="recap">
-    
-      
 
-* <strong>CAP's C is linearizability. ACID's C is your constraints.</strong> They share a letter and nothing else. Ask which one someone means before you design anything.
+<Recap>
 
+- **CAP's C is linearizability. ACID's C is your constraints.** They share a letter and nothing else. Ask which one someone means before you design anything.
 
-      
+- **P isn't a choice.** The real decision is C or A, and only during a partition. A single node is trivially CP, which tells you how little the label is worth.
 
-* <strong>P isn't a choice.</strong> The real decision is C or A, and only during a partition. A single node is trivially CP, which tells you how little the label is worth.
+- **A partition is a timeout you configured.** Shorter timeout, more partitions resolved faster; longer timeout, fewer partitions that hurt longer. There is no zero.
 
+- **PACELC's else-branch is the one that runs.** Latency vs. consistency is decided on every request all day; availability vs. consistency is decided a few minutes a year.
 
-      
+- **R + W > N means the read set and the write set intersect.** That's all it means. Not linearizable, no help for read-modify-write, and suspended entirely during a sloppy quorum.
 
-* <strong>A partition is a timeout you configured.</strong> Shorter timeout, more partitions resolved faster; longer timeout, fewer partitions that hurt longer. There is no zero.
+- **Last-write-wins is a data-loss policy.** If your clocks disagree by 300 ms, so does your idea of "last" — and the loss is silent. Version vectors detect concurrency honestly; CRDTs remove it by construction; neither decides what a conflict *means* to your business.
 
+- **A lock is a statement about the past.** Add a fencing token the storage layer checks, or accept that a paused process will eventually wake up and overwrite you.
 
-      
+- **Compensation is not rollback.** The intermediate state was visible, some actions can't be undone, so put the irreversible steps last. And 2PC's real danger is the blocking window when the coordinator dies mid-protocol.
 
-* <strong>PACELC's else-branch is the one that runs.</strong> Latency vs. consistency is decided on every request all day; availability vs. consistency is decided a few minutes a year.
+- **Read-your-writes is the one users notice.** Route their reads to the primary for a window, or carry an LSN/GTID and wait for the replica to reach it.
 
+- **Choose per data type, not per system.** Strong for money and inventory, session guarantees for a user's own content, eventual for counters.
 
-      
+</Recap>
 
-* <strong>R + W &gt; N means the read set and the write set intersect.</strong> That's all it means. Not linearizable, no help for read-modify-write, and suspended entirely during a sloppy quorum.
+And the numbers underneath all of it. These are **order-of-magnitude** figures — your network is not these numbers, but it is within a factor of two or three of them, and that's enough to do the arithmetic that matters.
 
+<Table numeric>
 
-      
+| Rough number | What it is | What it costs you |
+| ------------ | ---------- | ----------------- |
+| ~0.5 ms | Round trip within a rack / one AZ | A three-node quorum here is essentially free. This is why the default single-region setup feels fast and teaches you nothing about the trade-off. |
+| ~1–2 ms | Round trip cross-AZ, same region | A synchronous quorum across three availability zones costs a millisecond or two per write. That's cheap insurance against losing a data centre — take it. |
+| ~60–90 ms | Round trip cross-continent (US east↔west, US↔EU) | One majority round trip. A synchronous three-region quorum write cannot complete faster than the RTT to the *second-closest* region. Full stop. |
+| ~200 ms | Round trip to the far side of the planet (~40,000 km of fibre) | The floor for a globally synchronous write. Not a target to optimise toward — a wall. |
+| ~200,000 km/s | Speed of light in fibre, about two-thirds of *c* | The constant generating every row above. It has not improved and will not. |
+| 1–2 RTT | Round trips a commit actually needs | Raft/Paxos in steady state is roughly one majority RTT; a prepare-then-commit protocol is two. Multiply the rows above, don't divide them. |
 
-* <strong>Last-write-wins is a data-loss policy.</strong> If your clocks disagree by 300 ms, so does your idea of "last" — and the loss is silent. Version vectors detect concurrency honestly; CRDTs remove it by construction; neither decides what a conflict <em>means</em> to your business.
+</Table>
 
-
-      
-
-* <strong>A lock is a statement about the past.</strong> Add a fencing token the storage layer checks, or accept that a paused process will eventually wake up and overwrite you.
-
-
-      
-
-* <strong>Compensation is not rollback.</strong> The intermediate state was visible, some actions can't be undone, so put the irreversible steps last. And 2PC's real danger is the blocking window when the coordinator dies mid-protocol.
-
-
-      
-
-* <strong>Read-your-writes is the one users notice.</strong> Route their reads to the primary for a window, or carry an LSN/GTID and wait for the replica to reach it.
-
-
-      
-
-* <strong>Choose per data type, not per system.</strong> Strong for money and inventory, session guarantees for a user's own content, eventual for counters.
-
-
-    
-</div>
-
-<p>And the numbers underneath all of it. These are <strong>order-of-magnitude</strong> figures — your network is not these numbers, but it is within a factor of two or three of them, and that's enough to do the arithmetic that matters.</p>
-<div class="table-scroll">
-<table class="num-table">
-<thead><tr><th>Rough number</th><th>What it is</th><th>What it costs you</th></tr></thead>
-<tbody>
-<tr><td>~0.5 ms</td><td>Round trip within a rack / one AZ</td><td>A three-node quorum here is essentially free. This is why the default single-region setup feels fast and teaches you nothing about the trade-off.</td></tr>
-<tr><td>~1–2 ms</td><td>Round trip cross-AZ, same region</td><td>A synchronous quorum across three availability zones costs a millisecond or two per write. That's cheap insurance against losing a data centre — take it.</td></tr>
-<tr><td>~60–90 ms</td><td>Round trip cross-continent (US east↔west, US↔EU)</td><td>One majority round trip. A synchronous three-region quorum write cannot complete faster than the RTT to the <em>second-closest</em> region. Full stop.</td></tr>
-<tr><td>~200 ms</td><td>Round trip to the far side of the planet (~40,000 km of fibre)</td><td>The floor for a globally synchronous write. Not a target to optimise toward — a wall.</td></tr>
-<tr><td>~200,000 km/s</td><td>Speed of light in fibre, about two-thirds of <em>c</em></td><td>The constant generating every row above. It has not improved and will not.</td></tr>
-<tr><td>1–2 RTT</td><td>Round trips a commit actually needs</td><td>Raft/Paxos in steady state is roughly one majority RTT; a prepare-then-commit protocol is two. Multiply the rows above, don't divide them.</td></tr>
-</tbody>
-</table>
-</div>
-<p>The point those numbers exist to make: <strong>synchronous cross-region consensus has a latency floor set by physics, and no engineering gets under it.</strong> If someone asks for global strong consistency with a p99 under 50 ms, they haven't asked for an optimisation — they've asked you to move Europe closer. The only real move is to shrink the set of data that needs global agreement until what's left can afford the round trip, and let everything else be regional, cached, or eventual.</p>
+The point those numbers exist to make: **synchronous cross-region consensus has a latency floor set by physics, and no engineering gets under it.** If someone asks for global strong consistency with a p99 under 50 ms, they haven't asked for an optimisation — they've asked you to move Europe closer. The only real move is to shrink the set of data that needs global agreement until what's left can afford the round trip, and let everything else be regional, cached, or eventual.
 
 </Collapse>
-<hr />
-<Footer><a href="https://github.blog/news-insights/company-news/oct21-post-incident-analysis/">GitHub — October 21 Post-Incident Analysis</a> ·
-<a href="https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf">Amazon — Dynamo Paper</a> ·
-<a href="https://cloud.google.com/spanner/docs/true-time-external-consistency">Google — Spanner TrueTime</a> ·
-<a href="https://en.wikipedia.org/wiki/PACELC_theorem">PACELC Theorem</a> ·
-<a href="https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html">Kleppmann — How to do distributed locking</a> ·
-<a href="https://jepsen.io/consistency">Jepsen — Consistency Models</a> ·
-<a href="https://crdt.tech/">CRDT.tech — Conflict-free Replicated Data Types</a></Footer>
+
+<Footer>
+  [GitHub — October 21 Post-Incident Analysis](https://github.blog/news-insights/company-news/oct21-post-incident-analysis/) ·
+  [Amazon — Dynamo Paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf) ·
+  [Google — Spanner TrueTime](https://cloud.google.com/spanner/docs/true-time-external-consistency) ·
+  [PACELC Theorem](https://en.wikipedia.org/wiki/PACELC_theorem) ·
+  [Kleppmann — How to do distributed locking](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html) ·
+  [Jepsen — Consistency Models](https://jepsen.io/consistency) ·
+  [CRDT.tech — Conflict-free Replicated Data Types](https://crdt.tech/)
+</Footer>

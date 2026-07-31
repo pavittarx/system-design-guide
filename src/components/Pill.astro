@@ -1,0 +1,12 @@
+---
+// src/components/Pill.astro
+// Standalone coloured badge, for use inside table cells and prose.
+// Card takes its own `pill` prop — use that instead when heading a card.
+interface Props {
+  tone?: 'good' | 'bad' | 'mid';
+}
+
+const { tone = 'mid' } = Astro.props;
+---
+
+<span class:list={['pill', tone]}><slot /></span>

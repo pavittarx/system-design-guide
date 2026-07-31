@@ -1,8 +1,12 @@
-name: Deploy Astro site to Pages
+name: Build and deploy to Pages
 
 on:
   push:
     branches: [main]
+  # Build (but never deploy) on PRs, so broken MDX is caught before it reaches main.
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -10,18 +14,20 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
-  cancel-in-progress: true
+  group: pages
+  # Never cancel a deploy midway — a half-applied Pages deployment is worse than
+  # a queued one. Queue instead.
+  cancel-in-progress: false
 
 env:
   ASTRO_TELEMETRY_DISABLED: 1
 
 jobs:
   build:
-    name: Build Astro Site
+    name: Build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout your repository
+      - name: Check out the repository
         uses: actions/checkout@v4
 
       - name: Install Node.js
@@ -33,16 +39,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build site
+      # `npm run build` also runs scripts/verify-build.mjs, which fails the job on
+      # dead cross-guide links, broken in-page anchors, undecoded entities, or a
+      # legacy redirect stub pointing at a page that no longer exists.
+      - name: Build and verify
         run: npm run build
 
-      - name: Upload pages artifact
+      - name: Upload Pages artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist
 
   deploy:
-    name: Deploy to GitHub Pages
+    name: Deploy
+    # Pull requests build and verify only; deployment is reserved for main.
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:

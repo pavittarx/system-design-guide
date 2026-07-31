@@ -1,13 +1,14 @@
 {
   "name": "system-design-guide",
   "version": "1.0.0",
-  "description": "A seven-part illustrated field guide to how real systems get fast, hold their data, distribute work, stay up, and stay correct — closing with a capstone that designs one whole system end to end. Each guide opens with a real-world disaster and hangs every concept on a war story: Knight Capital, the AWS S3 typo, GitHub's 43-second partition, Figma, Discord, and more. Roughly 48,000 words, with worked numbers, failure traces, and self-check questions throughout.",
+  "description": "A seven-part illustrated field guide to how real systems get fast, hold their data, distribute work, stay up, and stay correct \u2014 closing with a capstone that designs one whole system end to end. Each guide opens with a real-world disaster and hangs every concept on a war story: Knight Capital, the AWS S3 typo, GitHub's 43-second partition, Figma, Discord, and more. Roughly 48,000 words, with worked numbers, failure traces, and self-check questions throughout.",
   "main": "components.js",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && node scripts/verify-build.mjs",
     "preview": "astro preview",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "verify": "node scripts/verify-build.mjs"
   },
   "repository": {
     "type": "git",

@@ -1,25 +1,59 @@
 ---
 // src/components/Footer.astro
+// Closes a guide: the optional "Next:" hand-off, then the sources line.
+// Renders its own <hr /> — pages should not add one.
+//
+//   <Footer>
+//     <Fragment slot="next">…that's [Systems That Push Back](/guides/real-time-systems/).</Fragment>
+//     Ongaro & Ousterhout, "In Search of an Understandable Consensus Algorithm" (2014)
+//   </Footer>
+//
+// Both wrappers are <div>, not <p>: MDX renders slotted markdown as its own
+// <p>, and a <p> inside a <p> is auto-closed by the HTML parser — which would
+// drop the slot content out of the styled block entirely.
+interface Props {
+  /** Appended after the series name, e.g. " — the capstone". */
+  suffix?: string;
+}
+
+const { suffix = '' } = Astro.props;
+const hasNext = Astro.slots.has('next');
 ---
+
 <hr />
-<p class="footer">
-  Part of <em>System Design Basics</em>. Sources:
+{hasNext && (
+  <div class="next"><b>Next:</b> <slot name="next" /></div>
+)}
+<div class="footer">
+  Part of <em>System Design Basics</em>{suffix}. Sources:
   <slot />
-</p>
+</div>
 
 <style>
+  .next {
+    font-size: 0.95rem;
+    margin: 32px 0 0;
+  }
+
   .footer {
     color: var(--muted);
     font-size: 0.85rem;
-    margin-top: 40px;
+    margin: 16px 0 0;
   }
-  
+
+  /* Slotted markdown arrives wrapped in its own paragraph — keep it in flow */
+  .next :global(p),
+  .footer :global(p) {
+    display: inline;
+    margin: 0;
+  }
+
   /* The styles in main layout handle basic link colors, but we add underline here for links inside footer */
   .footer :global(a) {
     color: var(--muted);
     text-decoration: underline;
   }
-  
+
   .footer :global(a:hover) {
     color: var(--accent);
   }

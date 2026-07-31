@@ -1,0 +1,17 @@
+---
+// src/components/Lab.astro
+// Hands-on mini-project box. Body is markdown — usually an ordered list of steps
+// with fenced code blocks.
+interface Props {
+  title: string;
+  tip?: string;
+}
+
+const { title, tip } = Astro.props;
+---
+
+<div class="note key lab">
+  <span class="label">🛠️ Hands-On Lab: {title}</span>
+  <slot />
+  {tip && <p class="lab-tip">💡 {tip}</p>}
+</div>

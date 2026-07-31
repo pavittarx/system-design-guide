@@ -1,6 +1,7 @@
 ---
 // src/layouts/MainLayout.astro
 import Header from '../components/Header.astro';
+import { guideHref, guideTitle, type GuideSlug } from '../lib/guides';
 
 interface Props {
   title: string;
@@ -11,13 +12,14 @@ interface Props {
     description: string;
     chapter?: number | string;
     current?: string;
-    series?: string;
+    // A guide reference is a bare slug, or a slug plus the label this page
+    // uses for it (guides refer to each other by varying short names).
+    series?: { lead: string; guides: Array<GuideSlug | { slug: GuideSlug; label?: string }> };
     sections?: Array<{ id: string; title: string }>;
   };
 }
 
 const { title, description = "A practical field guide to system design basics.", frontmatter } = Astro.props;
-const base = import.meta.env.BASE_URL;
 
 const pageTitle = frontmatter?.title || title;
 const pageDesc = frontmatter?.description || description;
@@ -25,6 +27,18 @@ const chapter = frontmatter?.chapter;
 const current = frontmatter?.current || Astro.props.current;
 const series = frontmatter?.series;
 const sections = frontmatter?.sections;
+
+// "A companion to <a>X</a>, <a>Y</a>, and <a>Z</a>."
+const seriesLead = series?.lead;
+const seriesLinks = (series?.guides ?? []).map((g) =>
+  typeof g === 'string'
+    ? { slug: g, title: guideTitle(g) }
+    : { slug: g.slug, title: g.label ?? guideTitle(g.slug) }
+);
+const joiner = (i: number) => {
+  if (i === 0) return '';
+  return i === seriesLinks.length - 1 ? (seriesLinks.length > 2 ? ', and ' : ' and ') : ', ';
+};
 ---
 
 <!DOCTYPE html>
@@ -242,8 +256,10 @@ const sections = frontmatter?.sections;
       color: var(--accent);
       font-size: 0.95rem;
     }
+    .layer .body { min-width: 0; }
     .layer .body h4 { margin: 0 0 2px; font-size: 1.1rem; }
     .layer .body p { margin: 0; font-size: 0.9rem; color: var(--muted); }
+    .layer .body p + p { margin-top: 8px; }
     .layer .speed {
       margin-left: auto;
       font-size: 0.78rem;
@@ -483,7 +499,47 @@ const sections = frontmatter?.sections;
     }
     .card h4 { margin: 0 0 6px; font-size: 1rem; }
     .card p { margin: 0; font-size: 0.9rem; color: var(--muted); }
-    
+    .card > p + p { margin-top: 10px; }
+
+    /* Pills — restored verbatim from the pre-Astro stylesheet, which the
+       migration dropped, leaving every pill rendering as plain body text. */
+    .pill {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .pill.good { background: rgba(126, 224, 192, 0.16); color: var(--accent-2); }
+    .pill.bad { background: rgba(255, 138, 138, 0.16); color: var(--danger); }
+    .pill.mid { background: rgba(255, 207, 112, 0.16); color: var(--warn); }
+
+    /* Diagram frame */
+    figure.figure {
+      margin: 20px 0;
+      padding: 16px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    figure.figure figcaption {
+      margin-top: 10px;
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    /* Hands-on lab */
+    .note.lab ol, .note.lab ul { padding-left: 20px; margin: 10px 0; }
+    .note.lab li { margin: 10px 0; }
+    .note.lab li > p { margin: 0 0 8px; }
+    .note.lab pre { margin: 10px 0; }
+    .lab-tip {
+      margin: 12px 0 0;
+      font-size: 0.85rem;
+      color: var(--accent-2);
+    }
+
     /* Preferences Media query for reduced motion */
     @media (prefers-reduced-motion: reduce) {
       * {
@@ -510,7 +566,17 @@ const sections = frontmatter?.sections;
         <div class="kicker">System Design Basics · {chapter} of 12</div>
         <h1>{pageTitle}</h1>
         <p class="lede">{pageDesc}</p>
-        {series && <p class="series" set:html={series} />}
+        {seriesLead && (
+          <p class="series">
+            {seriesLead}{' '}
+            {seriesLinks.map((g, i) => (
+              <>
+                {joiner(i)}
+                <a href={guideHref(g.slug)}><em>{g.title}</em></a>
+              </>
+            ))}.
+          </p>
+        )}
       </header>
     )}
 

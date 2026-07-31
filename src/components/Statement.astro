@@ -1,0 +1,16 @@
+---
+// src/components/Statement.astro
+// A single centred display line — used for a definition worth setting apart from
+// the surrounding prose without the weight of a Note box.
+---
+
+<p class="statement">
+  <slot />
+</p>
+
+<style>
+  .statement {
+    text-align: center;
+    font-size: 1.05rem;
+  }
+</style>

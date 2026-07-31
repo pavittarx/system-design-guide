@@ -4,7 +4,9 @@ title: "CDNs & the Edge — System Design Basics"
 description: "You cannot optimise your way out of the speed of light. You can only stop asking it for permission — by keeping a copy of the answer near the person who asked."
 chapter: "9"
 current: "9. CDNs & Edge"
-series: "A companion to <a href=\"understanding-caching.html\"><em>Understanding Caching</em></a> and <a href=\"load-balancing.html\"><em>Load Balancing</em></a>."
+series:
+  lead: "A companion to"
+  guides: [understanding-caching, load-balancing]
 sections:
   - id: "physics"
     title: "Distance is a physics problem"
@@ -33,351 +35,477 @@ sections:
   - id: "recap"
     title: "Recap in 60 seconds"
 ---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Note, Question, Recap, Table } from '../../components';
 import DiagramCdnEdge1 from '../../components/diagrams/DiagramCdnEdge1.astro';
 import DiagramCdnEdge2 from '../../components/diagrams/DiagramCdnEdge2.astro';
-import Collapse from '../../components/Collapse.astro';
-import Question from '../../components/Question.astro';
-import Footer from '../../components/Footer.astro';
 
-<div class="coldopen">
-<span class="tag">◇ one config change, most of the internet</span>
-<p>On 8 June 2021 a Fastly customer pushed a perfectly valid configuration change. It was the kind of change customers make hundreds of times a day. It happened to satisfy the trigger conditions of a latent bug introduced in a software deployment three weeks earlier, and within moments roughly 85% of Fastly's network was returning errors — taking large parts of the web with it, none of which had done anything at all. Fastly identified the cause in about a minute and had most of the network healthy inside an hour. The lesson isn't that CDNs are fragile. It's that a network optimised to push one configuration to every point of presence in seconds is, by that exact same mechanism, optimised to push one <em>mistake</em> to every point of presence in seconds.</p>
-</div>
+<ColdOpen tag="◇ one config change, most of the internet">
+
+On 8 June 2021 a Fastly customer pushed a perfectly valid configuration change. It was the kind of change customers make hundreds of times a day. It happened to satisfy the trigger conditions of a latent bug introduced in a software deployment three weeks earlier, and within moments roughly 85% of Fastly's network was returning errors — taking large parts of the web with it, none of which had done anything at all. Fastly identified the cause in about a minute and had most of the network healthy inside an hour. The lesson isn't that CDNs are fragile. It's that a network optimised to push one configuration to every point of presence in seconds is, by that exact same mechanism, optimised to push one *mistake* to every point of presence in seconds.
+
+</ColdOpen>
 
 <Collapse id="physics" title="1. Distance is a physics problem">
-<p>Light in a vacuum travels at about 300,000 km/s. In glass fibre, with a refractive index around 1.5, it manages roughly <strong>200,000 km/s</strong>. That number is not an implementation detail you can optimise; it is a property of the universe, and it sets a hard floor under every request that crosses an ocean.</p>
-<div class="note key">
-<span class="label">The arithmetic that justifies the entire industry</span>
-    London to New York is about 5,600 km as the crow flies, and fibre routes are never straight — call it 6,000 km of actual glass. A round trip is 12,000 km. At 200,000 km/s that's <strong>60 ms</strong> of pure physics, before a single packet is processed. Real measured round trips sit around 70–80 ms once switching and routing are included.<br /><br />
-    Now recall that establishing a connection is not one round trip. TCP's handshake is one, TLS 1.3's is another, and only then can you send the request and wait for the response. That's <strong>four round trips ≈ 280–320 ms</strong> before the first byte of HTML arrives — and this is with a perfectly healthy network and an origin that responds instantly.
-</div>
-<p>Sydney to Virginia is roughly 16,000 km, which puts a single round trip near 160 ms and that same four-trip sequence past <strong>600 ms</strong>. Your server's response time was 8 ms. Nobody cares.</p>
-<p>There are exactly two ways to make a request faster: do less work, or travel less distance. Everything in <a href="understanding-caching.html">Understanding Caching</a> is about the first. This guide is about the second — and the reason it deserves its own guide is that "move a copy closer" turns out to involve a dozen decisions, most of which can quietly cost you all of the benefit.</p>
 
+Light in a vacuum travels at about 300,000 km/s. In glass fibre, with a refractive index around 1.5, it manages roughly **200,000 km/s**. That number is not an implementation detail you can optimise; it is a property of the universe, and it sets a hard floor under every request that crosses an ocean.
 
-<div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
-<DiagramCdnEdge1 />
-</div>
+<Note type="key" label="The arithmetic that justifies the entire industry">
+
+London to New York is about 5,600 km as the crow flies, and fibre routes are never straight — call it 6,000 km of actual glass. A round trip is 12,000 km. At 200,000 km/s that's **60 ms** of pure physics, before a single packet is processed. Real measured round trips sit around 70–80 ms once switching and routing are included.
+
+Now recall that establishing a connection is not one round trip. TCP's handshake is one, TLS 1.3's is another, and only then can you send the request and wait for the response. That's **four round trips ≈ 280–320 ms** before the first byte of HTML arrives — and this is with a perfectly healthy network and an origin that responds instantly.
+
+</Note>
+
+Sydney to Virginia is roughly 16,000 km, which puts a single round trip near 160 ms and that same four-trip sequence past **600 ms**. Your server's response time was 8 ms. Nobody cares.
+
+There are exactly two ways to make a request faster: do less work, or travel less distance. Everything in [Understanding Caching](/guides/understanding-caching/) is about the first. This guide is about the second — and the reason it deserves its own guide is that "move a copy closer" turns out to involve a dozen decisions, most of which can quietly cost you all of the benefit.
+
+<Figure>
+  <DiagramCdnEdge1 />
+</Figure>
 
 </Collapse>
+
 <Collapse id="pop" title="2. What a PoP actually is">
-<p>A <strong>point of presence</strong> is a rack — sometimes several — of servers in a data centre or internet exchange, physically near a population of users. A large CDN operates somewhere between dozens and hundreds of these. Each one runs a caching proxy, holds a slice of your content on local SSDs, and terminates TLS.</p>
-<p>Three things happen at a PoP, and only the first is the one people think of:</p>
-<p><strong>It serves cached content.</strong> A hit never touches your infrastructure. Your origin doesn't know the request happened, isn't billed for it, and cannot be taken down by it.</p>
-<div class="note wild">
-<span class="label">◈ In the wild · Netflix Open Connect</span>
-    Netflix takes the "near the user" idea to its logical extreme by running its own CDN, <a href="https://openconnect.netflix.com/">Open Connect</a>, and placing its caching appliances directly inside ISP networks rather than at neutral exchanges. During off-peak hours it proactively pushes the titles it predicts people will watch tomorrow onto those appliances — a practice it calls prepositioning — so the bytes are already sitting inside your ISP before you press play. It is the PoP model of this section, extended with proactive warming at continental scale.
-</div>
-<p><strong>It terminates the connection.</strong> This is the underrated one. TCP and TLS handshakes now happen over 5 ms of local network instead of 160 ms of ocean, and the PoP holds warm, already-established connections back to your origin. Even for a completely uncacheable response, you have replaced three cold round trips across the planet with three warm ones across the street — a substantial win on content the CDN never caches at all.</p>
-<p><strong>It absorbs abuse.</strong> A volumetric attack lands on hundreds of PoPs with far more aggregate capacity than your origin, and gets filtered there.</p>
-<div class="note">
-<span class="label">A PoP is a cache, and every cache rule you already know applies</span>
-    Finite capacity, eviction under pressure, cold after a restart, and a hit rate that depends entirely on how well you key it. A PoP serving a long tail of rarely-requested objects will evict them before the second request arrives, which means unpopular content is effectively uncached no matter what TTL you set. The distinction from an ordinary cache is that there are two hundred of them and they don't talk to each other — which is the problem section 6 exists to solve.
-</div>
+
+A **point of presence** is a rack — sometimes several — of servers in a data centre or internet exchange, physically near a population of users. A large CDN operates somewhere between dozens and hundreds of these. Each one runs a caching proxy, holds a slice of your content on local SSDs, and terminates TLS.
+
+Three things happen at a PoP, and only the first is the one people think of:
+
+**It serves cached content.** A hit never touches your infrastructure. Your origin doesn't know the request happened, isn't billed for it, and cannot be taken down by it.
+
+<Note type="wild" label="◈ In the wild · Netflix Open Connect">
+
+Netflix takes the "near the user" idea to its logical extreme by running its own CDN, [Open Connect](https://openconnect.netflix.com/), and placing its caching appliances directly inside ISP networks rather than at neutral exchanges. During off-peak hours it proactively pushes the titles it predicts people will watch tomorrow onto those appliances — a practice it calls prepositioning — so the bytes are already sitting inside your ISP before you press play. It is the PoP model of this section, extended with proactive warming at continental scale.
+
+</Note>
+
+**It terminates the connection.** This is the underrated one. TCP and TLS handshakes now happen over 5 ms of local network instead of 160 ms of ocean, and the PoP holds warm, already-established connections back to your origin. Even for a completely uncacheable response, you have replaced three cold round trips across the planet with three warm ones across the street — a substantial win on content the CDN never caches at all.
+
+**It absorbs abuse.** A volumetric attack lands on hundreds of PoPs with far more aggregate capacity than your origin, and gets filtered there.
+
+<Note label="A PoP is a cache, and every cache rule you already know applies">
+
+Finite capacity, eviction under pressure, cold after a restart, and a hit rate that depends entirely on how well you key it. A PoP serving a long tail of rarely-requested objects will evict them before the second request arrives, which means unpopular content is effectively uncached no matter what TTL you set. The distinction from an ordinary cache is that there are two hundred of them and they don't talk to each other — which is the problem section 6 exists to solve.
+
+</Note>
 
 </Collapse>
+
 <Collapse id="routing" title="3. How a request finds its PoP">
-<p>Nothing in the client is CDN-aware. The browser resolves a name and opens a connection. Two mechanisms make that connection land somewhere near, and they fail differently.</p>
-<p><strong>Anycast.</strong> The same IP address is announced from every PoP simultaneously, and internet routing does the rest — BGP delivers each packet to whichever announcement is closest in <em>routing</em> terms. There is nothing to look up and no decision to make; the network's own shortest-path behaviour is the load balancer.</p>
-<p>The caveat is that BGP optimises for its own notion of path cost, not for latency, and those diverge. A user in one city can be routed to a PoP two thousand kilometres away because of how two carriers have arranged their peering, and from the CDN's side this is close to invisible. Anycast also offers no capacity awareness whatsoever: if the nearest PoP is saturated, packets keep arriving anyway, because BGP has no idea what "busy" means.</p>
-<p><strong>DNS-based steering.</strong> The CDN's authoritative nameserver returns different IP addresses depending on where the query appears to come from, and can weight those answers by PoP health and load. Far more control — and its accuracy depends on the resolver, not the user. Someone in Lagos using a public resolver whose nearest node is in Europe may be steered to Europe, because that's the only location the CDN can see. The EDNS Client Subnet extension exists to pass a truncated client subnet along and largely fixes this, when everyone in the chain supports it.</p>
-<div class="table-scroll">
-<table>
-<thead><tr><th></th><th>Anycast</th><th>DNS steering</th></tr></thead>
-<tbody>
-<tr><td>Who decides</td><td>Internet routing (BGP)</td><td>The CDN's nameserver</td></tr>
-<tr><td>Failover speed</td><td class="good">Seconds — withdraw the route</td><td class="bad">Bounded by TTL and resolver caching</td></tr>
-<tr><td>Load awareness</td><td class="bad">None</td><td class="good">Full</td></tr>
-<tr><td>Accuracy signal</td><td>Network topology</td><td>Resolver location, or client subnet</td></tr>
-<tr><td>Failure mode</td><td>Suboptimal routing you can't see</td><td>Stale answers cached past their TTL</td></tr>
-</tbody>
-</table>
-</div>
-<p>Most large CDNs use both: anycast for the coarse geographic split and instant failover, DNS for finer steering within a region. The consistent-hashing and connection-distribution machinery inside a PoP is the same material as <a href="load-balancing.html">Load Balancing</a>, applied one layer up.</p>
+
+Nothing in the client is CDN-aware. The browser resolves a name and opens a connection. Two mechanisms make that connection land somewhere near, and they fail differently.
+
+**Anycast.** The same IP address is announced from every PoP simultaneously, and internet routing does the rest — BGP delivers each packet to whichever announcement is closest in *routing* terms. There is nothing to look up and no decision to make; the network's own shortest-path behaviour is the load balancer.
+
+The caveat is that BGP optimises for its own notion of path cost, not for latency, and those diverge. A user in one city can be routed to a PoP two thousand kilometres away because of how two carriers have arranged their peering, and from the CDN's side this is close to invisible. Anycast also offers no capacity awareness whatsoever: if the nearest PoP is saturated, packets keep arriving anyway, because BGP has no idea what "busy" means.
+
+**DNS-based steering.** The CDN's authoritative nameserver returns different IP addresses depending on where the query appears to come from, and can weight those answers by PoP health and load. Far more control — and its accuracy depends on the resolver, not the user. Someone in Lagos using a public resolver whose nearest node is in Europe may be steered to Europe, because that's the only location the CDN can see. The EDNS Client Subnet extension exists to pass a truncated client subnet along and largely fixes this, when everyone in the chain supports it.
+
+<Table>
+
+| | Anycast | DNS steering |
+| --- | ------- | ------------ |
+| Who decides | Internet routing (BGP) | The CDN's nameserver |
+| Failover speed | Seconds — withdraw the route | Bounded by TTL and resolver caching |
+| Load awareness | None | Full |
+| Accuracy signal | Network topology | Resolver location, or client subnet |
+| Failure mode | Suboptimal routing you can't see | Stale answers cached past their TTL |
+
+</Table>
+
+Most large CDNs use both: anycast for the coarse geographic split and instant failover, DNS for finer steering within a region. The consistent-hashing and connection-distribution machinery inside a PoP is the same material as [Load Balancing](/guides/load-balancing/), applied one layer up.
 
 </Collapse>
-<Collapse id="cacheable" title="4. What's cacheable (the static/dynamic lie)">
-<p>The received wisdom is that CDNs serve static assets — images, CSS, JavaScript — and dynamic content goes to the origin. This was true around 2005 and has been costing people performance ever since.</p>
-<p>The useful question is not "is this static?" but <strong>"how stale can this be, and for whom?"</strong> Answer it per response and the categories look completely different:</p>
-<div class="table-scroll">
-<table>
-<thead><tr><th>Content</th><th>Tolerable staleness</th><th>Where it can live</th></tr></thead>
-<tbody>
-<tr><td>Fingerprinted JS/CSS (<code>app.9f2c1a.js</code>)</td><td>Infinite — the name changes</td><td class="good">Edge, one year, immutable</td></tr>
-<tr><td>Product images</td><td>Days</td><td class="good">Edge</td></tr>
-<tr><td>Product listing page</td><td>Seconds to minutes</td><td class="good">Edge, short TTL</td></tr>
-<tr><td>Price / stock level</td><td>Seconds</td><td>Edge, very short TTL + purge on change</td></tr>
-<tr><td>Personalised homepage</td><td>Zero for the personal parts</td><td>Cached shell + edge-assembled personal bits</td></tr>
-<tr><td>Cart contents</td><td>Zero</td><td class="bad">Origin, never cached</td></tr>
-<tr><td>Anything behind a POST</td><td>N/A</td><td class="bad">Origin</td></tr>
-</tbody>
-</table>
-</div>
-<p>The row that changes systems is the listing page. A product listing served to everyone identically, cached at the edge for even <strong>ten seconds</strong>, absorbs an enormous fraction of traffic on a busy site — because a page requested 5,000 times a minute is generated 6 times a minute instead of 5,000. That is a 99.9% reduction in origin work for a ten-second staleness budget nobody will ever perceive.</p>
-<div class="note key">
-<span class="label">Short TTLs are dramatically more powerful than they look</span>
-    Origin requests per minute = 60 ÷ TTL(seconds), per PoP, per object — <em>regardless of how much traffic arrives.</em> A 10-second TTL means at most 6 origin fetches a minute for that object at one PoP whether it's requested a hundred times or a hundred thousand. The relationship between traffic and origin load isn't reduced; it's <em>severed</em>. Going from a 10-second to a 60-second TTL only takes you from 6 to 1 — the first ten seconds bought you almost all of the benefit, which is why "we can't cache, our data changes constantly" is nearly always an argument for a short TTL rather than for no TTL.
-</div>
 
+<Collapse id="cacheable" title="4. What's cacheable (the static/dynamic lie)">
+
+The received wisdom is that CDNs serve static assets — images, CSS, JavaScript — and dynamic content goes to the origin. This was true around 2005 and has been costing people performance ever since.
+
+The useful question is not "is this static?" but **"how stale can this be, and for whom?"** Answer it per response and the categories look completely different:
+
+<Table>
+
+| Content | Tolerable staleness | Where it can live |
+| ------- | ------------------- | ----------------- |
+| Fingerprinted JS/CSS (`app.9f2c1a.js`) | Infinite — the name changes | Edge, one year, immutable |
+| Product images | Days | Edge |
+| Product listing page | Seconds to minutes | Edge, short TTL |
+| Price / stock level | Seconds | Edge, very short TTL + purge on change |
+| Personalised homepage | Zero for the personal parts | Cached shell + edge-assembled personal bits |
+| Cart contents | Zero | Origin, never cached |
+| Anything behind a POST | N/A | Origin |
+
+</Table>
+
+The row that changes systems is the listing page. A product listing served to everyone identically, cached at the edge for even **ten seconds**, absorbs an enormous fraction of traffic on a busy site — because a page requested 5,000 times a minute is generated 6 times a minute instead of 5,000. That is a 99.9% reduction in origin work for a ten-second staleness budget nobody will ever perceive.
+
+<Note type="key" label="Short TTLs are dramatically more powerful than they look">
+
+Origin requests per minute = 60 ÷ TTL(seconds), per PoP, per object — *regardless of how much traffic arrives.* A 10-second TTL means at most 6 origin fetches a minute for that object at one PoP whether it's requested a hundred times or a hundred thousand. The relationship between traffic and origin load isn't reduced; it's *severed*. Going from a 10-second to a 60-second TTL only takes you from 6 to 1 — the first ten seconds bought you almost all of the benefit, which is why "we can't cache, our data changes constantly" is nearly always an argument for a short TTL rather than for no TTL.
+
+</Note>
 
 <Question q="Check yourself: You lower a TTL from 3600s to 10s across your whole catalogue. What actually happens to origin load?">
-<p>Per PoP, per object, origin requests go from 60 ÷ 3600 ≈ 0.017 per minute to 60 ÷ 10 = 6 per minute — a 360× increase, and it is multiplied by your number of PoPs and your number of objects. On 100 PoPs and 10,000 objects that is 6 million origin requests per minute, which is not a TTL change, it is an outage.</p>
-<p>The fixes, in order: put an origin shield in front so the 100 PoPs collapse to 1, add <code>stale-while-revalidate</code> so the refetches are background work rather than user-facing latency, and add jitter so they do not all land in the same second. With all three, a short TTL is genuinely affordable — that is the combination that makes near-real-time content viable on a CDN.</p>
+
+Per PoP, per object, origin requests go from 60 ÷ 3600 ≈ 0.017 per minute to 60 ÷ 10 = 6 per minute — a 360× increase, and it is multiplied by your number of PoPs and your number of objects. On 100 PoPs and 10,000 objects that is 6 million origin requests per minute, which is not a TTL change, it is an outage.
+
+The fixes, in order: put an origin shield in front so the 100 PoPs collapse to 1, add `stale-while-revalidate` so the refetches are background work rather than user-facing latency, and add jitter so they do not all land in the same second. With all three, a short TTL is genuinely affordable — that is the combination that makes near-real-time content viable on a CDN.
+
 </Question>
 
 </Collapse>
+
 <Collapse id="cachekey" title="5. The cache key, and how to shatter it">
-<p>A CDN decides whether two requests are "the same" by computing a cache key — by default, roughly the host, the path, and the query string. Every distinct key is a distinct cached object. Which means every dimension you add to the key divides your hit rate.</p>
-<p><strong>Query strings are the usual culprit.</strong> Marketing appends tracking parameters, and now <code>/shoes</code>, <code>/shoes?utm_source=email</code>, <code>/shoes?utm_source=twitter&amp;utm_campaign=spring</code> and ten thousand other permutations are ten thousand separate objects, each fetched from origin at least once, each occupying cache space, each with a hit rate near zero. The page is identical every time. The fix is to normalise the key: strip the parameters that don't affect the response, sort the ones that do (<code>?a=1&amp;b=2</code> and <code>?b=2&amp;a=1</code> are different strings and therefore different keys), and drop everything unrecognised.</p>
-<div class="note warn">
-<span class="label">Vary is a hit-rate multiplier, and the multiplier is often four figures</span>
-<code>Vary: Accept-Encoding</code> is fine — a handful of values, and you genuinely need separate gzip and brotli copies.<br />
-<code>Vary: User-Agent</code> is catastrophic. There are effectively unlimited user-agent strings; every browser build, every OS patch level, every crawler gets its own copy of every object. Hit rates collapse from 95% to single digits and the origin discovers what its real traffic looks like.<br />
-<code>Vary: Cookie</code> is worse still, because every user has a distinct session cookie, so the cache is now per-user and does nothing except consume disk.
-</div>
-<p>The cookie interaction is where correctness, not just performance, is at stake. If a response carrying <code>Set-Cookie</code> gets cached and served to another user, you have handed one person another person's session. CDNs default to refusing to cache responses with <code>Set-Cookie</code> for exactly this reason, and the danger arrives when someone overrides that default to "fix" a hit-rate problem. The safe pattern is to keep personalised and cacheable content on different URLs, so no configuration mistake can ever confuse them.</p>
-<p>Used deliberately, key customisation is powerful: including a <code>country</code> value derived from geolocation gives you three or five variants and correct regional pricing. Including the raw client IP gives you one variant per user. The difference between a useful dimension and a catastrophic one is entirely its cardinality — the same lesson as metric labels in <a href="observability.html">Seeing Inside the Machine</a>, for the same reason.</p>
 
+A CDN decides whether two requests are "the same" by computing a cache key — by default, roughly the host, the path, and the query string. Every distinct key is a distinct cached object. Which means every dimension you add to the key divides your hit rate.
 
-<Question q="Check yourself: Your hit rate is near 0%, cache usage is huge, and database load is pinning. You see <code>Vary: User-Agent</code> in the headers. What's the arithmetic?">
-<p>User-Agent strings are effectively unique per browser build, OS version, and device — hundreds of thousands of distinct values in real traffic. <code>Vary: User-Agent</code> tells the cache to store a separate copy per distinct string, so you get an enormous number of near-identical objects, a hit rate near zero, storage costs that look like a bug, and an origin that is being hit as if the CDN were not there.</p>
-<p>If you genuinely need to serve different markup to mobile and desktop, have the edge normalise User-Agent into a small header like <code>X-Device: mobile|desktop|tablet</code> and vary on that — three variants instead of three hundred thousand. Better still, serve one responsive document to everyone and let CSS handle it.</p>
+**Query strings are the usual culprit.** Marketing appends tracking parameters, and now `/shoes`, `/shoes?utm_source=email`, `/shoes?utm_source=twitter&utm_campaign=spring` and ten thousand other permutations are ten thousand separate objects, each fetched from origin at least once, each occupying cache space, each with a hit rate near zero. The page is identical every time. The fix is to normalise the key: strip the parameters that don't affect the response, sort the ones that do (`?a=1&b=2` and `?b=2&a=1` are different strings and therefore different keys), and drop everything unrecognised.
+
+<Note type="warn" label="Vary is a hit-rate multiplier, and the multiplier is often four figures">
+
+`Vary: Accept-Encoding` is fine — a handful of values, and you genuinely need separate gzip and brotli copies.
+
+`Vary: User-Agent` is catastrophic. There are effectively unlimited user-agent strings; every browser build, every OS patch level, every crawler gets its own copy of every object. Hit rates collapse from 95% to single digits and the origin discovers what its real traffic looks like.
+
+`Vary: Cookie` is worse still, because every user has a distinct session cookie, so the cache is now per-user and does nothing except consume disk.
+
+</Note>
+
+The cookie interaction is where correctness, not just performance, is at stake. If a response carrying `Set-Cookie` gets cached and served to another user, you have handed one person another person's session. CDNs default to refusing to cache responses with `Set-Cookie` for exactly this reason, and the danger arrives when someone overrides that default to "fix" a hit-rate problem. The safe pattern is to keep personalised and cacheable content on different URLs, so no configuration mistake can ever confuse them.
+
+Used deliberately, key customisation is powerful: including a `country` value derived from geolocation gives you three or five variants and correct regional pricing. Including the raw client IP gives you one variant per user. The difference between a useful dimension and a catastrophic one is entirely its cardinality — the same lesson as metric labels in [Seeing Inside the Machine](/guides/observability/), for the same reason.
+
+<Question q="Check yourself: Your hit rate is near 0%, cache usage is huge, and database load is pinning. You see Vary: User-Agent in the headers. What's the arithmetic?">
+
+User-Agent strings are effectively unique per browser build, OS version, and device — hundreds of thousands of distinct values in real traffic. `Vary: User-Agent` tells the cache to store a separate copy per distinct string, so you get an enormous number of near-identical objects, a hit rate near zero, storage costs that look like a bug, and an origin that is being hit as if the CDN were not there.
+
+If you genuinely need to serve different markup to mobile and desktop, have the edge normalise User-Agent into a small header like `X-Device: mobile|desktop|tablet` and vary on that — three variants instead of three hundred thousand. Better still, serve one responsive document to everyone and let CSS handle it.
+
 </Question>
-
 
 <Question q="Check yourself: Your hit rate is 94% and your origin bill went up anyway. What are the two most likely causes?">
-<p>First: hit rate is measured in <em>requests</em>, but egress is measured in <em>bytes</em>. If the 6% of misses are your large objects — video segments, big images, uncompressed downloads — a 94% request hit rate can be a 50% byte hit rate. Always look at both.</p>
-<p>Second: a cache key change fragmented your cache. Someone added a query parameter, a <code>Vary</code> header, or a geo dimension, and now each object exists in many variants, each of which must be fetched from origin once per PoP. The hit rate can stay high in aggregate while origin fetches multiply, because the denominator grew.</p>
+
+First: hit rate is measured in *requests*, but egress is measured in *bytes*. If the 6% of misses are your large objects — video segments, big images, uncompressed downloads — a 94% request hit rate can be a 50% byte hit rate. Always look at both.
+
+Second: a cache key change fragmented your cache. Someone added a query parameter, a `Vary` header, or a geo dimension, and now each object exists in many variants, each of which must be fetched from origin once per PoP. The hit rate can stay high in aggregate while origin fetches multiply, because the denominator grew.
+
 </Question>
 
 </Collapse>
+
 <Collapse id="shield" title="6. Origin shielding and tiered caching">
-<p>Here is a problem that only appears once the CDN is working. You have a hundred PoPs. A popular object expires. The next request into each PoP is a miss, so each PoP goes to origin. Your origin, which was happily serving nothing, receives a hundred simultaneous requests for the identical bytes. Multiply by every object expiring in that minute and the CDN — the thing you bought to protect your origin — has become a distributed denial-of-service tool pointed at yourself.</p>
-<div class="note key">
-<span class="label">The shield arithmetic</span>
-    100 PoPs, one object, TTL expires. Without a shield: <b>100 origin fetches</b> for the same bytes.<br />
-    With a shield: each PoP misses to the shield, the shield fetches <b>once</b>, the other 99 are served from the shield.<br />
-    Origin sees <b>1</b> request instead of 100 — a 99% reduction on nothing but topology.
-</div>
-<p>An <b>origin shield</b> is a single designated PoP (or a small set of them) that sits between all other PoPs and your origin. Edge PoPs never talk to your origin directly; they talk to the shield, and only the shield talks to you. The shield is usually placed geographically near your origin, so the shield-to-origin hop is short and the connection can stay warm.</p>
-<p>This is the same single-flight idea from <a href="understanding-caching.html">Understanding Caching</a>, just applied one layer up: collapse many concurrent misses for the same key into one upstream fetch. Good CDNs also do request coalescing <em>within</em> a PoP, so a thousand simultaneous users hitting one cold PoP produce one shield request, not a thousand. The two mechanisms compose: a thousand users per PoP across a hundred PoPs — a hundred thousand requests — becomes one origin fetch.</p>
-<p>The cost of a shield is a hop. A user in Sydney whose PoP misses now waits for Sydney → shield (say, Virginia) → origin instead of Sydney → origin. If the shield and origin are co-located, the added latency is small and only paid on misses. If you put the shield in the wrong place — say, in Europe when your origin is in Oregon — every miss takes a scenic detour across two oceans.</p>
-<p>Tiered caching generalises this: edge tier, regional tier, shield tier, origin. Each tier has more storage and fewer, larger caches, so long-tail objects that would fall out of a small edge cache still get a hit one tier up. It is a memory hierarchy, and it obeys the same rules as the one in your CPU.</p>
 
+Here is a problem that only appears once the CDN is working. You have a hundred PoPs. A popular object expires. The next request into each PoP is a miss, so each PoP goes to origin. Your origin, which was happily serving nothing, receives a hundred simultaneous requests for the identical bytes. Multiply by every object expiring in that minute and the CDN — the thing you bought to protect your origin — has become a distributed denial-of-service tool pointed at yourself.
 
-<div style="margin: 20px 0; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--panel);">
-<DiagramCdnEdge2 />
-</div>
+<Note type="key" label="The shield arithmetic">
+
+100 PoPs, one object, TTL expires. Without a shield: **100 origin fetches** for the same bytes.
+
+With a shield: each PoP misses to the shield, the shield fetches **once**, the other 99 are served from the shield.
+
+Origin sees **1** request instead of 100 — a 99% reduction on nothing but topology.
+
+</Note>
+
+An **origin shield** is a single designated PoP (or a small set of them) that sits between all other PoPs and your origin. Edge PoPs never talk to your origin directly; they talk to the shield, and only the shield talks to you. The shield is usually placed geographically near your origin, so the shield-to-origin hop is short and the connection can stay warm.
+
+This is the same single-flight idea from [Understanding Caching](/guides/understanding-caching/), just applied one layer up: collapse many concurrent misses for the same key into one upstream fetch. Good CDNs also do request coalescing *within* a PoP, so a thousand simultaneous users hitting one cold PoP produce one shield request, not a thousand. The two mechanisms compose: a thousand users per PoP across a hundred PoPs — a hundred thousand requests — becomes one origin fetch.
+
+The cost of a shield is a hop. A user in Sydney whose PoP misses now waits for Sydney → shield (say, Virginia) → origin instead of Sydney → origin. If the shield and origin are co-located, the added latency is small and only paid on misses. If you put the shield in the wrong place — say, in Europe when your origin is in Oregon — every miss takes a scenic detour across two oceans.
+
+Tiered caching generalises this: edge tier, regional tier, shield tier, origin. Each tier has more storage and fewer, larger caches, so long-tail objects that would fall out of a small edge cache still get a hit one tier up. It is a memory hierarchy, and it obeys the same rules as the one in your CPU.
+
+<Figure>
+  <DiagramCdnEdge2 />
+</Figure>
 
 </Collapse>
-<Collapse id="purge" title="7. Purge, and why versioned URLs win">
-<p>Sooner or later you ship something wrong and it is cached in ninety countries. Purging is how you take it back, and there are two flavours.</p>
-<p>A <b>hard purge</b> evicts the object outright. The next request is a miss and goes to origin. It is decisive and it is dangerous: purge something popular during peak traffic and every PoP simultaneously misses on it, which is precisely the thundering herd the shield exists to prevent. A <b>soft purge</b> instead marks the object as stale without deleting it. The next request still gets served the old bytes immediately while the CDN revalidates in the background — one origin request, no latency spike, and the fix propagates within a second or two rather than instantly. Soft purge is almost always what you want.</p>
-<div class="note warn">
-<span class="label">Purge is eventual, not atomic</span>
-    A purge is a message that must reach every PoP. Modern CDNs do this in well under a second, but "well under a second" is not "immediately", and a purge that fails to reach one PoP fails silently.<br />
-<b>Never treat purge as a compliance control.</b> If content must be unreachable for legal reasons, take it down at origin <em>and</em> purge <em>and</em> verify — do not assume the purge did it.
-</div>
-<p>The better answer is to never need a purge. If the URL contains a content hash — <code>/app.4f9a2c1e.js</code> instead of <code>/app.js</code> — then a new build produces a new URL, which is a new cache key, which is a guaranteed miss. Nothing to invalidate, because nothing was ever wrong. The old file can keep its one-year TTL forever; it is simply never requested again.</p>
-<p>This is the standard pattern for every static asset: fingerprint the filename, set <code>Cache-Control: public, max-age=31536000, immutable</code>, and let the HTML — which is short-TTL or uncached — be the single thing that changes. You get maximum cache lifetime on the heavy files and instant deploys, at the cost of one uncacheable document per page load. The <code>immutable</code> directive is the finishing touch: it tells the browser not to even send a revalidation request on refresh, which is otherwise a wasted round trip per asset.</p>
-<p>For content you cannot fingerprint — an article, a product page — use <b>surrogate keys</b> (Fastly's term; Cloudflare calls them cache tags). You attach arbitrary tags to a response at origin, like <code>Surrogate-Key: product-8817 category-shoes</code>, and later purge by tag. Change one product's price and you purge <code>product-8817</code>, which evicts the product page, the three category pages it appears on, and the sitemap fragment, in one call, without you having to know which URLs those were.</p>
 
+<Collapse id="purge" title="7. Purge, and why versioned URLs win">
+
+Sooner or later you ship something wrong and it is cached in ninety countries. Purging is how you take it back, and there are two flavours.
+
+A **hard purge** evicts the object outright. The next request is a miss and goes to origin. It is decisive and it is dangerous: purge something popular during peak traffic and every PoP simultaneously misses on it, which is precisely the thundering herd the shield exists to prevent. A **soft purge** instead marks the object as stale without deleting it. The next request still gets served the old bytes immediately while the CDN revalidates in the background — one origin request, no latency spike, and the fix propagates within a second or two rather than instantly. Soft purge is almost always what you want.
+
+<Note type="warn" label="Purge is eventual, not atomic">
+
+A purge is a message that must reach every PoP. Modern CDNs do this in well under a second, but "well under a second" is not "immediately", and a purge that fails to reach one PoP fails silently.
+
+**Never treat purge as a compliance control.** If content must be unreachable for legal reasons, take it down at origin *and* purge *and* verify — do not assume the purge did it.
+
+</Note>
+
+The better answer is to never need a purge. If the URL contains a content hash — `/app.4f9a2c1e.js` instead of `/app.js` — then a new build produces a new URL, which is a new cache key, which is a guaranteed miss. Nothing to invalidate, because nothing was ever wrong. The old file can keep its one-year TTL forever; it is simply never requested again.
+
+This is the standard pattern for every static asset: fingerprint the filename, set `Cache-Control: public, max-age=31536000, immutable`, and let the HTML — which is short-TTL or uncached — be the single thing that changes. You get maximum cache lifetime on the heavy files and instant deploys, at the cost of one uncacheable document per page load. The `immutable` directive is the finishing touch: it tells the browser not to even send a revalidation request on refresh, which is otherwise a wasted round trip per asset.
+
+For content you cannot fingerprint — an article, a product page — use **surrogate keys** (Fastly's term; Cloudflare calls them cache tags). You attach arbitrary tags to a response at origin, like `Surrogate-Key: product-8817 category-shoes`, and later purge by tag. Change one product's price and you purge `product-8817`, which evicts the product page, the three category pages it appears on, and the sitemap fragment, in one call, without you having to know which URLs those were.
 
 <Question q="Check yourself: A user in Berlin reports stale content. Everyone else sees the new version. Where do you look?">
-<p>Start with the response headers from <em>their</em> request: the CDN's age header tells you how long that PoP has held the object, and the PoP identifier tells you which one served it. If age is greater than your TTL, the object is being served stale — check whether <code>stale-while-revalidate</code> or <code>stale-if-error</code> is masking a failing origin fetch from that PoP specifically.</p>
-<p>If age is small, the purge did not reach that PoP, or it reached it after that PoP had already re-fetched from a shield that still held the old copy. Tiered caching means "purge" has to clear every tier; purging the edge but not the shield reintroduces the old object immediately.</p>
-<p>And check the obvious one: their browser cache. If you served <code>max-age=31536000</code> on a non-fingerprinted URL, no purge you issue will ever reach them. That is a bug you cannot fix from the CDN — only by changing the URL.</p>
+
+Start with the response headers from *their* request: the CDN's age header tells you how long that PoP has held the object, and the PoP identifier tells you which one served it. If age is greater than your TTL, the object is being served stale — check whether `stale-while-revalidate` or `stale-if-error` is masking a failing origin fetch from that PoP specifically.
+
+If age is small, the purge did not reach that PoP, or it reached it after that PoP had already re-fetched from a shield that still held the old copy. Tiered caching means "purge" has to clear every tier; purging the edge but not the shield reintroduces the old object immediately.
+
+And check the obvious one: their browser cache. If you served `max-age=31536000` on a non-fingerprinted URL, no purge you issue will ever reach them. That is a bug you cannot fix from the CDN — only by changing the URL.
+
 </Question>
 
 </Collapse>
+
 <Collapse id="stale" title="8. Serving stale on purpose">
-<p>The naive lifecycle of a cached object is: fresh, then expired, then a user waits while you refetch. That last step is the problem. The user who happens to arrive one millisecond after expiry pays the full origin round trip on behalf of everyone else, and if the origin is slow or down, they pay much worse than that.</p>
-<p>RFC 5861 defines two directives that fix this, and they are among the highest-value single lines of configuration in web performance.</p>
-<div class="note key">
-<span class="label">The two directives</span>
-<code>Cache-Control: max-age=60, stale-while-revalidate=600</code><br />
-    For 60 seconds the object is fresh. For the <em>next</em> 600 seconds it is stale-but-servable: the requesting user gets the old bytes <b>immediately</b>, and the CDN refetches in the background. Nobody ever waits for a revalidation.<br /><br />
-<code>Cache-Control: max-age=60, stale-if-error=86400</code><br />
-    If the origin returns 5xx or times out, serve the stale copy anyway for up to a day rather than propagating the error.
-</div>
-<p><code>stale-while-revalidate</code> converts your cache from something that periodically stalls into something that is asynchronously always warm. The user-visible p99 stops containing origin latency at all. <code>stale-if-error</code> is closer to a reliability feature than a performance one: it means a total origin outage degrades your site to "slightly out of date" rather than "down", which for a content site is nearly free availability.</p>
-<p>The decision you are actually making is a <b>staleness budget</b>: how wrong is this allowed to be, for how long? A stock ticker's budget is a second. A blog post's budget is an hour. A pricing page's budget is however long your commercial team can tolerate. Write the budget down per content type, then set TTLs from it, rather than picking TTLs by feel and discovering the budget during an incident.</p>
-<p>Note the interaction with the arithmetic from earlier: origin load per PoP is 60 ÷ TTL requests per minute. A 10-second TTL caps origin at six fetches per minute per PoP no matter how much traffic arrives — and with <code>stale-while-revalidate</code>, all six are background fetches that no user is waiting on. Short TTLs stop being expensive once revalidation is off the critical path.</p>
+
+The naive lifecycle of a cached object is: fresh, then expired, then a user waits while you refetch. That last step is the problem. The user who happens to arrive one millisecond after expiry pays the full origin round trip on behalf of everyone else, and if the origin is slow or down, they pay much worse than that.
+
+RFC 5861 defines two directives that fix this, and they are among the highest-value single lines of configuration in web performance.
+
+<Note type="key" label="The two directives">
+
+`Cache-Control: max-age=60, stale-while-revalidate=600`
+
+For 60 seconds the object is fresh. For the *next* 600 seconds it is stale-but-servable: the requesting user gets the old bytes **immediately**, and the CDN refetches in the background. Nobody ever waits for a revalidation.
+
+`Cache-Control: max-age=60, stale-if-error=86400`
+
+If the origin returns 5xx or times out, serve the stale copy anyway for up to a day rather than propagating the error.
+
+</Note>
+
+`stale-while-revalidate` converts your cache from something that periodically stalls into something that is asynchronously always warm. The user-visible p99 stops containing origin latency at all. `stale-if-error` is closer to a reliability feature than a performance one: it means a total origin outage degrades your site to "slightly out of date" rather than "down", which for a content site is nearly free availability.
+
+The decision you are actually making is a **staleness budget**: how wrong is this allowed to be, for how long? A stock ticker's budget is a second. A blog post's budget is an hour. A pricing page's budget is however long your commercial team can tolerate. Write the budget down per content type, then set TTLs from it, rather than picking TTLs by feel and discovering the budget during an incident.
+
+Note the interaction with the arithmetic from earlier: origin load per PoP is 60 ÷ TTL requests per minute. A 10-second TTL caps origin at six fetches per minute per PoP no matter how much traffic arrives — and with `stale-while-revalidate`, all six are background fetches that no user is waiting on. Short TTLs stop being expensive once revalidation is off the critical path.
 
 </Collapse>
+
 <Collapse id="tls" title="9. TLS termination and the handshake you skipped">
-<p>Everything so far has been about bytes. A large part of what a CDN actually saves you is <em>handshakes</em>, and those are pure round trips — the thing physics charges most for.</p>
-<p>Opening a fresh HTTPS connection costs one round trip for TCP's SYN/SYN-ACK and, with TLS 1.3, one more for the handshake. Two round trips before a single byte of your content moves. On our Sydney-to-Virginia link at 160 ms RTT, that is <b>320 ms</b> of pure protocol before the request is even sent. Terminate TLS at a PoP 10 ms away and the same two round trips cost <b>20 ms</b>.</p>
-<p>The connection from the PoP to your origin still has to exist, but it is a long-lived, pooled, already-warm connection that the CDN reuses across thousands of users. You pay its handshake once an hour instead of once per visitor. This is why a CDN speeds up content it cannot cache at all: a personalised, no-store API response still gets the short handshake and the warm backhaul, often landing 30–40% faster than direct even at a 0% hit rate.</p>
-<div class="note warn">
-<span class="label">0-RTT is not free</span>
-    TLS 1.3 offers <b>0-RTT resumption</b>: a returning client can send its request in the very first packet, saving another round trip. The catch is that 0-RTT data is <b>replayable</b> — an attacker who captures it can send it again.<br />
-    Only allow 0-RTT for idempotent requests (GET, HEAD). Never for a POST that moves money. Most CDNs let you configure this per-method; the default is not always what you want.
-</div>
-<p>Terminating TLS at the edge also means the CDN holds a certificate for your domain and sees your plaintext. That is a real trust decision, not a technicality. The mitigations are to re-encrypt on the origin leg (edge-to-origin TLS, ideally with origin certificate pinning) so the traffic is not in the clear on the public internet, and to accept that your CDN is inside your security perimeter — because it is.</p>
+
+Everything so far has been about bytes. A large part of what a CDN actually saves you is *handshakes*, and those are pure round trips — the thing physics charges most for.
+
+Opening a fresh HTTPS connection costs one round trip for TCP's SYN/SYN-ACK and, with TLS 1.3, one more for the handshake. Two round trips before a single byte of your content moves. On our Sydney-to-Virginia link at 160 ms RTT, that is **320 ms** of pure protocol before the request is even sent. Terminate TLS at a PoP 10 ms away and the same two round trips cost **20 ms**.
+
+The connection from the PoP to your origin still has to exist, but it is a long-lived, pooled, already-warm connection that the CDN reuses across thousands of users. You pay its handshake once an hour instead of once per visitor. This is why a CDN speeds up content it cannot cache at all: a personalised, no-store API response still gets the short handshake and the warm backhaul, often landing 30–40% faster than direct even at a 0% hit rate.
+
+<Note type="warn" label="0-RTT is not free">
+
+TLS 1.3 offers **0-RTT resumption**: a returning client can send its request in the very first packet, saving another round trip. The catch is that 0-RTT data is **replayable** — an attacker who captures it can send it again.
+
+Only allow 0-RTT for idempotent requests (GET, HEAD). Never for a POST that moves money. Most CDNs let you configure this per-method; the default is not always what you want.
+
+</Note>
+
+Terminating TLS at the edge also means the CDN holds a certificate for your domain and sees your plaintext. That is a real trust decision, not a technicality. The mitigations are to re-encrypt on the origin leg (edge-to-origin TLS, ideally with origin certificate pinning) so the traffic is not in the clear on the public internet, and to accept that your CDN is inside your security perimeter — because it is.
 
 </Collapse>
+
 <Collapse id="compute" title="10. Edge compute">
-<p>Once you have a hundred locations running code to decide cache keys, the temptation to run <em>your</em> code there is obvious. Edge compute — Cloudflare Workers, Fastly Compute, Lambda@Edge — gives you a small, fast, isolated runtime at every PoP, invoked on request or response.</p>
-<p>The rule for what belongs there is simple: <b>work that needs to be near the user and does not need your data.</b></p>
-<div class="cards">
-<div class="card">
-<span class="pill good">Good at the edge</span>
-<p class="tight">Redirects and URL rewrites. A/B test bucketing from a cookie. Geolocation-based routing. Adding or stripping headers. Validating a JWT signature. Bot fingerprinting. Rewriting a cache key. Serving a maintenance page.</p>
-</div>
-<div class="card">
-<span class="pill bad">Bad at the edge</span>
-<p class="tight">Anything that reads your primary database. Anything needing a transaction. Anything requiring a consistent global view. Long-running work. Anything with a large dependency tree or slow cold start.</p>
-</div>
-</div>
-<p>The reason the right column is bad is that a PoP is far from your database by construction — that was the entire point. Edge code that queries your primary in Oregon from a PoP in Singapore has paid 170 ms to get closer to the user and then 170 ms to go back, and it would have been faster to run in Oregon in the first place. Edge compute is not "your backend, but everywhere". It is a programmable request path.</p>
-<p>JWT validation is the canonical good case and worth calling out, because it connects to the <a href="api-gateways.html">API design guide</a>: verifying a signature needs a public key and a clock, both of which fit at the edge, so you can reject an expired or forged token in Singapore without ever crossing an ocean to learn it was invalid. Authorisation — what this user is allowed to do — usually needs your data, and so usually does not belong there.</p>
-<p>The runtimes are deliberately constrained: V8 isolates or WebAssembly rather than containers, with cold starts in single-digit milliseconds and hard CPU-time limits (often a few milliseconds to 50 ms). You are writing something closer to a filter than a service. Edge key-value stores exist and are useful for configuration and feature flags, but they are eventually consistent by design — treat them as a cache with a nice API, not a database.</p>
 
+Once you have a hundred locations running code to decide cache keys, the temptation to run *your* code there is obvious. Edge compute — Cloudflare Workers, Fastly Compute, Lambda@Edge — gives you a small, fast, isolated runtime at every PoP, invoked on request or response.
 
-<div class="note key">
-<span class="label">🛠️ Hands-On Lab: Build a Cloudflare Worker / Edge Redirector</span>
-<p>Build this mini-project to implement custom routing logic at the network edge:</p>
-    
-      
+The rule for what belongs there is simple: **work that needs to be near the user and does not need your data.**
 
-* <strong>The Script:</strong> Write an edge compute function in JavaScript (compatible with V8 isolate runtime, e.g. Cloudflare Workers):
-```javascript
-addEventListener('fetch', event => {
-event.respondWith(handleRequest(event.request))
-})
-async function handleRequest(request) {
-const url = new URL(request.url)
-// Geolocation routing: Redirect base path based on header
-if (url.pathname === '/') {
-const country = request.headers.get('CF-IPCountry') || 'US'
-if (country === 'GB') {
-return Response.redirect(`${url.origin}/uk`, 302)
-} else if (country === 'FR') {
-return Response.redirect(`${url.origin}/fr`, 302)
-}
-}
-// Cache key hygiene: Strip tracking parameters
-const cleanParams = new URLSearchParams()
-let hasTracking = false
-for (const [key, val] of url.searchParams.entries()) {
-if (!key.startsWith('utm_') && key !== 'fbclid' && key !== 'gclid') {
-cleanParams.append(key, val)
-} else {
-hasTracking = true
-}
-}
-if (hasTracking) {
-url.search = cleanParams.toString()
-return Response.redirect(url.toString(), 301)
-}
-// Forward request with injected header
-const modifiedHeaders = new Headers(request.headers)
-modifiedHeaders.set('X-Edge-Processed', 'true')
-return fetch(new Request(url.toString(), {
-headers: modifiedHeaders,
-method: request.method,
-body: request.body
-}))
-}
-```
+<CardGrid>
+  <Card pill="Good at the edge" tone="good">
+    Redirects and URL rewrites. A/B test bucketing from a cookie. Geolocation-based routing. Adding or stripping headers. Validating a JWT signature. Bot fingerprinting. Rewriting a cache key. Serving a maintenance page.
+  </Card>
+  <Card pill="Bad at the edge" tone="bad">
+    Anything that reads your primary database. Anything needing a transaction. Anything requiring a consistent global view. Long-running work. Anything with a large dependency tree or slow cold start.
+  </Card>
+</CardGrid>
 
+The reason the right column is bad is that a PoP is far from your database by construction — that was the entire point. Edge code that queries your primary in Oregon from a PoP in Singapore has paid 170 ms to get closer to the user and then 170 ms to go back, and it would have been faster to run in Oregon in the first place. Edge compute is not "your backend, but everywhere". It is a programmable request path.
 
-      
+JWT validation is the canonical good case and worth calling out, because it connects to the [API design guide](/guides/api-gateways/): verifying a signature needs a public key and a clock, both of which fit at the edge, so you can reject an expired or forged token in Singapore without ever crossing an ocean to learn it was invalid. Authorisation — what this user is allowed to do — usually needs your data, and so usually does not belong there.
 
-* <strong>Deploy Locally:</strong> Use Wrangler or a mock local runner to execute the script. Verify that requests containing `?utm_source=news` are redirected to the clean URL, and that base paths route to regional variants based on the geo header.
+The runtimes are deliberately constrained: V8 isolates or WebAssembly rather than containers, with cold starts in single-digit milliseconds and hard CPU-time limits (often a few milliseconds to 50 ms). You are writing something closer to a filter than a service. Edge key-value stores exist and are useful for configuration and feature flags, but they are eventually consistent by design — treat them as a cache with a nice API, not a database.
 
+<Lab
+  title="Build a Cloudflare Worker / Edge Redirector"
+  tip="Put this edge processor on your portfolio to demonstrate hands-on caching hygiene and localized edge execution."
+>
 
-    
-<p style="margin-top: 10px; font-size: 0.85rem; color: var(--accent-2);">💡 Put this edge processor on your portfolio to demonstrate hands-on caching hygiene and localized edge execution.</p>
-</div>
+Build this mini-project to implement custom routing logic at the network edge:
 
+- **The Script:** Write an edge compute function in JavaScript (compatible with V8 isolate runtime, e.g. Cloudflare Workers):
+
+  ```javascript
+  addEventListener('fetch', event => {
+    event.respondWith(handleRequest(event.request))
+  })
+
+  async function handleRequest(request) {
+    const url = new URL(request.url)
+
+    // Geolocation routing: Redirect base path based on header
+    if (url.pathname === '/') {
+      const country = request.headers.get('CF-IPCountry') || 'US'
+      if (country === 'GB') {
+        return Response.redirect(`${url.origin}/uk`, 302)
+      } else if (country === 'FR') {
+        return Response.redirect(`${url.origin}/fr`, 302)
+      }
+    }
+
+    // Cache key hygiene: Strip tracking parameters
+    const cleanParams = new URLSearchParams()
+    let hasTracking = false
+    for (const [key, val] of url.searchParams.entries()) {
+      if (!key.startsWith('utm_') && key !== 'fbclid' && key !== 'gclid') {
+        cleanParams.append(key, val)
+      } else {
+        hasTracking = true
+      }
+    }
+    if (hasTracking) {
+      url.search = cleanParams.toString()
+      return Response.redirect(url.toString(), 301)
+    }
+
+    // Forward request with injected header
+    const modifiedHeaders = new Headers(request.headers)
+    modifiedHeaders.set('X-Edge-Processed', 'true')
+    return fetch(new Request(url.toString(), {
+      headers: modifiedHeaders,
+      method: request.method,
+      body: request.body
+    }))
+  }
+  ```
+
+- **Deploy Locally:** Use Wrangler or a mock local runner to execute the script. Verify that requests containing `?utm_source=news` are redirected to the clean URL, and that base paths route to regional variants based on the geo header.
+
+</Lab>
 
 <Question q="Check yourself: You are asked to serve personalised pricing at the edge. How do you keep the cache useful?">
-<p>Split the page. Serve a cacheable shell — layout, navigation, product description, images — with a long TTL and a key that has no user dimension. Fetch the personalised fragment (price, availability, cart) with a separate uncached request, or inject it at the edge from a small piece of edge compute.</p>
-<p>If the personalisation has low cardinality — currency by country, three pricing tiers — you can put it in the cache key directly: three or five variants is cheap and every one of them still gets hits. The failure is putting a per-user dimension in the key, which produces one variant per user and a cache that is just a slow, distributed copy of your origin.</p>
-<p>Whatever you do, never let a response carrying <code>Set-Cookie</code> into the shared cache. That is the one mistake here with a security consequence rather than a cost one.</p>
+
+Split the page. Serve a cacheable shell — layout, navigation, product description, images — with a long TTL and a key that has no user dimension. Fetch the personalised fragment (price, availability, cart) with a separate uncached request, or inject it at the edge from a small piece of edge compute.
+
+If the personalisation has low cardinality — currency by country, three pricing tiers — you can put it in the cache key directly: three or five variants is cheap and every one of them still gets hits. The failure is putting a per-user dimension in the key, which produces one variant per user and a cache that is just a slow, distributed copy of your origin.
+
+Whatever you do, never let a response carrying `Set-Cookie` into the shared cache. That is the one mistake here with a security consequence rather than a cost one.
+
 </Question>
 
 </Collapse>
-<Collapse id="failure" title="11. How CDNs fail">
-<p>A CDN is a distributed system with a global control plane, which means it has failure modes your origin does not, and they are correlated across every customer at once.</p>
-<div class="coldopen">
-<span class="tag">2 July 2019</span>
-<p>Cloudflare deploys a WAF rule containing the regular expression <code>{`(?:(?:\\"|'|\\]|\\}|\\\\|\\d|(?:nan|infinity|true|false|null|undefined|symbol|math)|\\\`|\\-|\\+)+[)]*;?((?:\\s|-|~|!|\\{\\}|\\|\\||\\+)*.*(?:.*=.*)))`}</code>. The nested quantifiers cause catastrophic backtracking. CPU on every machine in the global network goes to 100%. The rule was pushed everywhere in seconds, because that is what a global control plane is for. <b>Roughly 27 minutes of global outage</b>, ended by a manual kill of the WAF.</p>
-</div>
-<p>That is the shape of the worst CDN failure: a configuration change, applied globally and instantly, with no blast-radius control. The edge is enormously reliable at serving bytes and much less reliable at accepting config. Fastly's June 2021 outage that opened this guide was the same genus — a latent bug in a config-parsing path, triggered by a customer setting, taking down the network in under a minute.</p>
-<p>The other failure modes are yours, not the vendor's:</p>
-<div class="note warn">
-<span class="label">Synchronised expiry</span>
-    Deploy at 09:00 with a uniform 3600-second TTL and every object across every PoP expires at 10:00 together. Origin gets a wall. Add jitter to TTLs — the same fix as cache stampede in <a href="understanding-caching.html">Understanding Caching</a>, for the same reason.
-</div>
-<div class="note warn">
-<span class="label">Cache-busting query strings</span>
-    If the cache key includes the full query string, an attacker (or a badly written crawler) requests <code>/page?x=1</code>, <code>/page?x=2</code>… and every one is a guaranteed miss straight to origin. Normalise the key to the parameters that actually change the response, and ignore the rest.
-</div>
-<div class="note warn">
-<span class="label">Uncached errors</span>
-    404s are frequently configured not to cache. A scanner probing ten thousand nonexistent paths then hits your origin ten thousand times. Cache 404s with a short TTL — 30 seconds is usually plenty — and cache 5xx for a few seconds too, so an origin that is falling over is not being helped along by the CDN.
-</div>
-<p>The mitigation for the vendor-side failures is the uncomfortable one: a CDN outage is largely not yours to fix. What you can do is make sure your origin can survive being exposed (it will be, when someone suggests bypassing the CDN mid-incident), keep a DNS TTL short enough that failing over to a second CDN or straight to origin is a minutes-not-hours operation, and rehearse that failover before you need it. Multi-CDN is real and some large sites run it, but it doubles your configuration surface — which, per the two outages above, is where the failures actually come from.</p>
 
+<Collapse id="failure" title="11. How CDNs fail">
+
+A CDN is a distributed system with a global control plane, which means it has failure modes your origin does not, and they are correlated across every customer at once.
+
+<ColdOpen tag="2 July 2019">
+
+Cloudflare deploys a WAF rule containing the regular expression ``(?:(?:\"|'|\]|\}|\\|\d|(?:nan|infinity|true|false|null|undefined|symbol|math)|\`|\-|\+)+[)]*;?((?:\s|-|~|!|\{\}|\|\||\+)*.*(?:.*=.*)))``. The nested quantifiers cause catastrophic backtracking. CPU on every machine in the global network goes to 100%. The rule was pushed everywhere in seconds, because that is what a global control plane is for. **Roughly 27 minutes of global outage**, ended by a manual kill of the WAF.
+
+</ColdOpen>
+
+That is the shape of the worst CDN failure: a configuration change, applied globally and instantly, with no blast-radius control. The edge is enormously reliable at serving bytes and much less reliable at accepting config. Fastly's June 2021 outage that opened this guide was the same genus — a latent bug in a config-parsing path, triggered by a customer setting, taking down the network in under a minute.
+
+The other failure modes are yours, not the vendor's:
+
+<Note type="warn" label="Synchronised expiry">
+
+Deploy at 09:00 with a uniform 3600-second TTL and every object across every PoP expires at 10:00 together. Origin gets a wall. Add jitter to TTLs — the same fix as cache stampede in [Understanding Caching](/guides/understanding-caching/), for the same reason.
+
+</Note>
+
+<Note type="warn" label="Cache-busting query strings">
+
+If the cache key includes the full query string, an attacker (or a badly written crawler) requests `/page?x=1`, `/page?x=2`… and every one is a guaranteed miss straight to origin. Normalise the key to the parameters that actually change the response, and ignore the rest.
+
+</Note>
+
+<Note type="warn" label="Uncached errors">
+
+404s are frequently configured not to cache. A scanner probing ten thousand nonexistent paths then hits your origin ten thousand times. Cache 404s with a short TTL — 30 seconds is usually plenty — and cache 5xx for a few seconds too, so an origin that is falling over is not being helped along by the CDN.
+
+</Note>
+
+The mitigation for the vendor-side failures is the uncomfortable one: a CDN outage is largely not yours to fix. What you can do is make sure your origin can survive being exposed (it will be, when someone suggests bypassing the CDN mid-incident), keep a DNS TTL short enough that failing over to a second CDN or straight to origin is a minutes-not-hours operation, and rehearse that failover before you need it. Multi-CDN is real and some large sites run it, but it doubles your configuration surface — which, per the two outages above, is where the failures actually come from.
 
 <Question q="Check yourself: Your CDN vendor has a global outage. What can you actually do?">
-<p>In the moment: not much at the edge, which is the honest answer. What you can do is fail away from it — repoint DNS at your origin or a second CDN. That only works if your DNS TTL is short (60–300 seconds), if your origin can survive full unshielded traffic, and if you have rehearsed it. All three are decisions you make months earlier.</p>
-<p>Before the moment: keep origin capacity and autoscaling headroom for the un-CDN'd case, keep a tested runbook, keep a second CDN configured even if it carries 1% of traffic so its config is known-good, and monitor from outside your vendor's network so you find out from your own probes rather than from Twitter.</p>
+
+In the moment: not much at the edge, which is the honest answer. What you can do is fail away from it — repoint DNS at your origin or a second CDN. That only works if your DNS TTL is short (60–300 seconds), if your origin can survive full unshielded traffic, and if you have rehearsed it. All three are decisions you make months earlier.
+
+Before the moment: keep origin capacity and autoscaling headroom for the un-CDN'd case, keep a tested runbook, keep a second CDN configured even if it carries 1% of traffic so its config is known-good, and monitor from outside your vendor's network so you find out from your own probes rather than from Twitter.
+
 </Question>
 
 </Collapse>
+
 <Collapse id="gotchas" title="12. The gotchas that actually bite">
-<div class="note">
-<span class="label">1 · <code>Set-Cookie</code> on a cacheable response</span>
-    The worst bug in this guide: one user's session handed to another. CDNs refuse this by default; the danger is someone disabling that default to raise a hit rate. Keep personalised and cacheable content on separate URLs so it cannot happen by misconfiguration.
-</div>
-<div class="note">
-<span class="label">2 · <code>Vary: User-Agent</code> or <code>Vary: Cookie</code></span>
-<code>Vary</code> multiplies your cache. User-Agent has effectively unbounded cardinality; Cookie is per-user. Either turns a shared cache into a very expensive disk that never hits. Normalise to a device class instead, or don't vary at all.
-</div>
-<div class="note">
-<span class="label">3 · Query parameter order</span>
-<code>?a=1&amp;b=2</code> and <code>?b=2&amp;a=1</code> are different cache keys unless you sort. So are tracking parameters — <code>utm_source</code> fragments your cache across every campaign for responses that are byte-identical. Sort and allowlist.
-</div>
-<div class="note">
-<span class="label">4 · Purge treated as deletion</span>
-    Purge is a best-effort broadcast, not a transaction. For legal takedowns, remove at origin first, then purge, then verify from multiple regions.
-</div>
-<div class="note">
-<span class="label">5 · Certificate expiry at the edge</span>
-    The CDN holds a cert for your domain. Automated renewal usually works, until a domain-validation record changes or a certificate is uploaded manually and then forgotten. Monitor edge certificate expiry independently of your origin's.
-</div>
-<div class="note">
-<span class="label">6 · Egress and request pricing</span>
-    CDN bills have two dimensions — bytes out and requests — and they respond to different mistakes. A low hit rate raises origin egress; tiny objects raise request count. A poorly chosen cache key can quietly double both.
-</div>
-<div class="note">
-<span class="label">7 · Testing from your desk</span>
-    Your local PoP is warm and 5 ms away. Your users' PoPs are neither. Measure from synthetic probes in the regions you actually serve, and from real-user monitoring, or you will optimise a number nobody experiences.
-</div>
+
+<Note label="1 · Set-Cookie on a cacheable response">
+The worst bug in this guide: one user's session handed to another. CDNs refuse this by default; the danger is someone disabling that default to raise a hit rate. Keep personalised and cacheable content on separate URLs so it cannot happen by misconfiguration.
+</Note>
+
+<Note label="2 · Vary: User-Agent or Vary: Cookie">
+`Vary` multiplies your cache. User-Agent has effectively unbounded cardinality; Cookie is per-user. Either turns a shared cache into a very expensive disk that never hits. Normalise to a device class instead, or don't vary at all.
+</Note>
+
+<Note label="3 · Query parameter order">
+`?a=1&b=2` and `?b=2&a=1` are different cache keys unless you sort. So are tracking parameters — `utm_source` fragments your cache across every campaign for responses that are byte-identical. Sort and allowlist.
+</Note>
+
+<Note label="4 · Purge treated as deletion">
+Purge is a best-effort broadcast, not a transaction. For legal takedowns, remove at origin first, then purge, then verify from multiple regions.
+</Note>
+
+<Note label="5 · Certificate expiry at the edge">
+The CDN holds a cert for your domain. Automated renewal usually works, until a domain-validation record changes or a certificate is uploaded manually and then forgotten. Monitor edge certificate expiry independently of your origin's.
+</Note>
+
+<Note label="6 · Egress and request pricing">
+CDN bills have two dimensions — bytes out and requests — and they respond to different mistakes. A low hit rate raises origin egress; tiny objects raise request count. A poorly chosen cache key can quietly double both.
+</Note>
+
+<Note label="7 · Testing from your desk">
+Your local PoP is warm and 5 ms away. Your users' PoPs are neither. Measure from synthetic probes in the regions you actually serve, and from real-user monitoring, or you will optimise a number nobody experiences.
+</Note>
 
 </Collapse>
-<Collapse id="recap" title="12. Recap in 60 seconds">
-<div class="recap">
-<p><b>Distance is a hard floor.</b> Light in fibre travels ~200,000 km/s. London to New York is ~60 ms of physics per round trip; four round trips is ~280 ms you cannot optimise away in code. The only fix is to be closer.</p>
-<p><b>A PoP is a cache plus a TLS terminator plus a router.</b> It saves bytes on hits and handshakes on everything — which is why a CDN speeds up uncacheable content too.</p>
-<p><b>Anycast finds the PoP.</b> One IP announced from everywhere; BGP picks the nearest. DNS steering is the older alternative and sees the resolver, not the user, unless EDNS Client Subnet is in play.</p>
-<p><b>Origin load per PoP is 60 ÷ TTL per minute.</b> Short TTLs are cheap; they are only expensive if users wait for the revalidation.</p>
-<p><b>The cache key is the whole game.</b> Every dimension you add multiplies storage and divides hit rate. <code>Vary: Cookie</code> is a per-user cache, which is no cache.</p>
-<p><b>Shield your origin.</b> Without one, 100 PoPs missing together means 100 origin fetches for identical bytes. With one, it means 1.</p>
-<p><b>Fingerprint, don't purge.</b> A content hash in the filename makes every deploy a new key. When you must purge, prefer soft purge and surrogate keys.</p>
-<p><b>Serve stale deliberately.</b> <code>stale-while-revalidate</code> takes origin latency off the user's critical path; <code>stale-if-error</code> turns an origin outage into mild staleness.</p>
-<p><b>Edge compute is a request filter, not a backend.</b> If it needs your database, it belongs next to your database.</p>
-<p><b>CDNs fail at the control plane.</b> Both canonical outages were config pushed globally in seconds. Keep your origin survivable and your DNS TTLs short.</p>
-</div>
+
+<Collapse id="recap" title="13. Recap in 60 seconds">
+
+<Recap>
+
+**Distance is a hard floor.** Light in fibre travels ~200,000 km/s. London to New York is ~60 ms of physics per round trip; four round trips is ~280 ms you cannot optimise away in code. The only fix is to be closer.
+
+**A PoP is a cache plus a TLS terminator plus a router.** It saves bytes on hits and handshakes on everything — which is why a CDN speeds up uncacheable content too.
+
+**Anycast finds the PoP.** One IP announced from everywhere; BGP picks the nearest. DNS steering is the older alternative and sees the resolver, not the user, unless EDNS Client Subnet is in play.
+
+**Origin load per PoP is 60 ÷ TTL per minute.** Short TTLs are cheap; they are only expensive if users wait for the revalidation.
+
+**The cache key is the whole game.** Every dimension you add multiplies storage and divides hit rate. `Vary: Cookie` is a per-user cache, which is no cache.
+
+**Shield your origin.** Without one, 100 PoPs missing together means 100 origin fetches for identical bytes. With one, it means 1.
+
+**Fingerprint, don't purge.** A content hash in the filename makes every deploy a new key. When you must purge, prefer soft purge and surrogate keys.
+
+**Serve stale deliberately.** `stale-while-revalidate` takes origin latency off the user's critical path; `stale-if-error` turns an origin outage into mild staleness.
+
+**Edge compute is a request filter, not a backend.** If it needs your database, it belongs next to your database.
+
+**CDNs fail at the control plane.** Both canonical outages were config pushed globally in seconds. Keep your origin survivable and your DNS TTLs short.
+
+</Recap>
 
 </Collapse>
-<hr />
 
-<div class="footer">
-<p><b>Next:</b> a hundred PoPs, a shield, and a control plane all had to agree on something. When machines have to agree — who is the leader, who holds the lock, what the current configuration <em>is</em> — you need consensus. That's <a href="coordination-consensus.html">Getting Machines to Agree</a>.</p>
-<p><b>Sources and further reading:</b> Fastly, "Summary of June 8 outage" (2021) · Cloudflare, "Details of the Cloudflare outage on July 2, 2019" · RFC 9111 (HTTP Caching) · RFC 5861 (<code>stale-while-revalidate</code>, <code>stale-if-error</code>) · RFC 8446 (TLS 1.3) · MDN Web Docs, <code>Vary</code> · Cloudflare Learning Center, "What is a CDN?" · Fastly Developer Hub, "Purging" and "Surrogate keys".</p>
-</div>
+<Footer>
+  <Fragment slot="next">
+    a hundred PoPs, a shield, and a control plane all had to agree on something. When machines have to agree — who is the leader, who holds the lock, what the current configuration *is* — you need consensus. That's [Getting Machines to Agree](/guides/coordination-consensus/).
+  </Fragment>
+  Fastly, "Summary of June 8 outage" (2021) ·
+  Cloudflare, "Details of the Cloudflare outage on July 2, 2019" ·
+  RFC 9111 (HTTP Caching) ·
+  RFC 5861 (`stale-while-revalidate`, `stale-if-error`) ·
+  RFC 8446 (TLS 1.3) ·
+  MDN Web Docs, `Vary` ·
+  Cloudflare Learning Center, "What is a CDN?" ·
+  Fastly Developer Hub, "Purging" and "Surrogate keys".
+</Footer>

@@ -93,4 +93,16 @@ const { id, title, open = false } = Astro.props;
   .sec-content {
     padding: 8px 0 28px 0;
   }
+
+  /* The padding above stops the first child's top margin from collapsing away,
+     leaving a ~28px gap under the summary on expand. Zero it — whatever the
+     first child is (paragraph, Note, Table, Stack), the padding is the only
+     spacing wanted there. Same for the last child against the bottom padding. */
+  .sec-content > :global(:first-child) {
+    margin-top: 0;
+  }
+
+  .sec-content > :global(:last-child) {
+    margin-bottom: 0;
+  }
 </style>

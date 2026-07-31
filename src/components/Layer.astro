@@ -1,0 +1,39 @@
+---
+// src/components/Layer.astro
+// One row of a Stack. Three shapes:
+//   <Layer idx="1">**Everyone starts a follower.** Followers only respond.</Layer>
+//   <Layer idx="1" title="Linearizable" speed="money · locks">One global order…</Layer>
+// When the title needs a link, use the `title` slot. It must be a flow-level
+// child — an element on its own line with a BLANK LINE after it — or MDX emits
+// it inline inside a paragraph and Astro never sees the slot:
+//   <Layer idx="3">
+//     <span slot="title">Add [caching](/guides/understanding-caching/)</span>
+//
+//     Keep hot reads off the DB entirely.
+//   </Layer>
+interface Props {
+  idx: string | number;
+  title?: string;
+  speed?: string;
+}
+
+const { idx, title, speed } = Astro.props;
+const hasTitle = Boolean(title) || Astro.slots.has('title');
+---
+
+<div class="layer">
+  <div class="idx">{idx}</div>
+  <div class:list={['body', { plain: !hasTitle }]}>
+    {title ? <h4>{title}</h4> : Astro.slots.has('title') && <h4><slot name="title" /></h4>}
+    <slot />
+  </div>
+  {speed && <div class="speed">{speed}</div>}
+</div>
+
+<style>
+  /* Markdown in the title slot arrives wrapped in its own paragraph */
+  .layer .body h4 :global(p) {
+    display: inline;
+    margin: 0;
+  }
+</style>
