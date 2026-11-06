@@ -2,6 +2,8 @@ import { defineConfig } from 'astro/config';
 import mdx from '@astrojs/mdx';
 import { rehypeBaseLinks } from './src/lib/rehype-base-links.mjs';
 import { remarkTrace } from './src/lib/remark-trace.mjs';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 
 const base = '/system-design-guide';
 
@@ -19,8 +21,9 @@ export default defineConfig({
   integrations: [mdx()],
   markdown: {
     smartypants: false,
-    remarkPlugins: [remarkTrace],
-    rehypePlugins: [[rehypeBaseLinks, { base }]],
+    // Maths only between $$ … $$: single dollars stay text, because guides quote prices.
+    remarkPlugins: [remarkTrace, [remarkMath, { singleDollarTextMath: false }]],
+    rehypePlugins: [rehypeKatex, [rehypeBaseLinks, { base }]],
     shikiConfig: {
       theme: 'dracula',
       wrap: true,

@@ -82,15 +82,59 @@ Here's the triage at a glance, then how to collect each signal.
 
 ### Collecting the signals
 
-**The read/write mix.** Every engine counts this for you. In Postgres, `pg_stat_database` gives you `tup_returned` / `tup_fetched` against `tup_inserted + tup_updated + tup_deleted`; in MySQL, `SHOW GLOBAL STATUS` gives you `Com_select` versus `Com_insert`/`Com_update`/`Com_delete`. These are cumulative since restart, so take two samples an hour apart and subtract — the delta is the answer.
+Every signal comes from counters the database already keeps. Here is where to find each one, then how to read it.
 
-**Which p99 actually moved.** This is the one that settles arguments. Split latency by statement type and look at what degraded *when the trouble started*, not what's slowest in absolute terms — writes are often slower than reads on a healthy system. `pg_stat_statements` (ordered by `total_exec_time`, not `mean_exec_time` — the query that costs you most is usually a fast one run absurdly often) or the MySQL slow query log will point at the statements.
+<Table>
 
-**Replication lag vs. lock waits.** Near-perfect discriminators. *Replication lag rising* means the primary is generating log faster than replicas can apply it — a write-volume problem by definition. *Lock wait time rising* (`pg_stat_activity` with `wait_event_type = 'Lock'`, or `SHOW ENGINE INNODB STATUS`) means requests are fighting over the same rows — usually fixed by shortening transactions, not by buying hardware.
+| Signal | PostgreSQL | MySQL (InnoDB) |
+| :--- | :--- | :--- |
+| **Read/write mix** | `pg_stat_database`: `tup_returned`, `tup_fetched` vs. `tup_inserted`, `tup_updated`, `tup_deleted` | `SHOW GLOBAL STATUS`: `Com_select` vs. `Com_insert`, `Com_update`, `Com_delete` |
+| **Which p99 moved** | `pg_stat_statements`, ordered by `total_exec_time` | Slow query log |
+| **Replication lag** | `pg_stat_replication`: `replay_lag` | `SHOW REPLICA STATUS`: `Seconds_Behind_Source` |
+| **Lock waits** | `pg_stat_activity` where `wait_event_type = 'Lock'` | `SHOW ENGINE INNODB STATUS` |
+| **Buffer cache hits** | `pg_stat_database`: `blks_hit`, `blks_read` | `Innodb_buffer_pool_read_requests`, `Innodb_buffer_pool_reads` |
+| **Rows examined per row returned** | `EXPLAIN (ANALYZE, BUFFERS)`: `Rows Removed by Filter` | Slow log: `Rows_examined`, `Rows_sent` |
 
-**Buffer cache hit ratio.** `blks_hit / (blks_hit + blks_read)` from `pg_stat_database`, or InnoDB's buffer pool hit rate. Above about 99% is healthy for OLTP. When it falls, reads that were memory hits are now disk reads — and more RAM fixes it instantly. Postgres counts an OS page-cache hit as a miss, so use the trend, not the value.
+</Table>
 
-**Rows examined per row returned.** The single most diagnostic number in this guide. Divide the rows the database *touched* by the rows it *gave back* — `Rows_examined` vs. `Rows_sent` in the MySQL slow log, or `Rows Removed by Filter` in `EXPLAIN (ANALYZE, BUFFERS)`. Near 1 is healthy. Above 100 means the database is doing a hundred times more work than the answer needs.
+**The read/write mix.** These counters run from the last restart, so take two samples an hour apart and use the change, Δ:
+
+$$
+\text{read : write} \;=\; \frac{\Delta\,\text{rows read}}{\Delta\,\text{rows inserted} + \Delta\,\text{rows updated} + \Delta\,\text{rows deleted}}
+$$
+
+A read-heavy web app sits in the hundreds or thousands to one; the trace below shows 1,000 : 1.
+
+**Which p99 moved.** This one settles arguments. Split latency by statement type and look at what degraded *when the trouble started*, not what's slowest overall — on a healthy system writes are often slower than reads. Order `pg_stat_statements` by `total_exec_time`, not `mean_exec_time`: the query that costs you most is usually a fast one run absurdly often.
+
+**Replication lag vs. lock waits.** Near-perfect discriminators:
+
+- *Lag rising* — the primary writes log faster than the replicas can apply it. A write-volume problem by definition.
+- *Lock waits rising* — requests are fighting over the same rows. Usually fixed by shortening transactions, not by buying hardware.
+
+**Buffer cache hit ratio.**
+
+$$
+\begin{aligned}
+\text{Postgres:}\quad \text{hit ratio} &= \frac{\texttt{blks\_hit}}{\texttt{blks\_hit} + \texttt{blks\_read}} \\[10pt]
+\text{InnoDB:}\quad \text{hit ratio} &= 1 - \frac{\texttt{Innodb\_buffer\_pool\_reads}}{\texttt{Innodb\_buffer\_pool\_read\_requests}}
+\end{aligned}
+$$
+
+Above about 99% is healthy for OLTP. When it falls, reads that were memory hits have become disk reads, and more RAM fixes it at once. Postgres counts an OS page-cache hit as a miss, so watch the trend rather than the value.
+
+**Rows examined per row returned.** The single most diagnostic number in this guide:
+
+$$
+\text{work ratio} \;=\; \frac{\text{rows examined}}{\text{rows returned}}
+\qquad
+\begin{cases}
+\approx 1 & \text{healthy} \\
+> 100 & \text{an index is missing or unused}
+\end{cases}
+$$
+
+Above 100, the database is doing a hundred times more work than the answer needs. The fix is an index or a rewritten query, not a bigger machine.
 
 ```trace
 **$ triage — pg_stat_database delta, 09:00 → 10:00**
