@@ -16,3 +16,5 @@ export { default as Recap } from './Recap.astro';
 export { default as Stack } from './Stack.astro';
 export { default as Statement } from './Statement.astro';
 export { default as Table } from './Table.astro';
+export { default as Quiz } from './Quiz.astro';
+export { default as Reading } from './Reading.astro';

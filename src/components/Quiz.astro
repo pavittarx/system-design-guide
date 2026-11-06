@@ -1,0 +1,77 @@
+---
+// src/components/Quiz.astro
+// One multiple-choice question. Picking an option marks it right or wrong,
+// highlights the correct one, and reveals the explanation (the slot).
+//
+//   <Quiz q="Why did the slot end up with 11 bookings?"
+//         options={["…", "…", "…"]} answer={1}>
+//   The explanation, in markdown.
+//   </Quiz>
+interface Props {
+  q: string;
+  options: string[];
+  answer: number;
+}
+const { q, options, answer } = Astro.props;
+---
+<div class="quiz" data-quiz>
+  <p class="quiz-q">{q}</p>
+  <div class="quiz-options">
+    {options.map((option, i) => (
+      <button type="button" class="quiz-opt" data-correct={i === answer ? 'true' : 'false'}>{option}</button>
+    ))}
+  </div>
+  <div class="quiz-why" hidden>
+    <p class="quiz-verdict"></p>
+    <slot />
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-quiz]').forEach((quiz) => {
+    const why = quiz.querySelector<HTMLElement>('.quiz-why');
+    const verdict = quiz.querySelector<HTMLElement>('.quiz-verdict');
+    const options = quiz.querySelectorAll<HTMLButtonElement>('.quiz-opt');
+    options.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        options.forEach((b) => b.classList.remove('is-right', 'is-wrong', 'is-answer'));
+        const right = btn.dataset.correct === 'true';
+        btn.classList.add(right ? 'is-right' : 'is-wrong');
+        if (!right) quiz.querySelector('.quiz-opt[data-correct="true"]')?.classList.add('is-answer');
+        if (verdict) verdict.textContent = right ? 'Correct.' : 'Not quite. The highlighted answer is right, and here is why.';
+        if (why) why.hidden = false;
+      });
+    });
+  });
+</script>
+
+<style>
+  .quiz {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px 24px;
+    margin: 18px 0;
+  }
+  .quiz-q { font-weight: 600; margin: 0 0 14px; }
+  .quiz-opt {
+    display: block;
+    width: 100%;
+    text-align: left;
+    margin: 0 0 10px;
+    padding: 12px 16px;
+    font: inherit;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .quiz-opt:hover { border-color: var(--accent); }
+  .quiz-opt.is-right, .quiz-opt.is-answer { border-color: var(--accent-2); background: var(--good-soft); }
+  .quiz-opt.is-wrong { border-color: var(--danger); background: var(--bad-soft); }
+  .quiz-why { margin-top: 14px; font-size: 0.95rem; }
+  .quiz-why :global(p) { margin: 0 0 10px; }
+  .quiz-verdict { font-weight: 700; }
+</style>

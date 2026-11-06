@@ -95,8 +95,11 @@ for (const file of pages) {
   if (html.includes('&amp;amp;')) fail(name, 'literal &amp; in rendered output');
 }
 
-const guideCount = pages.filter((p) => p.includes(`${DIST}/guides/`)).length;
-if (guideCount !== 12) failures.push(`expected 12 guide pages, found ${guideCount}`);
+// A guide may span several pages (guides/<slug>/<part>/); count guides, not pages.
+const guideCount = new Set(
+  pages.map((p) => p.match(new RegExp(`${DIST}/guides/([^/]+)/`))?.[1]).filter(Boolean)
+).size;
+if (guideCount !== 12) failures.push(`expected 12 guides, found ${guideCount}`);
 
 if (failures.length) {
   console.error(`✗ ${failures.length} problem(s) in ${DIST}/:\n`);
