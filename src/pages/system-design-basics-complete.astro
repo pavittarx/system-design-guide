@@ -3,7 +3,12 @@
 import MainLayout from '../layouts/MainLayout.astro';
 import Header from '../components/Header.astro';
 import { Content as CachingContent } from './guides/understanding-caching.mdx';
-import { Content as DBContent } from './guides/database-scaling.mdx';
+import { Content as DBOverview } from './guides/database-scaling/index.mdx';
+import { Content as DBFast } from './guides/database-scaling/fast.mdx';
+import { Content as DBCorrect } from './guides/database-scaling/correct.mdx';
+import { Content as DBOffload } from './guides/database-scaling/offload.mdx';
+import { Content as DBSplit } from './guides/database-scaling/split.mdx';
+import { Content as DBRecap } from './guides/database-scaling/recap.mdx';
 import { Content as LBContent } from './guides/load-balancing.mdx';
 import { Content as MQContent } from './guides/message-queues.mdx';
 import { Content as ReliabilityContent } from './guides/reliability-toolkit.mdx';
@@ -25,7 +30,12 @@ import { withBase } from '../lib/guides';
     </div>
 
     <CachingContent />
-    <DBContent />
+    <DBOverview />
+    <DBFast />
+    <DBCorrect />
+    <DBOffload />
+    <DBSplit />
+    <DBRecap />
     <LBContent />
     <MQContent />
     <ReliabilityContent />

@@ -1,0 +1,203 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Split it"
+description: "Part 4 of Scaling Databases. Partitioning, sharding, picking a shard key by arithmetic, and the engines that do the splitting for you."
+chapter: "2"
+current: "2. Scaling Databases"
+sections:
+  - id: "sharding"
+    title: "Partition, then shard"
+  - id: "worked-shard"
+    title: "Worked example: picking a shard key"
+  - id: "beyond"
+    title: "Or buy it: distributed SQL and NoSQL"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import DiagramDatabaseScaling2 from '../../../components/diagrams/DiagramDatabaseScaling2.astro';
+
+<Collapse id="sharding" title="1. Partition, then shard">
+
+<DiagramDatabaseScaling2 />
+
+### Partitioning: splitting the data on one system
+
+Partitioning breaks big data into smaller pieces. Two flavours, often confused:
+
+- **Vertical partitioning** — split by *columns or tables*: move groups of tables (or rarely used wide columns) onto separate databases, e.g. billing tables on one, content tables on another. It's the gentlest way to spread load across machines because each database still holds whole tables. Figma started here.
+- **Horizontal partitioning** — split by *rows*: same columns, rows divided by a key (by month, or by a hash). Inside one database engine this is just "partitioning"; the app still queries one logical table and the engine skips the partitions it doesn't need.
+
+Horizontal partitioning inside one server helps with table size, index bloat and lifecycle — drop last year's partition instantly instead of running a giant `DELETE`. But it's still one machine's CPU and IOPS. When rows must spread across *separate machines*, horizontal partitioning becomes sharding.
+
+### Sharding: splitting across machines
+
+
+<Note type="wild" label="◈ In the wild · Figma">
+
+Figma ran a single Postgres instance on AWS's largest box in 2020. It first moved tables like Files and Organizations onto separate databases — vertical partitioning — reaching about a dozen by late 2022. When some tables hit terabytes and billions of rows, it built horizontal sharding in-house: several shard keys, related tables grouped so joins stay on one shard, and a routing service called DBProxy. [(Figma Engineering)](https://www.figma.com/blog/how-figmas-databases-team-lived-to-tell-the-scale/)
+
+</Note>
+
+Sharding is horizontal partitioning across independent database servers. Each **shard** holds a slice of the rows on its own hardware, so writes, storage and IOPS all scale out. It's the most powerful move on the ladder and by far the most complex.
+
+### The shard key is everything
+
+You pick a **shard key** (user ID, org ID, channel ID…) and a function that maps each key to a shard. Every later decision flows from it, because it decides how evenly load spreads and which queries stay on one machine.
+
+<Table>
+
+| Strategy | How it maps | Strength | Weakness |
+| :--- | :--- | :--- | :--- |
+| **Range** | Contiguous key ranges (A–M, N–Z; or by date) | Fast range scans; easy to reason about | Hot spots — recent dates or popular ranges overload one shard |
+| **Hash** | Hash the key, mod by shard count | Even distribution | Range queries hit every shard; changing the shard count reshuffles everything |
+| **Directory** | A lookup table maps key → shard | Can place and move individual keys | The lookup service is a new dependency and potential bottleneck |
+
+</Table>
+
+<Note type="wild" label="◈ In the wild · Discord">
+
+Discord partitions messages by channel and buckets them by time, which keeps one conversation's history together on one shard while spreading total load across the cluster. Getting there took two migrations — MongoDB to Cassandra, then Cassandra to ScyllaDB, a C++ Cassandra-compatible store without a garbage collector, to tame tail latency and operational load. The shard key matches the boundary the reads already draw: people read one channel at a time. [(Discord Engineering)](https://discord.com/blog/how-discord-stores-trillions-of-messages)
+
+</Note>
+
+### The four taxes you pay
+
+- **Hot keys** — if one tenant, channel or celebrity dominates, their shard melts while others idle. Hashing spreads *keys*; a single hot key still lands on one shard. (The database twin of the [cache hot-key problem](/guides/understanding-caching/).)
+- **Cross-shard queries and joins** — anything spanning shards must fan out and merge in the application.
+- **Distributed transactions** — an atomic change across two shards needs two-phase commit or a saga. Most teams avoid it by choosing a key that keeps related data together; [Consistency & CAP](/guides/consistency-cap/) covers what it costs when you can't.
+- **Resharding** — adding shards means moving live data without downtime.
+
+<Note label="The pro move: logical vs. physical shards">
+
+Create many *logical* shards up front and pack them onto a few *physical* machines. To grow, you move logical shards to new machines — no re-hashing. Notion did exactly this when it sharded Postgres: 480 logical shards (each a Postgres schema) spread across 32 physical databases. [(Notion Engineering)](https://www.notion.com/blog/sharding-postgres-at-notion)
+
+</Note>
+
+### Secondary indexes: pick your poison
+
+Once data is sharded, "add an index on `email`" can mean two very different things:
+
+- **Local index** — each shard indexes its own rows. Cheap and consistent, because the index updates in the same transaction as the write. But any lookup not on the shard key becomes scatter-gather: 16 shards, 16 queries, latency of the slowest. Fine until login-by-email gets popular and one lookup pattern consumes the cluster.
+- **Global index** — a separate structure mapping `email → shard`. One lookup, no fan-out. But it lives on other machines, so every insert is a distributed write: update it asynchronously and accept that it's briefly wrong, or pay for two-phase commit on every write. DynamoDB makes this trade in the open — global secondary indexes are eventually consistent by design.
+
+A global index is not a feature you enable. It's a distributed system you now operate.
+
+Sharding presumes a stateless application tier, so any app server can talk to any shard. If app servers still hold per-user state in memory, fix that first — see [Load Balancing](/guides/load-balancing/).
+
+### The bills that arrive later
+
+Sharding gets modelled as a one-off engineering cost. It's mostly recurring costs paid by people who weren't in the room:
+
+- **Data transfer** — shards across availability zones mean cross-AZ traffic billed per gigabyte, growing with every fan-out query.
+- **Backups multiply** — 16 shards is 16 backup jobs, and point-in-time recovery has to be coordinated across all of them. Your recovery time is the slowest shard's.
+- **Every migration becomes N migrations** — and can be half-applied, so [expand and contract](/guides/database-scaling/correct/#migrations) stops being good practice and becomes mandatory.
+- **Resharding is a project** — a plan, a backfill, a dual-write period, a cutover and a rollback story. Weeks, with a named owner.
+- **On-call surface** — one database with a replica is two things that can page you; 16 shards with replicas is 32.
+
+</Collapse>
+
+<Collapse id="worked-shard" title="2. Worked example: picking a shard key, as arithmetic">
+
+Shard-key choice is usually taught as a list of strategies. It's better understood as arithmetic plus a short list of queries you refuse to make slow. Take a Slack-shaped product: **workspaces** contain **channels**, channels contain **messages**, and everything a user does is scoped to one workspace at a time.
+
+### Step 1: the numbers
+
+```trace
+**$ the shape of the data**
+  workspaces .......................... 250,000
+  messages / day ...................... 30,000,000
+  avg row + index overhead ............ 400 bytes
+  data added per day .................. 12 GB
+  retention ........................... 2 years (730 days)
+
+**$ therefore**
+  total rows .......... 30M × 730 ..... 21,900,000,000
+  total size .......... 21.9B × 400B .. ~8.8 TB
+  comfortable data per shard .......... ~1.5 TB
+  minimum shards ...... 8.8 / 1.5 ..... 5.9  →  **6**
+  provisioned (headroom, power of two)  **16**
+  logical shards ...................... 1,024  (64 per machine)
+
+**$ write rate**
+  average ............. 30M / 86,400 .. ~350 writes/s
+  peak (4× average) ................... ~1,400 writes/s
+  per shard at 16 shards ..............   ~90 writes/s
+```
+
+Read that last line again. Ninety writes per second is *nothing* — a laptop does it. You're not sharding for write throughput; you're sharding because 8.8 TB of hot data and its indexes doesn't fit comfortably on one machine, and because a 22-billion-row table makes every backup and schema change a negotiation. Knowing *which* constraint forces your hand changes what a good shard key looks like.
+
+### Step 2: the candidates
+
+For each key, ask which queries stay on one shard and what the distribution actually looks like.
+
+<Table>
+
+| Shard key | What stays single-shard | What breaks | Verdict |
+| --------- | ----------------------- | ----------- | ------- |
+| **message_id** (hashed) | Fetching one message by ID. That's the whole list. | "Last 50 messages in this channel" — the most common query in the product — asks all 16 shards and discards almost everything. | <Pill tone="bad">no</Pill> Perfect distribution, useless access pattern |
+| **time range** | Recent history lands on the newest shard; dropping old data is instant. | 100% of writes go to whichever shard holds "now" — a 16-machine cluster with one machine working. | <Pill tone="bad">no</Pill> Great for archival partitioning, fatal as a shard key |
+| **user_id** | "Everything I ever posted." Writes spread beautifully. | A channel's messages come from hundreds of users, so rendering one channel fans out to all 16 shards. | <Pill tone="bad">no</Pill> Distribution isn't the constraint |
+| **channel_id** | Channel history is one shard, one index scan. | Anything workspace-wide fans out: unread badges, "mark all read", workspace search, membership checks. | <Pill tone="mid">close</Pill> Right instinct, one level too fine |
+| **workspace_id** | Channels, memberships, messages, unread state and search for a workspace sit on one machine — and you keep ordinary transactions and joins *within* a workspace. | Distribution follows a power law, and cross-workspace queries have nowhere to go. | <Pill tone="good">yes</Pill> The access pattern decides it |
+
+</Table>
+
+### Step 3: what workspace_id costs you, stated honestly
+
+- **One workspace can outgrow a shard.** The median workspace has a dozen people; your largest has 200,000 seats writing 2 million messages a day — 800 MB/day, about 290 GB a year, and *6.7% of all writes on one shard* when an even split would be 6.25%. Your biggest customer alone outweighs an average shard. Plan before you need it: a directory mapping to pin whales to dedicated shards, and a sub-shard key (`channel_id` within the workspace) for the day one customer stops fitting.
+- **Cross-workspace queries become fan-outs.** Global admin search, analytics and compliance exports touch every shard and wait for the slowest. Don't make that fast on the shards; stop asking the shards. Feed a search index or warehouse with change-data-capture.
+- **Rebalancing becomes a permanent job.** The distribution is uneven and shifts as customers grow, so you'll move logical shards between machines periodically, forever. It's the right trade for a single-shard hot path — but someone owns it.
+
+<Note type="key" label="The rule underneath the arithmetic">
+
+Pick the shard key that matches the boundary your product already draws around data. If almost every request is scoped to one workspace, tenant or account, that is your shard key — it turns "distributed database" back into "a lot of small ordinary databases" for the 99% of queries that stay inside the boundary. Slack's move onto Vitess used workspace as the dominant sharding key for exactly this reason.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="beyond" title="3. Or buy it: distributed SQL, NoSQL and the CAP dial">
+
+Instead of bolting sharding onto a single-node database, you can adopt an engine built to scale out:
+
+<CardGrid>
+  <Card title="Distributed SQL">
+    Spanner, CockroachDB, TiDB, YugabyteDB — SQL and transactions, with data automatically sharded and replicated. Horizontal scale without hand-rolling a shard router.
+  </Card>
+  <Card title="Sharding middleware">
+    Vitess (born at YouTube, for MySQL) and Citus (for Postgres) add sharding on top of engines you already know.
+  </Card>
+  <Card title="Wide-column NoSQL">
+    Cassandra, ScyllaDB, DynamoDB, Bigtable — built for huge write throughput, at the cost of flexible queries and, often, strong consistency.
+  </Card>
+  <Card title="The trade-off">
+    They solve distribution for you, but impose their data model and consistency rules. You trade freedom and familiarity for scale that "just works".
+  </Card>
+</CardGrid>
+
+Whichever you pick, the moment data lives on more than one node the **CAP theorem** applies: during a network partition you choose between **consistency** (every read sees the latest write) and **availability** (every request gets an answer). In practice it's a dial you set per feature — strong consistency for money, inventory and auth; eventual consistency for feeds and counts — the same call you made with cache TTLs and replication lag. [Consistency & CAP](/guides/consistency-cap/) takes it apart properly.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="You shard by user_id. One customer's shared service account generates most of their API traffic and melts the shard it lands on. What should you have done?" options={["Planned for hot keys by pinning or splitting them, and sharded on the tenant boundary instead of user_id", "Used a better hash function to spread the keys", "Added read replicas to that shard"]} answer={0}>
+
+Hashing spreads *keys* evenly, not *load per key* — a hot key always lands on exactly one shard. Hot keys need their own mechanism: a directory mapping to pin that key to a dedicated shard, a second-level key to split it, or coalescing and caching in front. And underneath: in a tenant-scoped product, `user_id` scatters each customer across every shard, so tenant-scoped queries were already fanning out. The tenant boundary was the shard key.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [How Figma's databases team lived to tell the scale](https://www.figma.com/blog/how-figmas-databases-team-lived-to-tell-the-scale/) — vertical partitioning, then in-house horizontal sharding.
+- [Herding elephants: sharding Postgres at Notion](https://www.notion.com/blog/sharding-postgres-at-notion) — logical vs. physical shards and a live cutover, with numbers.
+- [How Discord stores trillions of messages](https://discord.com/blog/how-discord-stores-trillions-of-messages) — a shard key that matches the read pattern.
+- [Designing Data-Intensive Applications](https://dataintensive.net/), ch. 6 — partitioning, rebalancing and secondary indexes.
+
+</Reading>

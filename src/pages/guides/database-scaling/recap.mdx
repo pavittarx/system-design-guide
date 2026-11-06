@@ -1,0 +1,66 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap and numbers"
+description: "Scaling Databases in 60 seconds, and the numbers worth carrying in your head."
+chapter: "2"
+current: "2. Scaling Databases"
+sections:
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+
+<Collapse id="recap" title="Recap in 60 seconds">
+
+<Recap>
+
+- **Measure first.** Read/write mix, which p99 moved, rows examined per row returned. The answer decides which rung you need.
+- **Index and fix queries.** Most "slow database" is one missing or unusable index. `EXPLAIN (ANALYZE, BUFFERS)` on production-shaped data is the arbiter.
+- **Scale up and right-size the pool.** More RAM fixes a falling cache hit ratio; pools are tens, not hundreds.
+- **Correctness is not free at the default isolation level.** Read-then-write in code is a race. Push the check into the write, back it with a constraint, lock or go `SERIALIZABLE` only when you must — and retry.
+- **Every migration must work with the code before and after it.** Short `lock_timeout`, concurrent index builds, expand and contract.
+- **Cache, then replicas.** Replicas scale reads and bring lag that's worst at peak.
+- **Partition, then shard — on the boundary your product already draws.** The costs are permanent: N backups, N migrations, resharding as a project.
+
+</Recap>
+
+Numbers worth carrying in your head. These are **order-of-magnitude reference points, not benchmarks** — each moves 10× with hardware, row width and workload. Use them to know when a number is *surprising*.
+
+<Table numeric>
+
+| Order of magnitude | What it is | What moves it |
+| ------------------ | ---------- | ------------- |
+| ~10<sup>8</sup> rows<br />(few hundred GB) | Comfortable ceiling for one well-indexed table on one box | Lookups stay cheap far past this; vacuum, index builds and whether the working set fits RAM degrade first. |
+| 1,000–10,000<br />writes/s | Single-row write transactions, one tuned OLTP instance on NVMe | Transaction size, `fsync` behaviour, row width, and index count — every index is another write per row. |
+| ~10<sup>5</sup><br />rows/s | Bulk ingest on the same box (`COPY` / multi-row `INSERT`) | The gap between this row and the one above is the whole argument for batching before sharding. |
+| Tens | Useful connection pool size | Little's Law: throughput × latency. Past a few hundred server-side connections, put a pooler in front. |
+| &lt; 10 ms same-region | Healthy async replication lag | Spikes to seconds under bulk writes, long replica queries and failover — at peak. |
+| &lt; 10 good<br />&gt; 100 broken | Rows examined per row returned | Above 100 the fix is an index or a rewrite, never a bigger machine. |
+| &gt; 99% | Buffer cache hit ratio, OLTP | Falling means the working set outgrew RAM. |
+| 0.5–2 TB | What one shard should top out at | Often the real limit is "small enough to restore inside your recovery time objective". |
+
+</Table>
+
+<Note type="key" label="The one-liner to remember">
+
+Every rung of this ladder trades a simple problem for a harder one, so make each rung earn its place with a measurement. Most "we need to shard" turns out to be one missing index, one unbounded query, and a connection pool sized by superstition.
+
+</Note>
+
+</Collapse>
+
+<Footer>
+  [Figma — How Figma's Databases Team Lived to Tell the Scale](https://www.figma.com/blog/how-figmas-databases-team-lived-to-tell-the-scale/) ·
+  [Notion — Herding elephants: sharding Postgres at Notion](https://www.notion.com/blog/sharding-postgres-at-notion) ·
+  [Slack — Scaling Datastores at Slack with Vitess](https://slack.engineering/scaling-datastores-at-slack-with-vitess/) ·
+  [Discord — How Discord Stores Trillions of Messages](https://discord.com/blog/how-discord-stores-trillions-of-messages) ·
+  [Uber — Why Uber Engineering Switched from Postgres to MySQL](https://www.uber.com/blog/postgres-to-mysql-migration/) ·
+  [Stripe — Online migrations at scale](https://stripe.com/blog/online-migrations) ·
+  [GoCardless — Zero-downtime Postgres migrations: the hard parts](https://gocardless.com/blog/zero-downtime-postgres-migrations-the-hard-parts/) ·
+  [Warszawski & Bailis — ACIDRain (SIGMOD 2017)](http://www.bailis.org/papers/acidrain-sigmod2017.pdf) ·
+  [Kleppmann — Hermitage](https://github.com/ept/hermitage) ·
+  [PostgreSQL — Transaction Isolation](https://www.postgresql.org/docs/current/transaction-iso.html) ·
+  [Vitess](https://vitess.io/)
+</Footer>

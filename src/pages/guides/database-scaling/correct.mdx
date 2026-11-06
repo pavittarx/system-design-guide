@@ -1,0 +1,186 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Keep it correct under load"
+description: "Part 2 of Scaling Databases. What happens when two fast queries touch the same row at the same moment, and how to change the schema without taking the site down."
+chapter: "2"
+current: "2. Scaling Databases"
+sections:
+  - id: "transactions"
+    title: "Transactions and isolation"
+  - id: "migrations"
+    title: "Schema changes without an outage"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+
+<Collapse id="transactions" title="1. Transactions and isolation: when two requests touch the same row">
+
+<Note type="war" label="◈ The incident · Flexcoin, 2 March 2014">
+
+A Bitcoin exchange read the sender's balance, checked it, then wrote the new balances. An attacker sent thousands of transfers at the same moment. Each read the same, not-yet-reduced balance and passed the check, so money was created out of a race condition. The exchange closed.
+
+</Note>
+
+Every bug in that story lives in the gap between "the code is correct" and "the code is correct *when two copies of it run at once*". That gap is what transactions and isolation levels are for — and the defaults don't close it as much as most people assume.
+
+### What a transaction actually promises
+
+A transaction groups statements so they succeed or fail together (**atomicity**), survive a crash once committed (**durability**), and leave declared rules intact (**consistency**, as far as your constraints express them). Those three are close to absolute. The fourth, **isolation** — "concurrent transactions don't see each other's half-finished work" — is a dial, and every database ships it turned down for speed.
+
+Under the hood, Postgres and MySQL's InnoDB both use **MVCC** (multi-version concurrency control): an update writes a new version of the row instead of overwriting it, and each transaction reads from a *snapshot* of versions that were committed when it started (or, at the default level in Postgres, when each statement started). That's why readers don't block writers. It's also why a transaction left open keeps old row versions alive — the cause of idle-in-transaction bloat, below.
+
+<Note type="wild" label="◈ In the wild · ACIDRain, 2017">
+
+The [ACIDRain study](http://www.bailis.org/papers/acidrain-sigmod2017.pdf) analysed 12 popular self-hosted e-commerce platforms, software behind about 2 million websites, and found 22 attacks of the same shape: overspent gift cards, corrupted inventory, stolen stock. Nothing looked wrong when read one request at a time.
+
+</Note>
+
+### The anomalies, and which level stops them
+
+<Table>
+
+| Anomaly | What happens | Read Committed | Repeatable Read | Serializable |
+| :--- | :--- | :--- | :--- | :--- |
+| **Dirty read** | You see another transaction's uncommitted write, then it rolls back | <Pill tone="good">Prevented</Pill> | <Pill tone="good">Prevented</Pill> | <Pill tone="good">Prevented</Pill> |
+| **Non-repeatable read** | The same row, read twice in one transaction, gives two values | <Pill tone="bad">Allowed</Pill> | <Pill tone="good">Prevented</Pill> | <Pill tone="good">Prevented</Pill> |
+| **Phantom** | Re-running the same `WHERE` returns new rows | <Pill tone="bad">Allowed</Pill> | <Pill tone="mid">Varies</Pill> | <Pill tone="good">Prevented</Pill> |
+| **Lost update** | Two read-modify-write cycles overlap; the second overwrites the first | <Pill tone="bad">Allowed</Pill> | <Pill tone="mid">Postgres only</Pill> | <Pill tone="good">Prevented</Pill> |
+| **Write skew** | Two transactions read the same facts, change different rows, and together break a rule | <Pill tone="bad">Allowed</Pill> | <Pill tone="bad">Allowed</Pill> | <Pill tone="good">Prevented</Pill> |
+
+</Table>
+
+Read Committed is the default in PostgreSQL, Oracle and SQL Server; MySQL's InnoDB defaults to Repeatable Read. Phantoms at Repeatable Read depend on the engine: the SQL standard allows them, while Postgres and InnoDB's snapshot reads don't show them. Serializable prevents everything, but some transactions now fail and must be retried.
+
+The same level name means different things in different engines. Kleppmann's [Hermitage](https://github.com/ept/hermitage) test suite runs each anomaly against each database; check your engine there rather than trusting the name.
+
+### Worked example: the last appointment slot
+
+A coaching platform sells sessions. Slot 7 has capacity 10 and 9 bookings. Two clients click "Book" at the same moment. The code is the obvious one, inside a transaction, at the default isolation level:
+
+```trace
+**$ two requests, one place left, READ COMMITTED**
+  T1  SELECT booked FROM slots WHERE id = 7    → 9
+  T2  SELECT booked FROM slots WHERE id = 7    → 9
+  T1  9 < 10, so UPDATE slots + INSERT booking  ++committed++
+  T2  9 < 10, so UPDATE slots + INSERT booking  ~~committed~~
+      T2's UPDATE waited for T1's row lock, then ran anyway
+
+**verdict: LOST UPDATE** → slots says 10, bookings holds ~~11~~
+```
+
+`BEGIN` didn't help, because Read Committed doesn't lock what you *read*. Both transactions made their decision from the same stale `9`. Five fixes, from cheapest to heaviest:
+
+<Table>
+
+| Fix | Looks like | Use it when |
+| :--- | :--- | :--- |
+| **Atomic conditional write** | `UPDATE … SET booked = booked + 1 WHERE booked < capacity`, then check 1 row changed | The check and the change fit in one statement: counters, stock, balances. Most cases |
+| **Constraint** | `CHECK (booked <= capacity)` | The rule is about the rows themselves. Add it as a backstop anyway |
+| **Pessimistic lock** | `SELECT … FOR UPDATE`, then decide | The decision needs logic the database can't express. Never hold the lock across a network call |
+| **Optimistic version** | `… WHERE version = 41`; 0 rows changed means reload and retry | Low contention and long think-time, like an edit form left open |
+| **Serializable** | The isolation level plus a retry loop | The rule spans several rows, so there's no single row to lock: write skew |
+
+</Table>
+
+The first row works because an `UPDATE` re-checks its `WHERE` against the latest committed row before writing: T2 waits for T1, sees `booked = 10`, and updates nothing.
+
+### Write skew: the bug no row lock catches
+
+The classic example comes from Kleppmann's *Designing Data-Intensive Applications*. A hospital requires at least one doctor on call. Alice and Bob are both on call, both feel ill, and both click "go off call" at the same moment. Each transaction counts on-call doctors, sees 2, and removes *itself*. Each wrote a different row, so nothing conflicted. Both commit, and nobody is on call.
+
+Booking systems hit the same shape: "a companion can't have overlapping appointments" is a rule about rows that don't exist yet, so there's nothing to lock. Three ways out: run that transaction as `SERIALIZABLE`; lock every row the check read with `FOR UPDATE`; or let the database enforce it — in Postgres, an exclusion constraint such as `EXCLUDE USING gist (companion_id WITH =, during WITH &&)` (needs the `btree_gist` extension) makes the second overlapping insert fail.
+
+### Idle-in-transaction is a slow leak
+
+A connection in state `idle in transaction` has begun a transaction and gone quiet — usually because the code made an HTTP call, hit a breakpoint, or threw on a path that forgot to roll back.
+
+Because of MVCC, that transaction holds a snapshot, and while it does, `VACUUM` can't reclaim any row version that died *after* it started — anywhere in the database. Dead rows pile up, tables and indexes bloat, and queries slow down with no code or traffic change. Set `idle_in_transaction_session_timeout` and `statement_timeout`, never do network I/O inside a transaction, and alert on `pg_stat_activity` rows idle in transaction for more than a minute.
+
+<Note type="key" label="The rule underneath">
+
+Read-then-write in application code is a race unless something stops it. Prefer to push the check into the write itself, back it with a constraint, and reach for locks or `SERIALIZABLE` only when the rule can't be expressed any other way. Once data spans several machines this gets much harder — two-phase commit and sagas are the subject of [Consistency & CAP](/guides/consistency-cap/).
+
+</Note>
+
+</Collapse>
+
+<Collapse id="migrations" title="2. Schema changes without an outage">
+
+Locks have a second trap, and it springs during deploys rather than at peak. On a small table, `ALTER TABLE` is instant and you learn nothing. On a hot 40-million-row table it needs an `ACCESS EXCLUSIVE` lock — and in Postgres the failure isn't the wait, it's the *queue*. A lock request waits behind whatever already holds the table, and every query that arrives after it waits behind *it*. [GoCardless wrote up exactly this failure mode](https://gocardless.com/blog/zero-downtime-postgres-migrations-the-hard-parts/):
+
+```trace
+**$ 14:02:00**  a report starts: SELECT … FROM orders   (40 s)
+**$ 14:02:05**  ALTER TABLE orders …        ~~queued for its lock~~
+  14:02:05+  every new query on orders   ~~queued behind it~~
+**$ 14:02:40**  report ends; ALTER runs in 0.2 s; queue drains
+
+**verdict:** ~~35 s outage on orders~~ from a 0.2 s migration
+```
+
+Your migration didn't need to run slowly to cause an outage; it only needed to *wait*.
+
+### The single-statement rules
+
+- **Set a short `lock_timeout`** (a few seconds) on every migration and retry, so a blocked migration fails fast instead of building a queue behind it.
+- **Build indexes without blocking writes**: `CREATE INDEX CONCURRENTLY` in Postgres, online DDL in InnoDB.
+- **Add constraints in two steps**: `ADD CONSTRAINT … NOT VALID`, then `VALIDATE CONSTRAINT` separately, which takes a much weaker lock.
+- **Use the cheap operations**: modern Postgres adds a column with a constant default as a metadata-only change; MySQL 8 has `ALGORITHM=INSTANT` for some changes. For heavy MySQL changes, `gh-ost` and `pt-online-schema-change` build a shadow table, keep it in sync, and swap it in with an atomic rename.
+
+### Expand and contract: changes that span deploys
+
+The harder problem is that during a rolling deploy, **old and new versions of your code run against the same schema at the same time** — the [load balancer](/guides/load-balancing/) is still draining old instances while new ones start. If your pipeline runs migrations before swapping containers, old code meets the new schema for those seconds. Rename a column in one step and every old instance throws errors until it's gone.
+
+So a breaking change becomes a sequence of non-breaking ones, each its own deploy. Renaming `users.name` to `full_name`:
+
+<Stack>
+  <Layer idx="1" title="Expand" speed="deploy 1">Add `full_name`, nullable. Old code doesn't know it exists.</Layer>
+  <Layer idx="2" title="Dual-write" speed="deploy 2">Write both columns; keep reading `name`.</Layer>
+  <Layer idx="3" title="Backfill" speed="background job">Copy old rows in small batches, thousands per transaction with pauses, so you don't spike replication lag or hold locks.</Layer>
+  <Layer idx="4" title="Switch reads" speed="deploy 3">Read `full_name`; a comparison job confirms the two columns agree.</Layer>
+  <Layer idx="5" title="Stop writing the old column" speed="deploy 4">Nothing writes `name` any more.</Layer>
+  <Layer idx="6" title="Contract" speed="later release">Drop `name` once nothing references it.</Layer>
+</Stack>
+
+Every step is reversible until the last. Stripe used the same four-phase dual-write pattern to move millions of subscription objects between tables with no downtime — [Online migrations at scale](https://stripe.com/blog/online-migrations) is the best write-up of it.
+
+With queries fast, writes correct and deploys safe, the single box is in good shape. When it still can't keep up, [Part 3](/guides/database-scaling/offload/) starts with not asking it at all.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="You wrapped the SELECT and the UPDATE in one transaction and still sold 11 places in a slot of 10. Why didn't the transaction protect you?" options={["The transaction rolled back silently", "Read Committed doesn't lock the rows you read, so both transactions saw 9 and both wrote", "The UPDATE ran outside the transaction"]} answer={1}>
+
+A transaction makes your writes atomic; it doesn't stop other transactions from reading the same row before you write it. At Read Committed — the Postgres default — both transactions read `booked = 9`, both decided there was room, and both wrote. Fix it by making the check part of the write (`UPDATE … WHERE booked < capacity` and check the affected row count), adding a `CHECK` constraint as a backstop, or locking the row with `SELECT … FOR UPDATE` before deciding.
+
+</Quiz>
+
+<Quiz q="You moved the payment path to SERIALIZABLE. At peak, logs fill with 'could not serialize access' errors. What should you do?" options={["Retry the whole transaction from BEGIN with backoff, and keep external side effects out of the retried block", "Drop back to Read Committed, because the errors mean Serializable is misbehaving", "Add more connections so the transactions stop colliding"]} answer={0}>
+
+No — that is the database doing its job. It found two transactions whose combined result couldn't have happened one after the other, and it aborted one instead of letting it corrupt data. The contract of `SERIALIZABLE` is that *you retry the whole transaction* from `BEGIN`, re-reading everything, with backoff. Two cautions: anything with a side effect outside the database (an email, a card charge) must not happen inside the retried block — or must be idempotent, see [Message Queues](/guides/message-queues/); and if retries pile up at peak, the contention is real and an atomic conditional write may be the better tool.
+
+</Quiz>
+
+<Quiz q="Your pipeline runs migrations, then swaps containers. After a deploy that renamed a column, you get about 40 seconds of 500 errors. What happened?" options={["The migration held a table lock for 40 seconds", "The new containers started before the migration finished", "Old containers kept serving during the swap and queried a column that no longer existed"]} answer={2}>
+
+For those 40 seconds the old containers were still serving traffic, and they query the old column name, which no longer exists. The pipeline is fine; the migration wasn't backward-compatible. Split it with expand and contract: add the new column, dual-write, backfill, switch reads, and drop the old column in a later deploy. The rule: a migration must work with both the code before it and the code after it.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Designing Data-Intensive Applications](https://dataintensive.net/), ch. 7 — Martin Kleppmann. Isolation levels, lost updates and write skew, explained properly.
+- [How Postgres Makes Transactions Atomic](https://brandur.org/postgres-atomicity) — Brandur Leach. What MVCC and snapshots look like inside Postgres.
+- [Hermitage](https://github.com/ept/hermitage) — which anomalies each database's isolation levels actually prevent, tested.
+- [ACIDRain](http://www.bailis.org/papers/acidrain-sigmod2017.pdf) — Warszawski & Bailis, SIGMOD 2017. 22 concurrency attacks on real e-commerce software.
+- [Zero-downtime Postgres migrations: the hard parts](https://gocardless.com/blog/zero-downtime-postgres-migrations-the-hard-parts/) — GoCardless, and [PostgreSQL rocks, except when it blocks](https://www.citusdata.com/blog/2018/02/15/when-postgresql-blocks/) — Citus. Which statements take which locks.
+- [Online migrations at scale](https://stripe.com/blog/online-migrations) — Stripe. Expand and contract on millions of live objects.
+
+</Reading>

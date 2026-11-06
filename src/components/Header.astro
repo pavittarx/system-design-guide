@@ -1,122 +1,155 @@
 ---
 // src/components/Header.astro
+// Sticky top bar: site name, then either the guide switcher (on guide pages)
+// or a plain label, an optional jump link, and the reading-progress bar.
+import { GUIDES, guideHref, withBase, type GuideSlug } from '../lib/guides';
+
 interface Props {
   current?: string;
+  guide?: GuideSlug;
   tocHref?: string;
   tocText?: string;
 }
-
-const { current, tocHref = "#top", tocText = "Back to Top" } = Astro.props;
-import { withBase } from '../lib/guides';
+const { current, guide, tocHref, tocText } = Astro.props;
+const slugs = Object.keys(GUIDES) as GuideSlug[];
+const guideNo = guide ? slugs.indexOf(guide) + 1 : 0;
 ---
-
-<div class="sticky-header">
-  <div class="header-inner">
-    <div class="breadcrumbs">
-      <a href={withBase()}>System Design Guide</a>
-      {current && (
-        <span class="sep">/</span>
-        <span class="curr">{current}</span>
-      )}
-    </div>
-    <div class="toc-jump">
-      <a href={tocHref}>{tocText}</a>
-    </div>
+<header class="topbar">
+  <div class="topbar-inner">
+    {guide && (
+      <button class="menu-btn" type="button" aria-controls="sidebar" aria-expanded="false" data-menu>Contents</button>
+    )}
+    <a class="brand" href={withBase()}>System Design Basics</a>
+    {guide ? (
+      <details class="switch">
+        <summary>Guide {guideNo} of {slugs.length}: {GUIDES[guide]}</summary>
+        <ol>
+          {slugs.map((s, i) => (
+            <li><a href={guideHref(s)} aria-current={s === guide ? 'page' : undefined}>{i + 1}. {GUIDES[s]}</a></li>
+          ))}
+        </ol>
+      </details>
+    ) : (
+      current && <span class="here">{current}</span>
+    )}
+    {tocHref && <a class="jump" href={tocHref}>{tocText}</a>}
   </div>
   <div class="progress-bar" id="progress"></div>
-</div>
+</header>
 
 <script>
-  // Fallback for browsers that do not support scroll-driven animations (e.g. Firefox, Safari)
+  document.querySelectorAll<HTMLButtonElement>('[data-menu]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const open = document.body.classList.toggle('nav-open');
+      btn.setAttribute('aria-expanded', String(open));
+    });
+  });
+
+  // Close the guide switcher when clicking elsewhere.
+  document.addEventListener('click', (e) => {
+    document.querySelectorAll<HTMLDetailsElement>('details.switch[open]').forEach((d) => {
+      if (!d.contains(e.target as Node)) d.open = false;
+    });
+  });
+
+  // Fallback for browsers without scroll-driven animations (Firefox, Safari).
   if (!CSS.supports('animation-timeline', 'scroll()')) {
-    const progressBar = document.getElementById('progress');
-    if (progressBar) {
-      progressBar.style.animation = 'none';
-      progressBar.style.transform = 'scaleX(0)';
-
-      const updateProgress = () => {
-        const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
-        if (scrollHeight > 0) {
-          const progressPercentage = window.scrollY / scrollHeight;
-          progressBar.style.transform = `scaleX(${progressPercentage})`;
-        } else {
-          progressBar.style.transform = 'scaleX(0)';
-        }
+    const bar = document.getElementById('progress');
+    if (bar) {
+      bar.style.animation = 'none';
+      const update = () => {
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        bar.style.transform = `scaleX(${max > 0 ? window.scrollY / max : 0})`;
       };
-
-      window.addEventListener('scroll', updateProgress, { passive: true });
-      window.addEventListener('resize', updateProgress);
-      setTimeout(updateProgress, 100);
+      window.addEventListener('scroll', update, { passive: true });
+      window.addEventListener('resize', update);
+      setTimeout(update, 100);
     }
   }
 </script>
 
 <style>
-  .sticky-header {
+  .topbar {
     position: sticky;
     top: 0;
-    left: 0;
-    width: 100%;
-    background: color-mix(in srgb, var(--bg) 92%, transparent);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border);
     z-index: 100;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
   }
-  
-  .header-inner {
-    max-width: var(--maxw);
-    margin: 0 auto;
-    padding: 10px 20px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.82rem;
-  }
-  
-  .breadcrumbs {
+  .topbar-inner {
+    height: 60px;
     display: flex;
     align-items: center;
-    gap: 8px;
-    color: var(--muted);
+    gap: 20px;
+    padding: 0 24px;
   }
-  
-  .breadcrumbs a {
-    color: var(--muted);
-    font-weight: 500;
-  }
-  
-  .breadcrumbs a:hover {
-    color: var(--accent);
-  }
-  
-  .breadcrumbs .sep {
-    color: var(--border);
-    font-weight: 300;
-  }
-  
-  .breadcrumbs .curr {
+  .brand { font-weight: 700; font-size: 1.05rem; color: var(--text); white-space: nowrap; }
+  .brand:hover { text-decoration: none; color: var(--accent); }
+  .here { color: var(--muted); font-size: 0.95rem; }
+  .jump { margin-left: auto; font-weight: 600; font-size: 0.95rem; }
+
+  .switch { position: relative; font-size: 0.95rem; }
+  .switch summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
     color: var(--text);
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .switch summary::-webkit-details-marker { display: none; }
+  .switch summary::after { content: " ▾"; color: var(--muted); }
+  .switch ol {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 110;
+    width: 320px;
+    max-height: 70vh;
+    overflow: auto;
+    margin: 0;
+    padding: 6px;
+    list-style: none;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(15, 21, 30, 0.18);
+  }
+  .switch li a { display: block; padding: 7px 10px; border-radius: 8px; color: var(--text); }
+  .switch li a:hover { background: var(--panel-2); text-decoration: none; }
+  .switch li a[aria-current='page'] { color: var(--accent); font-weight: 600; }
+
+  .menu-btn {
+    display: none;
+    font: inherit;
+    font-size: 0.95rem;
     font-weight: 600;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
   }
-  
-  .toc-jump a {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  
-  /* Scroll Progress Indicator with native CSS Scroll-Driven Animations */
-  @keyframes grow-x {
-    from { transform: scaleX(0); }
-    to { transform: scaleX(1); }
-  }
-  
+
+  @keyframes grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
   .progress-bar {
-    height: 3px;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
     background: var(--accent);
-    width: 100%;
     transform-origin: left;
     animation: grow-x linear both;
     animation-timeline: scroll();
+  }
+
+  @media (max-width: 900px) {
+    .menu-btn { display: inline-block; }
+    .switch { display: none; }
+    .topbar-inner { gap: 12px; padding: 0 16px; }
   }
 </style>

@@ -1,0 +1,16 @@
+---
+// src/components/Reading.astro
+// "Related reading" at the end of a page. Body is a markdown list:
+//   - [Title](url) — Author. One line on why it's worth reading.
+---
+<section class="sec reading" id="reading">
+  <h2>Related reading</h2>
+  <slot />
+</section>
+
+<style>
+  .reading :global(ul) { list-style: none; padding: 0; margin: 0; }
+  .reading :global(li) { padding: 12px 0; margin: 0; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.95rem; }
+  .reading :global(li:last-child) { border-bottom: 0; }
+  .reading :global(li a) { font-weight: 600; font-size: 1rem; }
+</style>
