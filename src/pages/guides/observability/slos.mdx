@@ -1,0 +1,92 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "SLOs and alerting"
+description: "Part 3 of Seeing Inside the Machine. Deciding in advance what working means as a number, spending the error budget, and alerting on symptoms and burn rate."
+chapter: "7"
+current: "7. Observability"
+sections:
+  - id: "slo"
+    title: "SLIs, SLOs and error budgets"
+  - id: "alerting"
+    title: "Alert on symptoms, not causes"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+
+<Collapse id="slo" title="1. SLIs, SLOs and error budgets">
+
+Everything so far has been about seeing. This section is about deciding what "working" means, in a number, in advance — which is the part that turns telemetry into a management tool rather than a hobby.
+
+An **SLI** (service level indicator) is a measurement: the proportion of requests that succeeded in under 300 ms. An **SLO** (objective) is a target for it: 99.9% of requests, measured over 30 days. An **SLA** is an SLO with money attached and lawyers involved, and should always be looser than your internal SLO — you want to be paging yourself well before you're paying customers.
+
+<Note type="key" label="What 99.9% over 30 days actually buys you">
+
+30 days = 43,200 minutes. 0.1% of that is **43.2 minutes** of budget.
+
+At 10,000 requests/second, 30 days is 25.92 billion requests, so the budget is **25.92 million failed requests**.
+
+Add a nine and it's 4.32 minutes. Take one away and it's 7.2 hours. Each nine is roughly an order of magnitude more engineering, forever — which is why "let's just do five nines" is a sentence that should be met with a cost estimate rather than a nod.
+
+</Note>
+
+The **error budget** is the inversion, and it's the genuinely clever idea: if your SLO is 99.9%, you are *permitted* 0.1% failure. That budget is a resource. Spend it on risky deploys, migrations, chaos experiments, an aggressive feature launch. Reliability stops being a vague virtue that competes with shipping and becomes a quantity that both sides of the argument can point at.
+
+Budget remaining? Ship. Budget exhausted? Freeze features, spend the sprint on stability. The policy has to be agreed before the budget is gone, or it is not a policy — it is a negotiation you will lose during an incident.
+
+Two design decisions determine whether an SLO is useful or theatre. First, **measure from the user's side**: at the load balancer or in the client, not inside the service, or you will systematically exclude the failures where the request never arrived. Second, **pick a window and stick to it**. A rolling 30-day window is standard; calendar-month windows produce an unhelpful psychological reset on the first of the month, where the team that burned everything on the 29th is suddenly flush again on the 1st.
+
+</Collapse>
+
+<Collapse id="alerting" title="2. Alert on symptoms, not causes">
+
+An alert should mean: a human needs to do something, now. Everything else is a dashboard, a ticket, or a weekly report. Most alerting systems fail because they were built on the opposite principle — page on every cause anyone could think of — and the result is not vigilance but noise.
+
+The arithmetic of noise is brutal. Sixty alert rules, each with one false positive per month, is two pages a day, forever. Nobody stays sharp under that. The team learns, correctly and rationally, that pages are usually nothing, and the response time on the page that *is* something quietly stretches from three minutes to twenty.
+
+<Note label="Symptom vs cause, concretely">
+
+**Cause alert:** "database CPU is above 90%." Might be fine. Might be a batch job. Wakes someone at 3 a.m. to look at a graph and go back to bed.
+
+**Symptom alert:** "checkout success rate is below 99% and falling." Always matters. Fires for database CPU, and for the seventeen other things you didn't anticipate.
+
+</Note>
+
+The refinement on top of symptom alerting is **burn-rate alerting**, which asks not "are we failing right now" but "at this rate, will we blow the budget." A burn rate of 1 means you'll consume exactly your budget over the SLO window.
+
+A burn rate of 14.4 sustained for an hour consumes 2% of a 30-day budget — because an hour is 1/720 of thirty days, or about 0.139%, and 14.4 × 0.139% ≈ 2%. That combination is the standard fast-burn page: severe enough to be real, short enough to catch quickly.
+
+Pair it with a slow-burn rule — something like a burn rate of 3 sustained over six hours — routed to a ticket rather than a page. The fast rule catches the outage. The slow rule catches the steady 0.5% error rate that no single moment makes urgent but that will exhaust your budget by the 20th. Requiring both a short and a long window to be in violation before firing is what keeps a thirty-second blip from waking anyone.
+
+<Note type="warn" label="The 3 a.m. denominator problem">
+
+At peak, a 5% error rate is thousands of failures and unambiguously real. At 3 a.m. you serve two requests, one fails, and your ratio-based alert reports a **50% error rate** and pages someone. Every rate-based alert needs a minimum-volume floor: fire only if the error ratio is breached *and* the absolute count of failures exceeds some threshold. Otherwise your alerting gets loudest exactly when your traffic is quietest.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="Your metrics pipeline dies at 2 a.m. Every graph goes flat and no alert fires. Why, and what would have caught it?" options={["Threshold rules have no value to compare once data stops, so absence looks like calm; a staleness rule and an external dead man's switch catch it", "The thresholds were too high for night-time traffic; a minimum-volume floor would have caught it", "The alert manager throttles pages overnight; a second notification channel would have caught it"]} answer={0}>
+
+Because almost every alert is written as a threshold on a value — errors above N, latency above M — and when a series stops arriving there is no value to compare, so the rule evaluates to nothing rather than to a breach. Absence looks like calm.
+
+Two mechanisms cover it: an explicit staleness rule that fires when a series you expect has reported nothing for some multiple of its scrape interval, and a dead man's switch, which is an alert deliberately wired to fire continuously into an external service that pages you if the stream *stops*.
+
+The second is the one that catches a total pipeline failure, because it does not depend on the pipeline being alive to work — and the general principle it embodies is that anything monitoring itself has a blind spot exactly the size of itself.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Service Level Objectives](https://sre.google/sre-book/service-level-objectives/) — Google SRE Book. SLIs, SLOs and SLAs, and how to choose them.
+- [Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) — Google SRE Workbook. Where the 14.4× fast-burn and multi-window rules come from, worked step by step.
+- [Monitoring Distributed Systems](https://sre.google/sre-book/monitoring-distributed-systems/) — Google SRE Book. Symptoms versus causes, the four golden signals, and what deserves a page.
+
+</Reading>

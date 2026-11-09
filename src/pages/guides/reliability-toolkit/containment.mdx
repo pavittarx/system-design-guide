@@ -1,0 +1,118 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Breakers, bulkheads and degradation"
+description: "Part 2 of The Reliability Toolkit. Stop calling what is down, wall off what is slow, and decide in advance what the page shows when a feature disappears."
+chapter: "5"
+current: "5. Reliability Toolkit"
+sections:
+  - id: "breakers"
+    title: "Circuit breakers"
+  - id: "bulkheads"
+    title: "Bulkheads & load shedding"
+  - id: "degrade"
+    title: "Graceful degradation"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import DiagramReliabilityToolkit2 from '../../../components/diagrams/DiagramReliabilityToolkit2.astro';
+
+<Collapse id="breakers" title="1. Circuit breakers">
+
+Named after the one in your house. If a service is clearly down, why keep calling it — failing slowly, tying up threads — every single time? A circuit breaker *trips* after it sees enough failures and then **fails instantly** for a while, without even attempting the call.
+
+<Stack>
+  <Layer idx="✓" title="Closed" speed="healthy">
+
+  Calls flow normally. Failures are counted.
+
+  </Layer>
+  <Arrow>↓ too many failures ↓</Arrow>
+  <Layer idx="✕" title="Open" speed="tripped">
+
+  Stop calling entirely. Fail fast, return a fallback. Give the sick service room to recover.
+
+  </Layer>
+  <Arrow>↓ after a cooldown ↓</Arrow>
+  <Layer idx="?" title="Half-open" speed="probing">
+
+  Let a trickle of test calls through. Succeed → close. Fail → open again.
+
+  </Layer>
+</Stack>
+
+The breaker does two kind things at once: it protects *you* (no more threads wasted on doomed calls) and it protects *them* (the struggling service gets breathing room instead of a beating). It's the single most important pattern for stopping cascades.
+
+<Note type="wild" label="◈ In the wild · Netflix Hystrix">
+
+Netflix built and open-sourced [Hystrix](https://github.com/Netflix/Hystrix/wiki), the library that did more than anything else to popularise the circuit-breaker pattern in microservices. It wraps each call to a dependency, trips open once that dependency's error rate crosses a threshold, and then sheds load fast instead of piling more attempts onto a service that's already struggling. Netflix has since retired Hystrix in favour of newer libraries like resilience4j, but the pattern it spread is now everywhere.
+
+</Note>
+
+<Figure>
+  <DiagramReliabilityToolkit2 />
+</Figure>
+
+</Collapse>
+
+<Collapse id="bulkheads" title="2. Bulkheads & load shedding">
+
+**Bulkheads** — named after a ship's watertight compartments. Isolate resources so a flood in one area can't sink the whole vessel. If calls to the flaky recommendations service get their own limited thread pool, they can exhaust *that* pool without stealing threads from checkout. One feature browns out; the ship stays afloat.
+
+**Load shedding** — when you're truly overwhelmed, it's better to serve *most* requests well than *all* requests badly. So deliberately reject some traffic at the door (return a quick "try again in a moment") to keep the system from collapsing entirely. Counterintuitive but vital: sometimes saying "no" fast is the most reliable thing you can do. Shedding lives next door to the health checks and connection draining in the [load balancing guide](/guides/load-balancing/) — same idea, applied at the door rather than at the pool.
+
+<Lab
+  title="Build a Concurrency-Limiting Middleware"
+  tip="Add this middleware benchmarking demo to your portfolio to prove you understand overload protection."
+>
+
+Build this mini-project to implement active request limits and load shedding (protecting server thread/memory pool):
+
+- **The Slow Endpoint:** Write an HTTP server in Go or Node.js with a CPU-bound slow route `/hash` that computes a bcrypt password hash (simulated 200ms latency).
+
+- **Concurrency-Limiting Gate:** Implement a middleware that tracks active in-flight requests using a counter. Set a hard limit of **10 concurrent requests**.
+
+- **Load Shedding:** If a request arrives and the counter is at 10, reject the request immediately with an HTTP status code `503 Service Unavailable` or `429 Too Many Requests`.
+
+- **Run the Load Test:** Use `k6` to hit the route with **50 concurrent virtual users**. Observe that while some requests get rejected, the p99 latency for successfully served requests remains flat around 200ms. Remove the limiter, run the test again, and watch p99 grow infinitely as requests queue up.
+
+</Lab>
+
+</Collapse>
+
+<Collapse id="degrade" title="3. Graceful degradation">
+
+When a non-essential dependency fails, don't take the whole page with it — shed the feature, keep the core. The recommendations engine is down? Show a generic "popular items" list, or nothing, but *still let people check out.* The search ranking service died? Fall back to plain results. Users forgive a missing sidebar; they don't forgive a white screen.
+
+<Note type="key" label="The mindset">
+
+Ask of every feature: "if this dependency vanishes, what's the least-bad thing we can show?" Design that fallback *on purpose*, before the incident. A system that degrades gracefully feels far more reliable than one that's binary — perfect or dead.
+
+</Note>
+
+Notice what you're actually doing when you serve stale prices from a cache because the pricing service is down: you're trading correctness for availability, one feature at a time. That's the choice from the [consistency and CAP guide](/guides/consistency-cap/), made concrete. Graceful degradation isn't a separate topic from consistency — it's the AP branch, chosen deliberately and scoped to the parts of the product where slightly-wrong beats not-there. Checkout totals get the other answer.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="There was clearly a dependency outage, but your circuit breaker never tripped. What is the most likely reason?" options={["The cooldown was too short, so the breaker closed again before anyone noticed", "It was a gray failure, slow or 5%-failing responses, and the breaker only counted explicit errors against a high threshold", "Half-open probes hit a healthy instance and kept the circuit closed"]} answer={1}>
+
+Most likely it was a gray failure — a 5% error rate, or responses that were slow but successful — and a breaker watching for a 50% error rate on explicit errors will never see it. That's the fix too: count timeouts and slow responses as failures, not just non-2xx.
+
+The other common causes are a threshold or window set too loose to trigger inside the incident's duration, and a breaker scoped per-instance across a large fleet, where each instance sees too few failures individually to cross its own threshold even though the aggregate picture is obvious. Breakers fail silently in the wrong direction, which is why "did it trip?" belongs on the postmortem checklist.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Circuit Breaker](https://martinfowler.com/bliki/CircuitBreaker.html) — Martin Fowler. The canonical write-up of the closed, open and half-open states, with a worked implementation.
+- [How it Works](https://github.com/Netflix/Hystrix/wiki/How-it-Works) — Netflix Hystrix wiki. How Hystrix combined circuit breakers, per-dependency thread pools (bulkheads) and fallbacks.
+- [Using load shedding to avoid overload](https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/) — AWS Builders' Library. Why rejecting excess work early keeps a service useful when offered load exceeds capacity.
+
+</Reading>

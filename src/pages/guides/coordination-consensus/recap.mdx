@@ -1,0 +1,50 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap"
+description: "Getting Machines to Agree in 60 seconds, and the sources behind it."
+chapter: "10"
+current: "10. Coordination"
+sections:
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<Collapse id="recap" title="Recap in 60 seconds">
+
+<Recap>
+
+**You cannot tell slow from dead.** Every failure detector is a timeout, and every timeout is a guess with a cost on both sides.
+
+**FLP says perfect consensus is impossible; Raft chooses safety over liveness.** It will never decide two things; it may occasionally decide nothing for a moment.
+
+**Elect a leader.** One writer removes whole categories of conflict. Pay for it with a failover window on every leader death.
+
+**Raft = terms + elections + a replicated log.** Commit means a majority has it; an election winner must have every committed entry; a newer term makes an old leader step down.
+
+**Odd numbers only.** 3 tolerates 1, 5 tolerates 2, 4 tolerates the same as 3 while being slower. Bigger clusters are slower, not faster.
+
+**Fencing tokens are non-negotiable** for any lock protecting correctness. The resource rejects stale tokens; the client cannot be trusted to notice it was paused.
+
+**Leases are locks with expiry** — timed by the store, on a monotonic clock, never by the client.
+
+**Classify your locks.** Efficiency locks can be cheap and occasionally wrong. Correctness locks need consensus plus fencing, or they are decoration.
+
+**Coordination stores hold decisions, not data.** Low thousands of writes/second, tens of megabytes. Watch and cache; never put them on the request path.
+
+**The best coordination is none.** Partition ownership, make operations idempotent, use database constraints, prefer commutative operations.
+
+</Recap>
+
+</Collapse>
+
+<Footer>
+  GitHub Engineering, "October 21 post-incident analysis" (2018) ·
+  Ongaro & Ousterhout, "In Search of an Understandable Consensus Algorithm" (Raft, 2014) ·
+  Fischer, Lynch & Paterson, "Impossibility of Distributed Consensus with One Faulty Process" (1985) ·
+  Martin Kleppmann, "How to do distributed locking" (2016) ·
+  Kleppmann, *Designing Data-Intensive Applications*, ch. 8–9 ·
+  etcd docs, "Why etcd" and "Tuning" ·
+  Apache ZooKeeper, "ZooKeeper Recipes and Solutions".
+</Footer>

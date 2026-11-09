@@ -1,0 +1,189 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Gateways and rate limiting"
+description: "Part 2 of APIs, Gateways & Rate Limiting. What belongs in a gateway, five ways to count requests, and enforcing one limit across twenty instances."
+chapter: "8"
+current: "8. APIs & Gateways"
+sections:
+  - id: "gateway"
+    title: "What a gateway does — and what it shouldn't"
+  - id: "algorithms"
+    title: "Five ways to count"
+  - id: "distributed"
+    title: "Rate limiting when there are twenty of you"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import DiagramApiGateways2 from '../../../components/diagrams/DiagramApiGateways2.astro';
+
+<Collapse id="gateway" title="1. What a gateway does — and what it shouldn't">
+
+An API gateway is the single front door: one place that terminates TLS, authenticates the caller, enforces limits, routes to the right service, and emits a consistent access log. The argument for it is that these concerns are identical for every service, and implementing them forty times produces forty subtly different implementations, thirty-nine of which have a bug.
+
+```trace
+**POST /v1/orders**  client → gateway → service   **total 84 ms**
+  **1.** TLS terminate                              ++reused session++
+  **2.** parse + normalise                 0.2 ms
+  **3.** authenticate (cached JWKS)        0.4 ms   ++sub=acct_9f21++
+  **4.** rate limit (token bucket)         0.9 ms   ++83/100 left++
+  **5.** route /v1/orders → orders-svc     0.1 ms
+  **6.** forward, upstream work           81.0 ms
+  **7.** add X-RateLimit-* + request-id    0.1 ms
+  **8.** emit access log + metrics         0.2 ms
+```
+
+Steps 2–5 and 7–8 total under two milliseconds. That number is the gateway's entire budget, and it is worth guarding jealously, because the gateway sits in front of *everything* — a gateway that adds 20 ms adds it to every request in the company.
+
+What a gateway should refuse to do is business logic. The gravitational pull is real: it already sees every request, so it's tempting to put "just one" transformation there, then a fan-out to two services, then a conditional based on account type.
+
+Do that consistently for two years and you have rebuilt the enterprise service bus — a single deployable that every team must coordinate on, that nobody fully understands, and whose blast radius is the entire product. Orchestration belongs in a service that owns it. The gateway does cross-cutting concerns, and the test for whether something is cross-cutting is whether it would be identical for a service you haven't written yet.
+
+<Note label="Backend-for-frontend">
+
+When a specific client genuinely needs aggregation — the mobile app wants one call that returns four things — the pattern that survives is a **BFF**: a thin service owned by the client team, sitting behind the gateway, that does exactly that aggregation for exactly that client. It keeps client-specific logic out of the shared gateway and out of the domain services, and it can be deleted when the client is.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="algorithms" title="2. Five ways to count">
+
+Rate limiting is one question — "has this caller had too much?" — with five standard answers that differ in memory, burst behaviour, and how badly they fail at the edges.
+
+**Fixed window.** Count requests per calendar minute; reset at the boundary. One counter per key, trivially cheap. It has a well-known defect:
+
+<Note type="key" label="The boundary burst">
+
+Limit: 100 requests per minute. A client sends 100 at **11:59:59.9** and 100 more at **12:00:00.1**. Both windows are within limit. The server just absorbed **200 requests in 0.2 seconds** — double the rate you thought you'd guaranteed, delivered as a spike, at a boundary that every client's cron job is aligned to.
+
+</Note>
+
+**Sliding window log.** Store a timestamp for every request; on each new one, discard entries older than the window and count what's left. Exactly correct, no boundary artefact. The cost is memory proportional to the limit times the number of keys: at 100 requests per key and 8 bytes per timestamp, ten million active keys is roughly **8 GB** — for a limiter.
+
+**Sliding window counter.** The pragmatic compromise. Keep the current window's count and the previous window's, and estimate by weighting the previous one by how much of it still overlaps. Fifteen seconds into a 60-second window, with 80 requests in the previous window and 30 so far in this one: `80 × 0.75 + 30 = 90`.
+
+Two integers per key — roughly **160 MB** for the same ten million keys — and the boundary burst is gone. It's an approximation that assumes the previous window's traffic was evenly spread, which is wrong and almost never matters.
+
+**Token bucket.** A bucket of capacity C refills at R tokens per second; each request takes one; empty bucket means rejection. Store two numbers — token count and last-refill timestamp — and compute the refill lazily on read, so there's no background job.
+
+Its defining property is that it *permits controlled bursts*: with C = 100 and R = 10/s, a client idle for a minute can fire 100 requests immediately and then settle to 10/s. That's usually what you want, because real clients are bursty and a limiter that punishes bursts punishes normal behaviour.
+
+**Leaky bucket.** Requests queue and drain at a fixed rate. Output is perfectly smooth — which is its purpose, when the thing you're protecting cannot tolerate spikes at all — at the cost of added latency and a queue that can itself become a problem. This is load-levelling, the same shape as a queue in front of a slow consumer; [Message Queues & Async](/guides/message-queues/) covers when smoothing beats rejecting.
+
+<Table>
+
+| Algorithm | State per key | Bursts | Boundary bug | Use when |
+| --------- | ------------- | ------ | ------------ | -------- |
+| Fixed window | 1 integer | Uncontrolled at edges | Yes, 2× | Rough quotas, low stakes |
+| Sliding log | N timestamps | Exact | No | Small key space, strict correctness |
+| Sliding counter | 2 integers | Smooth | No | The sane default at scale |
+| Token bucket | 2 numbers | Deliberate, bounded | No | Public APIs with bursty clients |
+| Leaky bucket | Queue | None by design | No | Protecting something spike-intolerant |
+
+</Table>
+
+<Figure>
+  <DiagramApiGateways2 />
+</Figure>
+
+<Lab
+  title="Build an API Rate Limiter in Redis"
+  tip="Include this atomic Redis Lua rate limiter in your portfolio as a benchmark of low-overhead distributed traffic policing."
+>
+
+Build this mini-project to implement custom token-bucket limits via shared cache:
+
+- **The Server:** Write an API server in Node.js or Python. Create a single endpoint `GET /api/data`.
+
+- **Redis Lua Script:** Write a Lua script for Redis that checks and decrements client tokens. The script should receive keys: `ratelimit:client_ip`, and arguments: `bucket_capacity`, `refill_rate`, and `now_timestamp`. By performing the calculations inside Redis in Lua, you ensure atomicity without lock churn:
+
+  ```lua
+  local key = KEYS[1]
+  local capacity = tonumber(ARGV[1])
+  local refill_rate = tonumber(ARGV[2])
+  local now = tonumber(ARGV[3])
+  local state = redis.call('HMGET', key, 'tokens', 'last_refill')
+  local tokens = tonumber(state[1]) or capacity
+  local last_refill = tonumber(state[2]) or now
+  local elapsed = math.max(0, now - last_refill)
+  tokens = math.min(capacity, tokens + elapsed * refill_rate)
+  if tokens >= 1 then
+    tokens = tokens - 1
+    redis.call('HMSET', key, 'tokens', tokens, 'last_refill', now)
+    return {1, tokens}
+  else
+    return {0, tokens}
+  end
+  ```
+
+- **Send Rate Limit Headers:** Run the Lua script in your middleware on every request. If returned status is `1`, allow the request and set headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`. If status is `0`, reject with `429 Too Many Requests` and a `Retry-After` header.
+
+- **Test Bursts:** Run a load test using `k6` and verify that bursts up to capacity are allowed, after which traffic flatlines perfectly to the refill rate.
+
+</Lab>
+
+</Collapse>
+
+<Collapse id="distributed" title="3. Rate limiting when there are twenty of you">
+
+Everything above assumes one counter. You have twenty gateway instances behind a load balancer, and the counter is now shared state — which makes this a distributed systems problem wearing an infrastructure problem's clothes.
+
+**Option one: divide the limit.** Twenty instances, limit 1000/min, so each allows 50. No coordination, no latency. It's also wrong in both directions: a client whose connections land unevenly gets throttled at well under 1000, and during a deploy the instance count changes and every effective limit silently moves with it. Fine for crude abuse prevention, unacceptable for a documented quota a customer is paying for.
+
+**Option two: a shared counter.** Redis, one atomic increment-and-check per request, executed as a script so the read and write cannot interleave. Accurate and simple, and the cost is a network round trip on every single request. At 50,000 requests per second with a 1 ms round trip, Little's Law says you're holding about 50 requests in flight waiting on the limiter continuously — plus you have created a hard dependency in front of your entire API.
+
+<Note type="warn" label="The limiter is now a single point of failure — decide in advance">
+
+Redis goes down. Do you **fail open** (serve everything unlimited, and hope the thing you were protecting survives) or **fail closed** (reject everything, and turn a limiter outage into a total outage)? Fail open is the usual answer for protection-oriented limits and the wrong one for limits enforcing paid quotas or preventing abuse. Whichever you choose, choose it deliberately and alert on it, because a limiter that has been silently failing open for three weeks is indistinguishable from one that is working right up until the day it isn't.
+
+</Note>
+
+**Option three: local buckets with async reconciliation.** Each instance keeps a local token bucket and periodically syncs its consumption to a shared store, adjusting its local allowance based on what the fleet has spent. Approximate, briefly over-permissive after a burst, and requires no round trip on the hot path.
+
+This is broadly the shape large providers converge on, because the alternative — perfect accuracy — costs a synchronous coordination step per request and is rarely worth it. If the limit genuinely must be exact, you are asking for consensus, and [Coordination & Consensus](/guides/coordination-consensus/) explains what that costs.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="Your limit is 100 requests per minute, fixed window. A client legitimately gets 200 through in under a second. How?" options={["The limiter counts per instance, and the client reached two instances", "The counter increment isn't atomic, so concurrent requests overwrote each other", "They straddled a window boundary: 100 just before the reset and 100 just after"]} answer={2}>
+
+They straddled a window boundary — 100 requests at 11:59:59 and 100 more at 12:00:00, each within its own window, both counters satisfied. The effective peak rate of a fixed-window limiter is twice its nominal rate over any interval spanning a reset, which matters because boundaries are exactly where bursts cluster: every cron job in the world starts on a round minute.
+
+A sliding-window counter fixes it by weighting the previous window's count by how much of it still overlaps the current instant, at a cost of one extra integer per key, and a token bucket avoids it entirely by making the allowance continuous rather than resetting. If your fixed-window limiter appears to be holding but the thing behind it keeps getting spiky load, this is the first place to look.
+
+</Quiz>
+
+<Quiz q="Your rate limiter's Redis goes down. Fail open or fail closed?" options={["Always fail open, so a limiter outage never becomes an API outage", "It depends on what the limit is for, so decide per limit and alert when you enter the fallback", "Always fail closed, because an unprotected API is worse than an unavailable one"]} answer={1}>
+
+It depends entirely on what the limit is *for*, which is why this must be decided per limit rather than globally. A limit protecting a fragile downstream from overload should probably fail closed or degrade to a conservative local limit, because failing open removes the protection precisely when you have already lost a component and are least able to absorb a surge.
+
+A limit enforcing a paid quota should usually fail open, because turning a limiter outage into a billing-enforcement outage that rejects paying customers is a much worse commercial outcome than briefly letting someone exceed their plan.
+
+The middle path most large systems take is to fall back to a per-instance local bucket sized at the fleet limit divided by the instance count — approximate, unfair at the margins, but bounded — and to alert loudly on entering that state, because the genuinely dangerous case is a limiter that has been silently failing open for weeks.
+
+</Quiz>
+
+<Quiz q="Twenty gateway instances, a documented limit of 1,000 requests/minute per customer. How do you enforce it without adding a Redis round trip to every request?" options={["Local token buckets that sync their consumption to a shared store off the hot path, accepting a bounded error", "Give each instance a fixed 50 per minute and never coordinate", "Use sticky sessions so each customer always lands on the same instance"]} answer={0}>
+
+You accept approximation and push the coordination off the hot path. Each instance keeps a local token bucket and reports its consumption to a shared store every few hundred milliseconds, receiving back the fleet's total spend and adjusting its local allowance accordingly — so an instance seeing heavy traffic from one customer learns within a fraction of a second that the fleet-wide budget is nearly gone and tightens up, without ever blocking a request on a network call.
+
+The error is bounded by what the fleet can consume in one sync interval, which you can make as small as your tolerance requires, and it degrades gracefully because an instance that loses contact with the shared store simply falls back to its local share.
+
+The alternative worth considering first is whether the limit needs to be exact at all: if it exists to protect infrastructure, approximate is fine and much cheaper, and it's only when the number is a contractual commitment that anyone is going to audit that precision starts earning its cost.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Scaling your API with rate limiters](https://stripe.com/blog/rate-limiters) — Stripe. The four limiters Stripe runs in production, with token-bucket code.
+- [How we built rate limiting capable of scaling to millions of domains](https://blog.cloudflare.com/counting-things-a-lot-of-different-things/) — Cloudflare. The sliding-window counter at scale, and how accurate the approximation turned out to be.
+- [Backends For Frontends](https://samnewman.io/patterns/architectural/bff/) — Sam Newman. The pattern for client-specific aggregation that keeps it out of the gateway.
+
+</Reading>

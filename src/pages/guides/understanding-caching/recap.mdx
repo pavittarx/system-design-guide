@@ -1,0 +1,79 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap and cheat sheet"
+description: "Understanding Caching in 60 seconds, with a cheat sheet and the numbers worth carrying in your head."
+chapter: "1"
+current: "1. Caching"
+sections:
+  - id: "recap"
+    title: "Recap & Cheat Sheet"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<Collapse id="recap" title="Recap & Cheat Sheet">
+
+<Recap>
+
+- A cache trades memory and a new class of bugs for latency and origin load. The bugs are the price, not a defect.
+- **Cache-aside** is the default: read cache, miss, read DB, fill, return; on write, update DB and *delete* the key. Deleting beats writing the new value, because two concurrent writers can land in either order.
+- "The app still works without the cache" means it degrades rather than errors. A cache absorbing 95% of reads leaves the database facing 20× its normal load the instant it goes cold.
+- Always set a TTL. It is the only mechanism that repairs an invalidation you got wrong, and you will get one wrong.
+- **Jitter fixes synchronised mass expiry** (many keys written together). **Single-flight fixes a hot key expiring** (one key, many concurrent misses). They are different problems; jitter does nothing for the second.
+- The **stale-forever race**: a slow reader writes its pre-update value into a slot the writer just cleared. Invalidation-on-write alone can't prevent it; the TTL is what eventually cleans it up.
+- Cache negative results deliberately, with a short TTL and a distinguishable sentinel. Not caching them at all is an open channel to your database.
+- A hot key is not fixed by more cache nodes — consistent hashing sends it all to one node anyway. Split the key, or add a client-local tier with a one-second TTL.
+- Personalised responses need `Cache-Control: private`. A shared cache keys on URL; getting `Vary` subtly wrong serves one user's page to another.
+- Version your keys (`v3:user:123`) so a serialisation change never forces you to choose between a flush and reading garbage.
+- Redis's `maxmemory-policy` defaults to `noeviction`: a full cache returns write errors instead of making room. Set `allkeys-lru`.
+- Once retries are amplifying, the outage is **self-sustaining**. Recovery is shedding load, not waiting.
+
+</Recap>
+
+### Numbers worth having in your head
+
+These are **order-of-magnitude figures, not benchmarks**. They exist so you can sanity-check a design in your head before you measure. Your hardware, payload sizes and network will move any of them by a factor of a few.
+
+<Table numeric>
+
+| Rough figure | What | Why it matters |
+| ------------ | ---- | -------------- |
+| ~100 ns | In-process hash lookup (Caffeine, a plain map) | Effectively free. No network, no serialisation. |
+| ~0.2–1 ms | Redis/Memcached round trip, same AZ | ~1,000–5,000× slower than local, still ~10× faster than a DB query. |
+| ~1–10 ms | Indexed database query, warm buffer pool | The thing you're avoiding. Add a lot if it goes to disk or joins. |
+| ~10–30 ms | CDN edge hit from a nearby POP | Dominated by the user's last-mile latency, not the cache. |
+| ~60–150 ms | Cross-region round trip (US coast-to-coast → transatlantic) | Speed of light. No cache tuning fixes this; move the data closer. |
+| 90–99% | CDN hit rate, fingerprinted static assets | If it's below this, something is defeating the cache key. |
+| 80–95% | Healthy object-cache hit rate, read-heavy workload | The normal target for cache-aside in front of a database. |
+| < 70% | Time to ask whether this cache earns its keep | Every miss now pays cache latency *plus* DB latency. |
+
+</Table>
+
+<Note type="key" label="The one-liner to remember">
+
+A cache is a second copy of the truth with its own lifetime, and every hard problem in caching is a consequence of that sentence. Give every entry a TTL, delete on write rather than overwriting, collapse concurrent misses into one query, and remember that the cache is now load-bearing — losing it is an outage you have to design for, not a graceful fallback you get for free.
+
+</Note>
+
+### Where to start
+
+If you're adding caching to something real, resist the urge to reach for the fanciest pattern. A reliable progression:
+
+- **Start with cache-aside + a TTL.** It's simple, resilient, and covers most read-heavy workloads.
+- **Measure the hit rate.** If it's low, you're caching the wrong things — fix that before adding machinery.
+- **Add TTL jitter from the start** — it is three lines and it prevents keys written together from expiring together. Note that it does nothing for a single hot key; that one needs single-flight.
+- **Reach for write-through, event-driven invalidation, or coalescing** only when the numbers actually ask for them.
+
+Add complexity in response to evidence, not anticipation. The best caching setup is the simplest one that hits your latency and freshness targets.
+
+</Collapse>
+
+<Footer>
+  [AWS — Database Caching Strategies Using Redis](https://docs.aws.amazon.com/whitepapers/latest/database-caching-strategies-using-redis/caching-patterns.html) ·
+  [Redis — Taming the Thundering Herd](https://redis.io/blog/how-to-tame-the-thundering-herd-problem/) ·
+  [Accreditly — HTTP Caching Headers](https://accreditly.io/articles/the-practical-guide-to-http-caching-headers-cache-control-etag-and-304s) ·
+  [ByteByteGo — A Crash Course in Caching](https://blog.bytebytego.com/p/a-crash-course-in-caching-final-part) ·
+  [Scaling Memcache at Facebook](https://read.engineerscodex.com/p/how-facebook-scaled-memcached) ·
+  [Netflix Open Connect](https://openconnect.netflix.com/) ·
+  [Prisma — Database Caching](https://www.prisma.io/dataguide/managing-databases/introduction-database-caching)
+</Footer>

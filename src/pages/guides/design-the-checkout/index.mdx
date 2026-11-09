@@ -1,0 +1,87 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Design the Checkout — System Design Basics"
+description: "Six guides taught you six tools. This one puts them in a room together, gives them a traffic number, and refuses to let you add anything a number hasn't forced."
+chapter: "12"
+current: "12. Designing Checkout"
+series:
+  lead: "The capstone to"
+  guides:
+    - { slug: understanding-caching, label: "Caching" }
+    - database-scaling
+    - load-balancing
+    - { slug: message-queues, label: "Message Queues" }
+    - { slug: reliability-toolkit, label: "Reliability" }
+    - consistency-cap
+sections:
+  - id: "brief"
+    title: "The brief, in numbers"
+  - id: "requirements"
+    title: "Requirements — and what we're not building"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<ColdOpen tag="◇ the order that was never placed">
+
+The card was charged. The customer has the bank notification on their phone, timestamped 14:02. Support has their order history open on the same screen and it is empty. Somewhere between "payment succeeded" and "order saved" the process died, and because those were two separate writes with nothing tying them together, the system ended up in the one state nobody designed for: money taken, nothing owed. There is no clever recovery here. There is only the design decision, made months earlier, about whether those two facts could ever disagree.
+
+</ColdOpen>
+
+<Collapse id="brief" title="1. The brief, in numbers">
+
+"Design the checkout for an e-commerce site." That's the whole brief, and it is useless until you turn it into arithmetic. The single most common failure in system design — in interviews and in real projects — is arguing about Kafka before anyone has worked out how many orders a second we're actually talking about.
+
+So ask, or assume out loud. Here is the shape we'll design against, and every number below is load-bearing:
+
+<Table numeric>
+
+| Number | What it is | Where it came from |
+| ------ | ---------- | ------------------ |
+| 1M | Orders on an ordinary day | Given. A large but not planetary retailer. |
+| 5M | Orders on the worst day of the year | Black Friday runs 5× a normal day. |
+| ~12/s | Average order rate | 1M ÷ 86,400. |
+| ~170/s | Peak order rate | Peak hour holds ~12% of the peak day: 600k ÷ 3,600. |
+| 200/s | What we'll actually design for | 170 plus headroom, because the number you design for should not be the number you predicted. |
+| ~120:1 | Browse-to-buy ratio | People look far more than they buy. This is the number that decides the read architecture. |
+| ~25,000/s | Peak read requests | 200 × 120. Two orders of magnitude above the write path. |
+| ~2.5 KB | One order plus its line items | ~1.5 KB order row, ~3 items at ~300 B. |
+| ~900 GB/yr | Raw order data | 365M orders × 2.5 KB. |
+| ~2 TB/yr | Order data with indexes | Indexes routinely double a transactional table. Budget for them. |
+| 7 years | Retention | Tax law, not product. Hot for 18 months, archived after. |
+
+</Table>
+
+<Note type="key" label="Read this line twice">
+
+**200 writes per second is not a lot.** A single well-tuned Postgres or MySQL instance on decent hardware handles 1,000–10,000 single-row writes per second. We are an order of magnitude below the ceiling of one box. Everything difficult about this design is on the *read* path and the *failure* path — and if you skip the arithmetic, you will spend three months sharding a database that was never the problem.
+
+</Note>
+
+The other number nobody asks for and everyone needs: **the latency budget.** How long may "Place order" take? Pick a target and defend it — say p99 under 800 ms, p50 under 300 ms. That single figure is what makes the rest of this guide decidable, because from here on, "can we do this synchronously?" has an arithmetic answer instead of an opinion.
+
+</Collapse>
+
+<Collapse id="requirements" title="2. Requirements — and what we're not building">
+
+Split these apart deliberately. Functional requirements are what it does; non-functional requirements are what makes the design hard. Interviewers care about the second list, and so should you.
+
+<CardGrid>
+  <Card title="Functional">
+    View a cart. Place an order. Take payment. Confirm to the customer. Reserve inventory so we don't sell the same item twice. Show order status and history. Let the customer cancel while it's still cancellable.
+  </Card>
+  <Card title="Non-functional">
+    p99 under 800 ms on checkout. Never charge without an order. Never lose an order we confirmed. Survive a payment provider being slow. Survive the loss of one availability zone. Absorb 5× traffic on a known date.
+  </Card>
+  <Card title="Explicitly out of scope">
+    Search and recommendations. Pricing and promotions engines. Returns and refunds beyond the compensating action. Fraud scoring beyond "there is a service and we call it." Multi-currency and tax calculation. Anything to do with the warehouse past handing it a message.
+  </Card>
+  <Card title="Assumptions stated out loud">
+    One region to start. Payment is an external provider, not something we build. Catalogue and pricing come from an existing service. Traffic peaks are known in advance, not surprises.
+  </Card>
+</CardGrid>
+
+Scoping out loud is not throat-clearing — it's the difference between a design you can defend and a design that grows a new requirement every time someone asks a question. The out-of-scope list is the most useful list on the page.
+
+</Collapse>
+

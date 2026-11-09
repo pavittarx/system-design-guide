@@ -1,0 +1,162 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "From naive to forced moves"
+description: "Part 1 of Design the Checkout. The day-one version, the number that breaks it, each component a number forces in, and the sharding we decline."
+chapter: "12"
+current: "12. Designing Checkout"
+sections:
+  - id: "naive"
+    title: "The naive version, and exactly where it breaks"
+  - id: "moves"
+    title: "The forced moves"
+  - id: "notshard"
+    title: "The move we are not making"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import DiagramDesignTheCheckout1 from '../../../components/diagrams/DiagramDesignTheCheckout1.astro';
+
+<Collapse id="naive" title="1. The naive version, and exactly where it breaks">
+
+Start with the thing you'd actually build on day one, because it's correct and it's fast to ship: one application server, one database, everything synchronous.
+
+```sql
+POST /checkout
+  1. validate cart
+  2. check inventory
+  3. charge the card          (external, ~250 ms)
+  4. write the order
+  5. decrement inventory
+  6. generate invoice PDF     (~400 ms)
+  7. send receipt email       (~600 ms, sometimes 6 s)
+  8. notify the warehouse     (~200 ms)
+  9. update analytics         (~100 ms)
+ 10. return 200 OK
+```
+
+Now apply the numbers. Steps 1–5 are the parts a customer is actually waiting for; steps 6–9 are roughly 1.3 seconds of work the customer does not care about and cannot see. Our budget was 800 ms. We are over it before anything goes wrong.
+
+And here is what breaks first, which is not what most people guess. It isn't the database — 200 writes a second is comfortable. It's **concurrency**. Little's Law says the number of requests in flight is throughput multiplied by latency:
+
+```trace
+**normal day**
+  12 orders/s × 1.9 s  =   23 in flight
+  thread pool of 200   =   fine
+
+**black friday**
+  200 orders/s × 1.9 s =  380 in flight
+  thread pool of 200   =   ~~queueing, then timeouts~~
+
+**black friday, slow email**
+  200 orders/s × 6.5 s = 1300 in flight
+  thread pool of 200   =   ~~total collapse in ~1 s~~
+```
+
+Read that last block again, because it contains the whole argument for everything that follows. The site does not go down because buying is hard. It goes down because *the email server had a slow afternoon* and we made every customer wait for it. Every request in the process is holding a thread while it waits, and threads are the resource that runs out. The [Reliability guide](/guides/reliability-toolkit/) covers this arithmetic in detail; here it is deciding our architecture on the first page.
+
+<Figure>
+  <DiagramDesignTheCheckout1 />
+</Figure>
+
+</Collapse>
+
+<Collapse id="moves" title="2. The forced moves">
+
+Now we build it up. The rule for this section — and for your own designs — is that **every move must be forced by a number or a failure.** Not by fashion, not by what the last place you worked used, and definitely not by what sounds impressive. If you can't name the figure that made a component necessary, the component is decoration.
+
+### Move 1 — split the request in two
+
+Steps 6–9 are not part of the transaction the customer is waiting on. Push them onto a queue and return as soon as the money is taken and the order is recorded. This is the single highest-leverage change in the entire design and it costs one component.
+
+```trace
+**synchronous, must finish now**
+  validate → reserve → charge → save
+  ≈ 260 ms
+
+**asynchronous, must finish soon**
+  invoice · receipt · warehouse
+  analytics · loyalty · recommendations
+  ≈ 1.3 s, nobody watching
+```
+
+Concurrency drops from 380 in flight to about 52 at peak, and the slow-email scenario stops existing: the email is now a message in a queue, and a queue getting longer is a metric, not an outage. See the [Queues guide](/guides/message-queues/) for why the queue must be bounded — an unbounded buffer just relocates the failure.
+
+### Move 2 — make the app tier stateless, then multiply it
+
+200 orders/s and 25,000 reads/s is more than one box, and one box is a single point of failure regardless. Put a load balancer in front and run many identical instances. The prerequisite is **statelessness**: no session in local memory, no cart on the local disk, nothing an instance knows that another instance couldn't reconstruct. Sessions go in a shared cache; carts go in the database with a cache in front.
+
+This move is what buys you rolling deploys, autoscaling, and surviving an instance death. It's also the move that makes every later move possible — the [Databases guide](/guides/database-scaling/) assumes a stateless app tier the moment it starts talking about replicas. Read the [Load Balancing guide](/guides/load-balancing/) for the settings that make this safe: connection draining so deploys don't produce error spikes, readiness distinct from liveness so a warming instance doesn't get traffic, and a health check that fails *before* the box is unusable rather than after.
+
+### Move 3 — cache the read path, because that's where the traffic is
+
+25,000 reads/s against a database that is comfortably handling 200 writes/s is the actual scaling problem, and it barely involves the checkout at all. It's people looking at products.
+
+The catalogue is nearly static, read enormously, and tolerant of being a few seconds stale — which is the exact profile of something that should be cached. A cache in front of the product and pricing reads takes the overwhelming majority of that 25,000 rps and never troubles the database with it. The [Caching guide](/guides/understanding-caching/) covers the two traps waiting here: jittered TTLs so a batch of keys written together doesn't expire together, and single-flight so a popular key expiring doesn't send a thousand simultaneous misses at the database.
+
+<Note type="warn" label="The thing you must not cache">
+
+Inventory counts on the checkout path. Everywhere else, staleness costs you a slightly wrong number on a page. Here it costs you an oversell, a cancelled order and an angry customer. We'll handle inventory explicitly in [Part 2](/guides/design-the-checkout/correctness/#staleness) — the rule for now is that the number you *display* and the number you *decrement* are two different values with two different consistency requirements, and conflating them is one of the most common bugs in commerce systems.
+
+</Note>
+
+### Move 4 — indexes first, then replicas
+
+Before adding any database machinery, check the queries. The [Databases guide](/guides/database-scaling/)'s rule zero applies: an unindexed lookup on a 400-million-row orders table will destroy you long before your write rate does, and adding replicas to a system with a missing index just gives you more machines running the same terrible query.
+
+Once the queries are honest, add read replicas for the things that genuinely only read: order history, admin reporting, the analytics extracts. Keep the checkout path on the primary. And note the trap now, because it will bite in [Part 3](/guides/design-the-checkout/trace/#break) — a customer who places an order and is immediately shown a history page served by a lagging replica will not see their own order. That's a read-your-writes violation, and it appears only under load, which means only in production.
+
+<Stack>
+  <Layer idx="1" title="Load balancer" speed="~1 ms">
+    L7, terminates TLS, routes by path, drains on deploy.
+  </Layer>
+  <Arrow />
+  <Layer idx="2" title="Stateless app instances" speed="n boxes">
+    Identical, disposable, autoscaled. No local state worth keeping.
+  </Layer>
+  <Arrow />
+  <Layer idx="3" title="Cache" speed="~1 ms">
+    Sessions, carts, catalogue, prices. Absorbs ~96% of read traffic.
+  </Layer>
+  <Arrow />
+  <Layer idx="4" title="Primary database" speed="~5 ms">
+    Orders, inventory, payments. All writes, plus checkout reads.
+  </Layer>
+  <Arrow />
+  <Layer idx="5" title="Read replicas" speed="lag: ms→s">
+    History, reporting, extracts. Never the checkout path.
+  </Layer>
+  <Arrow />
+  <Layer idx="6" title="Queue + consumers" speed="async">
+    Receipts, invoices, warehouse, analytics, loyalty.
+  </Layer>
+</Stack>
+
+</Collapse>
+
+<Collapse id="notshard" title="3. The move we are not making">
+
+Here is where most designs go wrong, including in interviews, where candidates shard because they think sharding is the answer the interviewer wants. Let's price it honestly.
+
+We write 200 orders/s at peak and roughly 12/s the rest of the year. We accumulate about 2 TB of order data per year including indexes, and 18 months of that is hot — call it 3 TB of working set, with the rest archived. A single modern database instance handles both of those figures without breathing hard. **Sharding is not indicated.**
+
+And the bill for doing it anyway, from the [Databases guide](/guides/database-scaling/): every schema migration becomes N migrations. Every backup becomes N backups plus a coordinated restore procedure you have to actually test. Cross-shard queries become scatter-gather or become unavailable. Cross-shard transactions become a saga, which means compensating actions, which means the intermediate state was visible to somebody. Resharding stops being a task and becomes a quarter.
+
+What you do instead, in this order, and only when a metric demands it: archive cold orders out of the hot table; partition the orders table by month so old data can be dropped and queries can prune; add replicas for anything that only reads; and move genuinely separate workloads — analytics, reporting — off the transactional database entirely.
+
+<Note type="key" label="The signal that would change our mind">
+
+Not "we're big now." Specifically: sustained write throughput within ~2× of what the instance can do, *or* a hot dataset that no longer fits in memory and won't after the next hardware tier, *or* a restore time that has grown past what the business will tolerate. Any of those is a real reason. None of them is currently true, so the correct architecture diagram has one database on it, and being able to say why is worth more than being able to draw sixteen.
+
+</Note>
+
+</Collapse>
+
+<Reading>
+
+- [The Twelve-Factor App: Processes](https://12factor.net/processes) — Adam Wiggins. Why app processes should be stateless and share nothing, with session state in a backing store.
+- [Use The Index, Luke](https://use-the-index-luke.com/) — Markus Winand. How indexes work and why queries ignore them; the check to run before reaching for replicas.
+- [Caching challenges and strategies](https://aws.amazon.com/builders-library/caching-challenges-and-strategies/) — AWS Builders' Library. Cold starts, thundering herds and request coalescing, from a team that runs caches at scale.
+
+</Reading>

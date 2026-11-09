@@ -1,0 +1,68 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap and numbers"
+description: "Design the Checkout in 60 seconds, and the numbers worth carrying in your head."
+chapter: "12"
+current: "12. Designing Checkout"
+sections:
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<Collapse id="recap" title="Recap in 60 seconds">
+
+<Recap>
+
+- **Numbers first.** Requests per second, read/write ratio, payload size, storage growth, latency budget. A design defended without them is a guess.
+
+- **Separate must-finish-now from must-finish-soon.** Take the money, record the order, return. Everything else is a message.
+
+- **Statelessness is the enabling move** — it's what makes load balancing, autoscaling and rolling deploys possible.
+
+- **The read path is usually the scaling problem.** 120:1 browse-to-buy means caching matters two orders of magnitude more than sharding.
+
+- **Indexes before replicas, replicas before sharding, and sharding probably never.** Name the metric that forces each rung.
+
+- **Two writes with no transaction between them is a bug waiting for a crash.** Outbox for your own events; idempotency keys for someone else's API.
+
+- **Consistency is a per-field decision.** The inventory you display and the inventory you decrement are different values with different rules.
+
+- **A timeout is a concurrency budget.** Bulkheads cap what any one dependency can consume; breakers stop you calling the dead; shedding is for too much load, not slow dependencies.
+
+- **Propagate deadlines, budget retries, retry at one layer only.**
+
+- **A queue with no headroom above its arrival rate never recovers.** Alert on consumer lag, not depth.
+
+- **Real incidents are components behaving as configured** in situations nobody pictured. The settings deserve more attention than the diagram.
+
+- **Every addition needs a signal.** No signal, no component.
+
+</Recap>
+
+<Table numeric>
+
+| Number | In this design |
+| ------ | -------------- |
+| 200/s | Peak orders — the write rate the whole design is sized for |
+| 25,000/s | Peak reads — 120× the writes, and the actual scaling problem |
+| 800 ms | p99 latency budget for checkout |
+| 261 ms | What the traced request actually costs |
+| 240 ms | Of which the external payment call is 92% |
+| ~2 TB/yr | Order data with indexes — comfortably one machine |
+| 1,600 | Concurrent slots a slow payment provider would demand, unguarded |
+| 300 | Bulkhead cap that keeps the rest of the site alive instead |
+| 240,000 | Messages after a 20-minute consumer outage |
+| N × 50 − 200 | Drain rate with N consumers. Below N=4, it never drains. |
+
+</Table>
+
+</Collapse>
+
+<Footer suffix=" — the capstone">
+  [AWS Builders' Library — Timeouts, Retries and Backoff with Jitter](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/) ·
+  [AWS Builders' Library — Using Load Shedding to Avoid Overload](https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/) ·
+  [Microservices.io — Transactional Outbox](https://microservices.io/patterns/data/transactional-outbox.html) ·
+  [Stripe — Idempotent Requests](https://stripe.com/docs/api/idempotent_requests)
+</Footer>

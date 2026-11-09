@@ -1,0 +1,171 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Consistency & the CAP Theorem — A Practical Guide"
+description: "When your data lives in more than one place, \"what is the current value?\" stops being a simple question — and physics forces you to choose what you're willing to give up."
+chapter: "6"
+current: "6. Consistency & CAP"
+series:
+  lead: "The capstone to"
+  guides:
+    - { slug: understanding-caching, label: "Caching" }
+    - database-scaling
+    - load-balancing
+    - { slug: message-queues, label: "Message Queues" }
+    - { slug: reliability-toolkit, label: "Reliability" }
+sections:
+  - id: "what"
+    title: 'What "consistency" means'
+  - id: "cap"
+    title: "The CAP theorem"
+  - id: "partition"
+    title: "Why partitions aren't optional"
+  - id: "pacelc"
+    title: "PACELC: the honest sequel"
+  - id: "check"
+    title: "Check your understanding"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Statement, Table } from '../../../components';
+import DiagramConsistencyCap1 from '../../../components/diagrams/DiagramConsistencyCap1.astro';
+
+<ColdOpen tag="◇ the $100 that existed twice">
+
+Your account has $100. You're at an ATM; your partner is at another across town. The two machines briefly can't reach the central system, but both let the withdrawal go through — better than freezing a customer's cash, right? You each take $100. The account is now at −$100, and the bank has handed out money it didn't have.
+
+Nobody wrote a bug. Two copies of "the balance" simply disagreed for a moment, and the system chose to *keep working* over staying *correct*. That choice — availability vs. consistency — is the whole subject of this guide.
+
+</ColdOpen>
+
+<Collapse id="what" title="1. What &quot;consistency&quot; actually means">
+
+On one machine, this is trivial: you write a value, you read it back, you get the value. The trouble starts the moment data is *copied* — to a replica, a cache, another region — which, as every other guide in this series showed, is exactly what you do to scale.
+
+**Consistency**, in the distributed sense, asks: when I read, am I guaranteed to see the most recent write, no matter which copy I hit? If yes, the system is *strongly consistent* — it behaves as if there were one copy. If reads can be briefly stale, it's *eventually consistent*. You've met this exact trade-off already as [cache staleness](/guides/understanding-caching/) and [replication lag](/guides/database-scaling/). This guide is the theory that unifies them.
+
+<Note type="warn" label="Two different words, spelled the same">
+
+The **C in CAP is not the C in ACID**, and almost every circular argument about consistency starts right here. CAP's C is **linearizability**: the system behaves as though there were exactly one copy of the data, and operations appear to take effect in an order that respects real time — if your write returned before my read started, I see your write.
+
+ACID's C is a completely different promise: *the database won't let you violate your own constraints* — foreign keys hold, `CHECK` passes, the balance doesn't go negative because you said it mustn't. One is about copies agreeing with each other; the other is about rules holding within one copy. A single-node Postgres gives you ACID's C in full and has nothing whatsoever to say about CAP's. When someone says "we need consistency," find out which word they're using before you design anything, because the two answers share no code.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="cap" title="2. The CAP theorem">
+
+The CAP theorem is the closest thing distributed systems has to a law of physics. It says a system can offer at most **two of three** guarantees:
+
+<CardGrid>
+  <Card title="C — Consistency">
+    Every read sees the latest write. All copies agree.
+  </Card>
+  <Card title="A — Availability">
+    Every request gets a (non-error) response, even if some nodes are down.
+  </Card>
+  <Card title="P — Partition tolerance">
+    The system keeps working even when the network splits and nodes can't talk to each other.
+  </Card>
+</CardGrid>
+
+<Note type="warn" label="The part everyone gets wrong">
+
+"Pick two" is misleading. In any real distributed system, **P is not optional** — networks *will* partition, and you don't get to opt out of reality. So the real choice is only ever between **C and A**, and only *during* a partition. That's it. That's the whole theorem, stripped of its mystique: *when the network breaks, do you return possibly-stale data (choose A) or refuse to answer (choose C)?*
+
+</Note>
+
+<Note label="The test that shows how little CAP tells you">
+
+A single node on a single machine is **trivially CP**. It never disagrees with itself, so every read sees the latest write; and when you can't reach it, it's simply unavailable. Perfect consistency, achieved by doing nothing.
+
+That should be a useful embarrassment: "we're CP" describes what a system does in one rare situation and tells you nothing about its latency, throughput, durability, isolation level, or behaviour on an ordinary day. CAP is a constraint on the design space, not a description of a design. PACELC exists because people kept treating it as one.
+
+</Note>
+
+<Note type="wild" label="◈ In the wild · ATM Offline Withdrawal Limits">
+
+Real-world ATMs explicitly configure offline limits to cap the bank's financial blast radius. When the central ledger connection is partitioned, ATMs enter AP mode and allow transactions up to $200. This deliberate business trade-off prioritizes customer availability over absolute ledger consistency.
+
+</Note>
+
+<Figure>
+  <DiagramConsistencyCap1 />
+</Figure>
+
+</Collapse>
+
+<Collapse id="partition" title="3. Why partitions aren't optional">
+
+A network partition is any moment your nodes can't reliably reach each other — a cut cable, a bad switch, an overwhelmed link, a whole region going dark. Over enough machines and enough time, this is not a maybe. So every distributed database has already, quietly, made a CAP choice on your behalf:
+
+- **CP systems** (choose Consistency) — during a partition, refuse reads/writes that can't be made safely. Correct, but some requests fail. Think: HBase, ZooKeeper, etcd, and RDBMS clusters run in CP mode.
+
+- **AP systems** (choose Availability) — during a partition, keep answering with whatever each node has, and reconcile later. Always up, sometimes stale. Think: Cassandra, DynamoDB, most caches and DNS.
+
+The ATM in the cold open chose **AP** — stay available, sort out the mess later. For a bank balance that's terrifying; for a shopping cart or a like-count it's exactly right. There is no universally correct answer, only a correct answer *for this data.* (A system that degrades to a cached or approximate answer instead of erroring is choosing A over C on purpose — that's the [graceful degradation](/guides/reliability-toolkit/) pattern wearing its CAP hat.)
+
+### Every partition is a timeout you configured
+
+Here's the part the textbook diagrams skip. You never actually *observe* a partition. No packet arrives announcing that the network has split. What you observe is that a node *didn't answer inside a window* — and you chose that window.
+
+Set the failure detector to 500 ms and a long GC pause becomes a partition. Set it to 30 s and the same event becomes "a slow request," while a genuinely dead node keeps taking traffic for half a minute. Same network, same hardware, different config file, different number of partitions per week.
+
+This is **gray failure**: nodes are rarely up or down, they're slow, and from the outside "slow" and "gone" are the same observation. A node answering in four seconds is in some ways worse than a crashed one, because a crashed node is at least unambiguous.
+
+The consequence for CAP is worth sitting with — **the P is not a natural phenomenon you detect, it's a threshold you set**, usually by copying a default. Shorten it and you get more partitions, each resolved faster. Lengthen it and you get fewer partitions, each of which hurts for longer. There is no setting that gives you zero.
+
+<Note type="wild" label="◈ In the wild · GitHub Split-Brain Outage">
+
+On October 21, 2018, GitHub's network connection between hubs dropped for just 43 seconds. Database cluster automation detected the partition and promoted a West Coast replica to primary. When the East Coast network healed, writes had diverged on both coasts. Cleaning up the split-brain state safely required 24 hours of manual data reconciliation by engineers.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="pacelc" title="4. PACELC: the sequel that tells the whole truth">
+
+CAP has a blind spot: it only describes behavior *during* a partition, which is rare. What about the 99.9% of the time the network is fine? **PACELC** extends it with a brutally honest addendum:
+
+<Statement>*If **P**artition, choose **A** or **C** — **E**lse (normal operation), choose **L**atency or **C**onsistency.*</Statement>
+
+### PACELC Theorem Matrix
+
+<Table>
+
+| Database / System | If Partition (P) | Else Normal (E) | System Trade-Off Profile | Typical Database Example |
+| :--- | :--- | :--- | :--- | :--- |
+| **PC / EC** | Consistency | Consistency | Maximum correctness; highest latency | Spanner, CockroachDB, PostgreSQL |
+| **PA / EL** | Availability | Latency | Maximum availability & speed; eventual consistency | Cassandra, DynamoDB (default) |
+| **PA / EC** | Availability | Consistency | High availability under partition; consistent when calm | MongoDB (configurable) |
+| **PC / EL** | Consistency | Latency | Strict consistency under partition; low latency when calm | Rare hybrid systems |
+
+</Table>
+
+In plain terms: even when everything is healthy, keeping all your copies perfectly in sync *costs time* — you have to wait for the other nodes to confirm. So there's a permanent, everyday trade-off between being **fast** and being **perfectly consistent**, partition or not. This is why strongly-consistent databases feel slower: they're paying the coordination tax on every write. Latency vs. consistency is the tax you pay all day; availability vs. consistency is the bill that comes due during a partition.
+
+<Note type="key" label="The branch that actually runs">
+
+Read PACELC again and notice which half of it fires more often. A partition is an *incident* — a handful of minutes a year if you're unlucky, and someone writes a postmortem about it. The **else** branch fires on every request, from every user, all day, forever.
+
+Does this read go to the leader or to a replica? Does this write return after one ack or after a majority? Does the cross-region hop happen before you answer or after? You will make that call several million times before lunch. A guide that teaches only CAP has taught you the branch that almost never fires and skipped the one you live in. If you take one sentence from this page: **your everyday trade-off is L versus C, not A versus C.**
+
+</Note>
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="Your monitoring shows partitions jumped 4× after a deploy that changed nothing about the network. What probably happened?" options={["A switch or cable started failing at the same time as the deploy", "Something shortened a timeout or slowed responses past one; partition count is a property of your failure detector", "The deploy added replicas, and more replicas means more links that can partition"]} answer={1}>
+
+Somebody changed a timeout, or changed something that made responses slower until they crossed one. You never detect partitions; you detect non-answers within a window you chose, so partition count is a property of your failure detector as much as your network. Look for a shortened client or health-check timeout, a new synchronous call on a hot path, or a GC/heap change that lengthened pauses past the threshold. The fix is usually to tune the detector deliberately rather than to go hunting for a cable.
+
+</Quiz>
+
+<Quiz q="Your team says &quot;we chose AP.&quot; What have they actually committed to on a normal, partition-free Tuesday?" options={["Strictly nothing, but in practice the else-branch: low-latency writes, with stale reads and concurrent-write conflicts every day", "Strong consistency, because AP only changes behaviour during a partition", "Higher write latency, because AP systems wait for every replica to acknowledge"]} answer={0}>
+
+Strictly speaking, nothing — CAP only describes behaviour during a partition, and partitions are rare. That's the trap: "we're AP" is a statement about a few minutes a year. What they've almost certainly *also* signed up for, without saying so, is the else-branch: low-latency writes that return before all replicas agree, which means stale reads and concurrent-write conflicts every single day. The right follow-up question is never "are we AP?" but "what's our conflict resolution rule, and who wrote it?"
+
+</Quiz>
+
+</Collapse>
+

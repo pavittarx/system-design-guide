@@ -1,0 +1,47 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap"
+description: "Seeing Inside the Machine in 60 seconds, and the sources behind it."
+chapter: "7"
+current: "7. Observability"
+sections:
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+
+<Collapse id="recap" title="Recap in 60 seconds">
+
+<Recap>
+
+- **Monitoring answers known questions; observability answers new ones.** The failure that takes you down is the one nobody put on the dashboard.
+
+- **Three signals, three jobs.** Metrics say *that* something is wrong (cheap, but cardinality-bound). Traces say *where* (sampled). Logs say *why* (linear in traffic, therefore expensive).
+
+- **Averages hide everything that matters.** 99 requests at 20 ms and one at 2 s averages to a healthy-looking 40 ms. Use percentiles — and never average percentiles across hosts; aggregate buckets instead.
+
+- **Watch saturation, not just utilization.** Utilization stops carrying information at 100%; queue depth keeps counting.
+
+- **Cardinality is a multiplication.** Labels must be bounded and small. Never a user ID, a raw URL path, or anything from user input. Use events and exemplars for the unbounded stuff.
+
+- **An SLO turns reliability into a budget.** 99.9% over 30 days is 43.2 minutes. Spend the budget deliberately; agree the freeze policy before you need it.
+
+- **Alert on symptoms and burn rate, never on causes.** Add a minimum-volume floor so 3 a.m. arithmetic doesn't page anyone.
+
+- **Missing data is not zero,** and a monitoring system that fails silently is worse than none.
+
+</Recap>
+
+</Collapse>
+
+<Footer>
+  [Google SRE Book — Monitoring Distributed Systems](https://sre.google/sre-book/monitoring-distributed-systems/) ·
+  [Google SRE Workbook — Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) ·
+  [Brendan Gregg — The USE Method](https://www.brendangregg.com/usemethod.html) ·
+  [Grafana — The RED Method](https://grafana.com/blog/2018/08/02/the-red-method-how-to-instrument-your-services/) ·
+  [HdrHistogram — coordinated omission](http://hdrhistogram.org/) ·
+  [Prometheus — Histograms and summaries](https://prometheus.io/docs/practices/histograms/) ·
+  [W3C — Trace Context](https://www.w3.org/TR/trace-context/) ·
+  [OpenTelemetry documentation](https://opentelemetry.io/docs/)
+</Footer>

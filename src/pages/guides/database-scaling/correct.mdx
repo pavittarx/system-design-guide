@@ -162,7 +162,9 @@ A transaction makes your writes atomic; it doesn't stop other transactions from 
 
 <Quiz q="You moved the payment path to SERIALIZABLE. At peak, logs fill with 'could not serialize access' errors. What should you do?" options={["Retry the whole transaction from BEGIN with backoff, and keep external side effects out of the retried block", "Drop back to Read Committed, because the errors mean Serializable is misbehaving", "Add more connections so the transactions stop colliding"]} answer={0}>
 
-No — that is the database doing its job. It found two transactions whose combined result couldn't have happened one after the other, and it aborted one instead of letting it corrupt data. The contract of `SERIALIZABLE` is that *you retry the whole transaction* from `BEGIN`, re-reading everything, with backoff. Two cautions: anything with a side effect outside the database (an email, a card charge) must not happen inside the retried block — or must be idempotent, see [Message Queues](/guides/message-queues/); and if retries pile up at peak, the contention is real and an atomic conditional write may be the better tool.
+No — that is the database doing its job. It found two transactions whose combined result couldn't have happened one after the other, and it aborted one instead of letting it corrupt data.
+
+The contract of `SERIALIZABLE` is that *you retry the whole transaction* from `BEGIN`, re-reading everything, with backoff. Two cautions: anything with a side effect outside the database (an email, a card charge) must not happen inside the retried block — or must be idempotent, see [Message Queues](/guides/message-queues/); and if retries pile up at peak, the contention is real and an atomic conditional write may be the better tool.
 
 </Quiz>
 

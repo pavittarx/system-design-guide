@@ -1,0 +1,90 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Purging and serving stale"
+description: "Part 2 of CDNs & the Edge. Taking cached content back with purges, versioned URLs and surrogate keys, and serving stale on purpose."
+chapter: "9"
+current: "9. CDNs & Edge"
+sections:
+  - id: "purge"
+    title: "Purge, and why versioned URLs win"
+  - id: "stale"
+    title: "Serving stale on purpose"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+
+<Collapse id="purge" title="1. Purge, and why versioned URLs win">
+
+Sooner or later you ship something wrong and it is cached in ninety countries. Purging is how you take it back, and there are two flavours.
+
+A **hard purge** evicts the object outright. The next request is a miss and goes to origin. It is decisive and it is dangerous: purge something popular during peak traffic and every PoP simultaneously misses on it, which is precisely the thundering herd the shield exists to prevent.
+
+A **soft purge** instead marks the object as stale without deleting it. The next request still gets served the old bytes immediately while the CDN revalidates in the background — one origin request, no latency spike, and the fix propagates within a second or two rather than instantly. Soft purge is almost always what you want.
+
+<Note type="warn" label="Purge is eventual, not atomic">
+
+A purge is a message that must reach every PoP. Modern CDNs do this in well under a second, but "well under a second" is not "immediately", and a purge that fails to reach one PoP fails silently.
+
+**Never treat purge as a compliance control.** If content must be unreachable for legal reasons, take it down at origin *and* purge *and* verify — do not assume the purge did it.
+
+</Note>
+
+The better answer is to never need a purge. If the URL contains a content hash — `/app.4f9a2c1e.js` instead of `/app.js` — then a new build produces a new URL, which is a new cache key, which is a guaranteed miss. Nothing to invalidate, because nothing was ever wrong. The old file can keep its one-year TTL forever; it is simply never requested again.
+
+This is the standard pattern for every static asset: fingerprint the filename, set `Cache-Control: public, max-age=31536000, immutable`, and let the HTML — which is short-TTL or uncached — be the single thing that changes. You get maximum cache lifetime on the heavy files and instant deploys, at the cost of one uncacheable document per page load. The `immutable` directive is the finishing touch: it tells the browser not to even send a revalidation request on refresh, which is otherwise a wasted round trip per asset.
+
+For content you cannot fingerprint — an article, a product page — use **surrogate keys** (Fastly's term; Cloudflare calls them cache tags). You attach arbitrary tags to a response at origin, like `Surrogate-Key: product-8817 category-shoes`, and later purge by tag. Change one product's price and you purge `product-8817`, which evicts the product page, the three category pages it appears on, and the sitemap fragment, in one call, without you having to know which URLs those were.
+
+</Collapse>
+
+<Collapse id="stale" title="2. Serving stale on purpose">
+
+The naive lifecycle of a cached object is: fresh, then expired, then a user waits while you refetch. That last step is the problem. The user who happens to arrive one millisecond after expiry pays the full origin round trip on behalf of everyone else, and if the origin is slow or down, they pay much worse than that.
+
+RFC 5861 defines two directives that fix this, and they are among the highest-value single lines of configuration in web performance.
+
+<Note type="key" label="The two directives">
+
+`Cache-Control: max-age=60, stale-while-revalidate=600`
+
+For 60 seconds the object is fresh. For the *next* 600 seconds it is stale-but-servable: the requesting user gets the old bytes **immediately**, and the CDN refetches in the background. Nobody ever waits for a revalidation.
+
+`Cache-Control: max-age=60, stale-if-error=86400`
+
+If the origin returns 5xx or times out, serve the stale copy anyway for up to a day rather than propagating the error.
+
+</Note>
+
+`stale-while-revalidate` converts your cache from something that periodically stalls into something that is asynchronously always warm. The user-visible p99 stops containing origin latency at all. `stale-if-error` is closer to a reliability feature than a performance one: it means a total origin outage degrades your site to "slightly out of date" rather than "down", which for a content site is nearly free availability.
+
+The decision you are actually making is a **staleness budget**: how wrong is this allowed to be, for how long? A stock ticker's budget is a second. A blog post's budget is an hour. A pricing page's budget is however long your commercial team can tolerate. Write the budget down per content type, then set TTLs from it, rather than picking TTLs by feel and discovering the budget during an incident.
+
+Note the interaction with the arithmetic from earlier: origin load per PoP is 60 ÷ TTL requests per minute. A 10-second TTL caps origin at six fetches per minute per PoP no matter how much traffic arrives — and with `stale-while-revalidate`, all six are background fetches that no user is waiting on. Short TTLs stop being expensive once revalidation is off the critical path.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="A user in Berlin reports stale content. Everyone else sees the new version. Where do you look?" options={["Their ISP's resolver, which may still point at a retired PoP", "The age and PoP headers on their response, then whether the purge reached every tier, then their browser cache", "Nowhere yet; purges are eventual, so it will clear by itself within the hour"]} answer={1}>
+
+Start with the response headers from *their* request: the CDN's age header tells you how long that PoP has held the object, and the PoP identifier tells you which one served it. If age is greater than your TTL, the object is being served stale — check whether `stale-while-revalidate` or `stale-if-error` is masking a failing origin fetch from that PoP specifically.
+
+If age is small, the purge did not reach that PoP, or it reached it after that PoP had already re-fetched from a shield that still held the old copy. Tiered caching means "purge" has to clear every tier; purging the edge but not the shield reintroduces the old object immediately.
+
+And check the obvious one: their browser cache. If you served `max-age=31536000` on a non-fingerprinted URL, no purge you issue will ever reach them. That is a bug you cannot fix from the CDN — only by changing the URL.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [RFC 5861: HTTP Cache-Control Extensions for Stale Content](https://www.rfc-editor.org/rfc/rfc5861.html) — IETF. The two directives, `stale-while-revalidate` and `stale-if-error`, in four pages.
+- [Getting started with purging](https://www.fastly.com/documentation/guides/concepts/edge-state/cache/purging/) — Fastly. Hard and soft purges, and purging by key.
+- [Surrogate-Key](https://www.fastly.com/documentation/reference/http/http-headers/Surrogate-Key/) — Fastly. Tagging responses at origin so one call can purge every URL that shows a product.
+
+</Reading>

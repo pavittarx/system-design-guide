@@ -1,0 +1,175 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Split brain, locks and leases"
+description: "Part 2 of Getting Machines to Agree. Why two leaders is worse than none, how fencing tokens stop a paused process from corrupting data, and how to time a lease."
+chapter: "10"
+current: "10. Coordination"
+sections:
+  - id: "split"
+    title: "Split brain and fencing"
+  - id: "locks"
+    title: "Distributed locks are a lie you can manage"
+  - id: "leases"
+    title: "Leases: locks with an expiry date"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import DiagramCoordinationConsensus2 from '../../../components/diagrams/DiagramCoordinationConsensus2.astro';
+
+<Collapse id="split" title="1. Split brain and fencing">
+
+Split brain is what happened to GitHub: a partition, both sides believing they are authoritative, both sides accepting writes, and afterwards no principled way to merge. Consensus protocols prevent it internally via majority rule. The danger is at the boundary — where a system that *uses* the consensus store acts on what it was told.
+
+Consider the classic sequence, which is subtle enough that it has broken production systems built by careful people:
+
+```trace
+Client A acquires lock             ++ok, A is the writer++
+Client A begins a long GC pause    **17 s**
+  ├─ lock lease expires at the store
+  │    ~~A no longer holds it — but A doesn't know~~
+  └─ Client B acquires the lock    ++ok, B is the writer++
+Client B writes to storage         ++ok++
+Client A wakes up, still believing it holds it
+Client A writes to storage
+  ~~← corruption: two writers, B's write clobbered~~
+```
+
+Nothing failed here. The lock service was correct. The network was fine. Client A simply stopped executing for longer than the lease, which a stop-the-world garbage collection, a hypervisor migration, or a heavily oversubscribed host can all cause. When it resumed, its belief about the world was stale, and it had no way to know.
+
+<Note type="key" label="Fencing tokens">
+
+Every time the lock is granted, the store returns a **monotonically increasing number**. The client must pass that number with every write to the protected resource, and the resource must **reject any write whose token is lower than the highest it has already seen**.
+
+In the trace above: A holds token **33**, B is granted token **34**. B writes with 34; storage records 34. A wakes and writes with 33; storage sees 33 &lt; 34 and **rejects it**. The corruption cannot happen, regardless of how long A was asleep.
+
+</Note>
+
+The crucial property is that fencing does not require the client to be correct. It requires the *resource* to check. Any scheme that depends on the paused process noticing it was paused is not a solution, because the entire problem is that it cannot notice. This is the same fencing concept introduced in [Consistency & the CAP Theorem](/guides/consistency-cap/), and it is the single most important idea in this guide.
+
+The other family of mitigations is **STONITH** — "shoot the other node in the head" — where the new leader forcibly powers off or network-isolates the old one before taking over, typically through a management interface or a storage fence. It is heavy-handed and requires infrastructure most teams do not have, but where it exists it converts an ambiguous "probably dead" into a verified "definitely dead", which is a genuinely stronger thing to know.
+
+<Figure>
+  <DiagramCoordinationConsensus2 />
+</Figure>
+
+</Collapse>
+
+<Collapse id="locks" title="2. Distributed locks are a lie you can manage">
+
+A single-process mutex is a real thing: acquiring it genuinely excludes everyone else, because there is one memory location and one CPU enforcing it. A distributed lock is a message saying you may proceed, sent over a network that can delay it, to a process that can pause after receiving it. It is advice, not enforcement.
+
+So the first question is always: **what breaks if the lock fails?** The answers divide sharply.
+
+<CardGrid>
+  <Card pill="Efficiency locks" tone="mid">
+    "Only one worker should regenerate this cache entry." If two do, you waste some CPU and nothing is wrong. A cheap lock in Redis is fine. Failure is a cost, not a bug.
+  </Card>
+  <Card pill="Correctness locks" tone="bad">
+    "Only one process may write this file / charge this card / advance this counter." If two do, you have corruption or a duplicate charge. Nothing short of consensus plus fencing tokens is adequate.
+  </Card>
+</CardGrid>
+
+Most locks people reach for are efficiency locks wearing correctness clothing, and most of the argument about lock implementations evaporates once you classify yours honestly.
+
+The common Redis pattern is `SET key value NX PX 30000` — set if not exists, with a 30-second expiry — releasing with a Lua script that deletes only if the value still matches your unique token. That last detail matters: a plain `DEL` lets you delete a lock that has already expired and been re-acquired by someone else. Even done correctly, this is a single-node lock, and if that Redis fails over to a replica that had not yet received the write, two clients hold the lock simultaneously.
+
+**Redlock**, which acquires across multiple independent Redis nodes, was proposed to address this and was the subject of a well-known critique by Martin Kleppmann: its safety argument depends on bounded clock drift and bounded process pauses, and neither is something you can assume. The practical conclusion is not "Redlock is broken" so much as "if you need the property Redlock is arguing about, you need fencing tokens anyway, and if you have fencing tokens the argument stops mattering."
+
+For correctness locks, use a real consensus store — etcd, ZooKeeper, Consul — and use the sequence number it gives you as a fencing token at the resource. That combination is sound. Anything else is you deciding, hopefully deliberately, that occasional double execution is acceptable.
+
+<Lab
+  title="Build a Distributed Lock with Fencing Tokens"
+  tip="Add this fenced lock simulation to your portfolio to show deep understanding of distributed consistency boundary enforcement."
+>
+
+Build this mini-project to implement safe lease-based mutual exclusion using Redis and PostgreSQL/SQLite:
+
+- **Acquire Lock & Token:** Write a script that acquires a 5-second lease in Redis for a resource name, returning a token generated by an atomic counter (`INCR lock_version:resource_id`).
+
+- **Database Schema:** Create a mock table in SQLite or PostgreSQL:
+
+  ```sql
+  CREATE TABLE resource_state (
+    id INT PRIMARY KEY,
+    data TEXT,
+    last_fencing_token INT DEFAULT 0
+  );
+  ```
+
+- **Enforce Fencing:** Write a function to update the database state that verifies the fencing token. The database must reject the update if the incoming token is smaller than `last_fencing_token`:
+
+  ```python
+  def write_with_fencing(db_conn, resource_id, new_data, token):
+      cursor = db_conn.cursor()
+      # Atomic conditional update
+      cursor.execute("""
+          UPDATE resource_state
+          SET data = ?, last_fencing_token = ?
+          WHERE id = ? AND ? > last_fencing_token
+      """, (new_data, token, resource_id, token))
+      if cursor.rowcount == 0:
+          raise Exception("Write rejected: Outdated fencing token!")
+  ```
+
+- **Simulate the GC Pause:** Spawn Client A (Token 1). Sleep A for 6 seconds to simulate a GC pause. Meanwhile, lease expires and Client B acquires lock (Token 2), writing to database successfully. Client A wakes up, tries to write, and verify that the database throws the fencing error!
+
+</Lab>
+
+</Collapse>
+
+<Collapse id="leases" title="3. Leases: locks with an expiry date">
+
+A lock held by a crashed process is held forever. That single sentence is why almost every practical distributed lock is really a **lease**: a lock with a time limit, which the holder must periodically renew or lose.
+
+Leases turn "detect that the holder died" — impossible, per [Why agreement is hard](/guides/coordination-consensus/#why) — into "wait for the lease to expire" — trivially possible. You have replaced an undecidable question with a timer, and the price is that the timer is a guess, which brings back the pause problem from [section 1](#split). Hence: leases *and* fencing tokens, always together.
+
+<Note type="warn" label="Whose clock?">
+
+The lease must be timed by the **store**, not the client. If the client decides when its lease expires, a client whose clock runs slow believes it still holds a lease that the store has already given away.
+
+Even at the store, use a **monotonic clock** for elapsed time, never wall-clock time. NTP steps, leap-second smearing, and VM snapshot restores all move wall clocks backwards, and a clock that jumps backwards extends every lease silently.
+
+</Note>
+
+Choosing the duration is the usual trade in a new costume. A short lease (1–2 s) means fast recovery after a crash but frequent renewals, more load on the store, and a real risk that a brief GC pause loses you a lease you never actually stopped needing. A long lease (30–60 s) is cheap and stable but means a crashed leader blocks progress for up to a minute.
+
+Kubernetes' default leader election uses a 15-second lease renewed every 10 — a reasonable middle for control-plane work where a 15-second gap is survivable.
+
+Note that a lease is exactly what a Raft leader has, made explicit. The heartbeat interval *is* a lease renewal; the election timeout *is* the lease duration. Once you see that, "leader election" and "distributed locking" stop looking like two topics.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="A client acquires a lease, gets paused by garbage collection, and resumes. How do fencing tokens protect the backend store from corruption?" options={["The client checks its token with the lock store before each write and aborts if it has been superseded", "The lock store closes the paused client's session, so its late write never reaches storage", "The storage resource rejects any write whose token is lower than the highest it has already seen"]} answer={2}>
+
+Fencing tokens are monotonically increasing numbers generated by the lock server whenever a lock is acquired. When Client A acquires the lock, it gets token 33. While A is paused, the lease expires and Client B acquires the lock, getting token 34. B successfully writes to the database, which records the last seen token as 34.
+
+When A wakes up, it attempts to write using token 33. The database compares 33 with the current token (34), sees that 33 &lt; 34, and rejects the write. This prevents Client A from overwriting B's updates, moving the safety check from the client (which cannot detect its own pauses) to the storage resource itself.
+
+</Quiz>
+
+<Quiz q="What's the difference between an efficiency lock and a correctness lock, and why does this distinction change the implementation?" options={["If an efficiency lock fails you waste some work; if a correctness lock fails you corrupt data, so only the latter needs consensus plus fencing tokens", "Efficiency locks are held briefly and correctness locks for a long time, so only the latter needs a lease", "Efficiency locks live in the application and correctness locks in the database, so only the latter survives a process pause"]} answer={0}>
+
+An efficiency lock exists to avoid doing duplicate work. If the lock fails and two nodes hold it, you burn some CPU. The correct implementation is the cheap one: a Redis `SET NX PX`, no consensus, no fencing, and an accepted small rate of double execution.
+
+A correctness lock exists to protect an invariant — one writer to a file, one charge to a card. If it fails, you have corruption or a customer complaint. It needs a consensus-backed store *and* fencing tokens enforced at the resource, because the lock alone cannot survive a process pause.
+
+The reason the classification matters is that people argue about lock implementations in the abstract and reach for heavy machinery for efficiency locks while shipping correctness locks with none. Decide which one you have first; the implementation follows immediately.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [How to do distributed locking](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html) — Martin Kleppmann. The fencing-token argument and the critique of Redlock, in full.
+- [October 21 post-incident analysis](https://github.blog/news-insights/company-news/oct21-post-incident-analysis/) — GitHub. The split brain from the cold open, told by the people who reconciled it.
+- [The Chubby lock service for loosely-coupled distributed systems](https://research.google/pubs/the-chubby-lock-service-for-loosely-coupled-distributed-systems/) — Google. Where lock-service leader election and sequencers (fencing tokens) come from.
+- [Leases](https://kubernetes.io/docs/concepts/architecture/leases/) — Kubernetes. How a production control plane uses leases for leader election and node heartbeats.
+
+</Reading>

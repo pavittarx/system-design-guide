@@ -2,18 +2,43 @@
 // src/pages/system-design-basics-complete.astro
 import MainLayout from '../layouts/MainLayout.astro';
 import Header from '../components/Header.astro';
-import { Content as CachingContent } from './guides/understanding-caching.mdx';
+import { Content as CachingP0 } from './guides/understanding-caching/index.mdx';
+import { Content as CachingP1 } from './guides/understanding-caching/patterns.mdx';
+import { Content as CachingP2 } from './guides/understanding-caching/failure.mdx';
+import { Content as CachingP3 } from './guides/understanding-caching/production.mdx';
+import { Content as CachingP4 } from './guides/understanding-caching/lab.mdx';
+import { Content as CachingP5 } from './guides/understanding-caching/recap.mdx';
 import { Content as DBOverview } from './guides/database-scaling/index.mdx';
 import { Content as DBFast } from './guides/database-scaling/fast.mdx';
 import { Content as DBCorrect } from './guides/database-scaling/correct.mdx';
 import { Content as DBOffload } from './guides/database-scaling/offload.mdx';
 import { Content as DBSplit } from './guides/database-scaling/split.mdx';
 import { Content as DBRecap } from './guides/database-scaling/recap.mdx';
-import { Content as LBContent } from './guides/load-balancing.mdx';
-import { Content as MQContent } from './guides/message-queues.mdx';
-import { Content as ReliabilityContent } from './guides/reliability-toolkit.mdx';
-import { Content as ConsistencyContent } from './guides/consistency-cap.mdx';
-import { Content as CheckoutContent } from './guides/design-the-checkout.mdx';
+import { Content as LBP0 } from './guides/load-balancing/index.mdx';
+import { Content as LBP1 } from './guides/load-balancing/layers.mdx';
+import { Content as LBP2 } from './guides/load-balancing/health.mdx';
+import { Content as LBP3 } from './guides/load-balancing/failure.mdx';
+import { Content as LBP4 } from './guides/load-balancing/recap.mdx';
+import { Content as MQP0 } from './guides/message-queues/index.mdx';
+import { Content as MQP1 } from './guides/message-queues/delivery.mdx';
+import { Content as MQP2 } from './guides/message-queues/ordering.mdx';
+import { Content as MQP3 } from './guides/message-queues/running.mdx';
+import { Content as MQP4 } from './guides/message-queues/recap.mdx';
+import { Content as ReliabilityP0 } from './guides/reliability-toolkit/index.mdx';
+import { Content as ReliabilityP1 } from './guides/reliability-toolkit/timeouts.mdx';
+import { Content as ReliabilityP2 } from './guides/reliability-toolkit/containment.mdx';
+import { Content as ReliabilityP3 } from './guides/reliability-toolkit/practice.mdx';
+import { Content as ReliabilityP4 } from './guides/reliability-toolkit/recap.mdx';
+import { Content as ConsistencyP0 } from './guides/consistency-cap/index.mdx';
+import { Content as ConsistencyP1 } from './guides/consistency-cap/spectrum.mdx';
+import { Content as ConsistencyP2 } from './guides/consistency-cap/conflicts.mdx';
+import { Content as ConsistencyP3 } from './guides/consistency-cap/transactions.mdx';
+import { Content as ConsistencyP4 } from './guides/consistency-cap/recap.mdx';
+import { Content as CheckoutP0 } from './guides/design-the-checkout/index.mdx';
+import { Content as CheckoutP1 } from './guides/design-the-checkout/design.mdx';
+import { Content as CheckoutP2 } from './guides/design-the-checkout/correctness.mdx';
+import { Content as CheckoutP3 } from './guides/design-the-checkout/trace.mdx';
+import { Content as CheckoutP4 } from './guides/design-the-checkout/recap.mdx';
 
 import { withBase } from '../lib/guides';
 ---
@@ -29,18 +54,43 @@ import { withBase } from '../lib/guides';
       </div>
     </div>
 
-    <CachingContent />
+    <CachingP0 />
+    <CachingP1 />
+    <CachingP2 />
+    <CachingP3 />
+    <CachingP4 />
+    <CachingP5 />
     <DBOverview />
     <DBFast />
     <DBCorrect />
     <DBOffload />
     <DBSplit />
     <DBRecap />
-    <LBContent />
-    <MQContent />
-    <ReliabilityContent />
-    <ConsistencyContent />
-    <CheckoutContent />
+    <LBP0 />
+    <LBP1 />
+    <LBP2 />
+    <LBP3 />
+    <LBP4 />
+    <MQP0 />
+    <MQP1 />
+    <MQP2 />
+    <MQP3 />
+    <MQP4 />
+    <ReliabilityP0 />
+    <ReliabilityP1 />
+    <ReliabilityP2 />
+    <ReliabilityP3 />
+    <ReliabilityP4 />
+    <ConsistencyP0 />
+    <ConsistencyP1 />
+    <ConsistencyP2 />
+    <ConsistencyP3 />
+    <ConsistencyP4 />
+    <CheckoutP0 />
+    <CheckoutP1 />
+    <CheckoutP2 />
+    <CheckoutP3 />
+    <CheckoutP4 />
   </div>
 </MainLayout>
 

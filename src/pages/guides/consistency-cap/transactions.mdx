@@ -1,0 +1,93 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Transactions and read-your-writes"
+description: "Part 3 of Consistency & CAP. Two-phase commit, sagas and compensation across services, and the read-your-writes anomaly users actually notice."
+chapter: "6"
+current: "6. Consistency & CAP"
+sections:
+  - id: "txn"
+    title: "Transactions, 2PC & sagas"
+  - id: "ryw"
+    title: "Read-your-writes"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Statement, Table } from '../../../components';
+import DiagramConsistencyCap2 from '../../../components/diagrams/DiagramConsistencyCap2.astro';
+
+<Collapse id="txn" title="1. Transactions, 2PC, and sagas">
+
+On a single database, **ACID transactions** make several changes all-or-nothing: transfer money between two accounts and either both sides happen or neither does. Bliss. But once those accounts live on different [shards or services](/guides/database-scaling/), a single transaction can't span them cheaply — distributed transactions (two-phase commit) are slow and fragile.
+
+"Slow" is the complaint people repeat; the blocking window is the actual problem. In **two-phase commit**, the coordinator asks every participant to *prepare*. A participant that votes yes has made a durable promise that it *can* commit, and to keep that promise it holds its locks and waits.
+
+Now kill the coordinator between collecting the votes and broadcasting the decision. Every participant is stuck: it can't commit unilaterally, because someone else may have voted no; it can't abort, because someone else may already have been told to commit. So it holds those locks and blocks — potentially until a human intervenes.
+
+A protocol whose worst case is "rows are locked until the on-call engineer wakes up" is not one you want on your checkout path. (The modern answer is to make the coordinator itself a replicated, consensus-backed group so it can't simply vanish — which works, and costs you another round of coordination.)
+
+So distributed systems often trade the guarantee for a **saga**: break the operation into a sequence of local steps, each with a *compensating* undo. Charge the card → reserve the item → book shipping. If shipping fails, run the compensations backward: un-reserve the item, refund the card. You lose instant atomicity and gain *eventual* correctness — the system passes through briefly-inconsistent states but always lands somewhere valid. It's consistency rebuilt out of Lego instead of carved from marble.
+
+<Note type="warn" label="Compensation is not rollback">
+
+A rollback erases history: after an `ABORT`, nobody ever saw the intermediate state, because isolation hid it. A **compensating transaction is a new, forward action that approximately undoes an old one** — and in the gap between the two, the intermediate state was visible to everybody. Refunding a charge is not the same as never charging. The customer saw the charge, their bank saw it, the fraud model saw it, and if it pushed them into an overdraft the refund doesn't unpush them.
+
+Worse, some steps have no compensation at all: you cannot un-send an email, un-ship a parcel, or un-tell someone their loan was approved.
+
+The design consequence is concrete — **order your saga so the reversible steps come first and the irreversible ones last**, and where you can, reserve rather than commit (hold the seat, don't sell it) so the "undo" is releasing a hold instead of retracting a fact. And since compensations run in a failure path, they will themselves fail and be retried, which means they must be [idempotent](/guides/message-queues/) too.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="ryw" title="2. Read-your-writes: the anomaly users actually notice">
+
+Almost everything so far is invisible to your users. This one is not, and it generates more support tickets than every other consistency bug combined.
+
+Someone posts a comment. The write goes to the primary. The page reloads, the read is load-balanced to a replica that's 200 ms behind, and their comment isn't there. From inside the system this is textbook, expected [replication lag](/guides/database-scaling/), working exactly as designed. From outside it is "your site ate my comment" — so they post it again, and now you have a duplicate, which is a data problem born entirely from a perception problem.
+
+You've violated **read-your-writes** ([rung 4 of the ladder](/guides/consistency-cap/spectrum/#spectrum)), which is the cheapest guarantee on the whole spectrum and the one users treat as non-negotiable. Three ways to buy it back, in increasing order of correctness:
+
+- **Route the writer to the primary for a window.** After a user writes, send *their* reads to the primary for the next few seconds — session-sticky routing, the same mechanism as in the [Load Balancing guide](/guides/load-balancing/). Simple, and two catches: it adds read load to the node you least want loaded, and the window has to cover your *p99* lag, not your average, or you've just made the bug rarer and harder to reproduce.
+
+- **Carry a version token.** The write returns its position in the replication stream — an LSN in Postgres, a GTID in MySQL. The client hands that token back with the next read, and the router either waits for a replica to catch up to it or picks one that already has. This is the correct fix: it's precise, it degrades to "slightly slower read" rather than "wrong answer," and it costs you a token on the wire.
+
+- **Pin the session to one replica** to get monotonic reads as well, so a refresh never shows *older* data than the previous one. Cheap, and it stacks with the above.
+
+Rendering the new comment optimistically from the write response is worth doing for the feel of it, but be clear about what it is: it fixes the perception, not the data. Refresh on a second device and the ticket comes back.
+
+<Figure>
+  <DiagramConsistencyCap2 />
+</Figure>
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="A user posts a comment and doesn't see it on refresh. Which consistency model did you violate, and what's the cheapest fix?" options={["Read-your-writes; route that user's reads to the primary for a window sized to p99 replication lag", "Linearizability; move the comments table to a consensus-backed store", "Eventual consistency; reduce replication lag by adding more replicas"]} answer={0}>
+
+Read-your-writes — the read went to a replica that hadn't applied their write yet. Cheapest real fix is session-sticky routing: send that user's reads to the primary for a few seconds after they write. Size the window against p99 replication lag, not the average, or you've made the bug rare instead of gone.
+
+The more correct version is to return the write's LSN/GTID and have the read wait for a replica that has reached it. Note the collateral damage of not fixing it: users re-submit, so a perception bug becomes duplicate rows.
+
+</Quiz>
+
+<Quiz q="Product wants strong consistency across three continents with a p99 write latency under 50 ms. What do you tell them?" options={["It is doable with a faster consensus protocol and tuned network paths", "Use quorum writes with R + W > N; that gives strong consistency at local latency", "It is physics: a majority write needs 60–90 ms to the second-closest region, so shrink the globally consistent data until it can afford that"]} answer={2}>
+
+That it's a physics request, not an engineering one. A majority write across three continents needs at least one round trip to the second-closest region, which is 60–90 ms before your code does anything, and consensus protocols often want more than one round.
+
+Then negotiate the actual requirement: which specific data needs global agreement? Usually it's a thin slice — balances, unique names, seat inventory — that can be pinned to a home region and accessed strongly from there, while the other 95% goes regional with session guarantees. You shrink the strongly-consistent set until it fits the budget; you don't make the round trip shorter.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Sagas](https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf) — Garcia-Molina and Salem, SIGMOD 1987. The original paper: a long-lived transaction split into steps, each with a compensating transaction.
+- [Pattern: Saga](https://microservices.io/patterns/data/saga.html) — Chris Richardson, microservices.io. Sagas applied across services, with choreography and orchestration compared.
+- [Read Your Writes](https://jepsen.io/consistency/models/read-your-writes) — Jepsen. The precise definition of the guarantee users notice, and how it relates to the other session guarantees.
+
+</Reading>

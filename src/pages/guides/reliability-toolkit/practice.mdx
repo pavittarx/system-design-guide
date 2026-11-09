@@ -1,0 +1,304 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Putting it together"
+description: "Part 3 of The Reliability Toolkit. Matching each failure to the tool that stops it, the arithmetic behind cascades, the gotchas that show up in postmortems, and chaos testing."
+chapter: "5"
+current: "5. Reliability Toolkit"
+sections:
+  - id: "which-wall"
+    title: "Which wall stops which flood"
+  - id: "arithmetic"
+    title: "Do the arithmetic"
+  - id: "gotchas"
+    title: "The gotchas that actually bite"
+  - id: "chaos"
+    title: "Testing with chaos"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<Collapse id="which-wall" title="1. Which wall stops which flood">
+
+Everything so far is a toolbox, and a toolbox is where reliability advice usually stops. But nobody is ever handed a ticket that says "cascading failure, please apply patterns." You get a graph that's the wrong shape and four minutes to decide. The question that matters is narrower: **which flood am I looking at, and which wall stops that one?** Reach for the wrong tool and you'll spend the outage carefully tuning something that was never the problem.
+
+<Table>
+
+| The flood | The wall | The wrong tool, and why it does nothing |
+| --------- | -------- | --------------------------------------- |
+| **A dependency has gone slow but not dead**<br />Calls still succeed, they just take 5s instead of 50ms. | A **timeout** to bound the wait, a **bulkhead** to cap how much of your capacity it can occupy, and a **breaker** that counts timeouts as failures. | *Load shedding.* You aren't overloaded, you're blocked. Rejecting your own callers frees nothing, because the resource that's exhausted is threads waiting on someone else. |
+| **A dependency is hard down**<br />Connection refused, every time, instantly. | A **circuit breaker** plus a designed **fallback**. Stop paying the round trip to learn what you already know. | *Retries.* Every attempt is a guaranteed failure with latency attached, and in aggregate they're a denial-of-service attack on a service that's already trying to come back. |
+| **One bad tenant is eating all the capacity**<br />Everyone else is fine; one caller has a runaway loop. | **Bulkheads** — per-tenant pools, quotas, or fair queueing, so one caller's share is bounded by construction. | *Global load shedding.* It works, in the sense that amputation works. You punish every well-behaved customer to contain one, and the offender keeps its proportional share of what's left. |
+| **Offered load exceeds total capacity**<br />Nothing is broken. There is simply more work than machine. | **Load shedding** and admission control at the edge, immediately; autoscaling behind it, on a slower clock. | *A circuit breaker.* Every dependency is healthy, so nothing trips. The breaker watches happily while the queue grows and latency climbs until requests are timing out on the client side before you ever look at them. |
+| **A transient network blip**<br />One failure, no pattern, gone by the time you look. | **Retry** — with exponential backoff, jitter, a low cap, and a budget. This is the one case retries were invented for. | *Opening a circuit.* A breaker tuned tightly enough to trip on a single blip will spend its life cutting you off from a perfectly healthy dependency. |
+| **A dependency whose output is nice-to-have**<br />Recommendations, related items, the badge count. | **Graceful degradation**: an aggressive timeout, a static or cached fallback, and a page that renders without it. | *Retrying it.* You're spending the checkout path's latency budget on a sidebar. If it isn't worth failing the request for, it isn't worth waiting for either. |
+
+</Table>
+
+<Note type="key" label="The two mix-ups that cost the most incident time">
+
+**A circuit breaker does nothing about too much load.** It only knows "is this dependency answering?" — and during an overload, everything is answering, just slowly and to too many people. **Load shedding does nothing about a slow dependency.** It throws away work at your front door while your threads stay parked on someone else's port.
+
+Same-looking dashboards, opposite floods, different walls. The tell is where the waiting is happening: if your threads are blocked on outbound calls it's the first, if they're blocked on inbound queue depth it's the second.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="arithmetic" title="2. Do the arithmetic">
+
+Cascading failure gets described in metaphors — dominoes, floods, avalanches — which makes it feel like weather. It isn't. It's a multiplication you can do on a napkin, and the reason a cascade is so fast is that the multiplier is large.
+
+### Little's Law, and why a slow dependency kills every endpoint
+
+One formula does most of the work here: `concurrency = throughput × latency`. If you serve 400 requests a second and each takes 50 ms, then at any instant about 20 requests are in flight. That's it. That's the law. Now watch what happens when only the latency term moves.
+
+```trace
+**concurrency = throughput × latency**
+
+**healthy**
+  throughput          400 req/s
+  p99 latency          50 ms  (0.05 s)
+  concurrency         400 × 0.05  =  ++20 slots in use++
+  thread pool         200 slots
+                      → 10× headroom, feels generous
+
+**the downstream call slows to 5 s**
+  throughput          400 req/s
+                      (unchanged — callers don't know yet)
+  latency            5000 ms  (5 s)   → 100× worse
+  concurrency         400 × 5     =  ~~2000 slots needed~~
+  thread pool         200 slots       → short by 1800
+
+**time from "slow" to "down"**
+  free slots at t=0   180
+  arrival rate        400 req/s
+  completions         none for 5 s
+  180 ÷ 400        =  ~~0.45 seconds~~
+```
+
+Latency went up 100×, so required concurrency went up 100×, and the pool you thought had ten times the headroom you'd ever need was gone in under half a second. Note that nothing crashed and no error was logged by the thing that caused it. The dependency is still returning `200 OK`, just eventually.
+
+Now the part that turns a feature problem into an outage: **the pool is shared.** Every request that arrives after those 180 slots are gone gets nothing — the login page, the health check, the status endpoint, the one endpoint in your service that has never once called recommendations. That's the cold open, in numbers. A slow dependency doesn't degrade the feature that uses it; it takes the whole process, because threads and connections are the currency all your endpoints spend.
+
+<Note type="key" label="The line worth memorising">
+
+**A timeout is a concurrency budget.** Rearranged, the law says the most concurrency a dependency can ever consume is `throughput × timeout`. Setting a timeout of 5 seconds on a call that takes 400 requests a second isn't a latency decision — it's you authorising that call to occupy 2000 slots. Nobody would sign that if it were written down. It usually is, in a config file, as `timeout: 5000`.
+
+</Note>
+
+Redo it for your own service and you'll see why timeouts alone don't save you. Drop the timeout from 5 s to 1 s and the arithmetic gives `400 × 1 = 400` slots — still double the pool. A tight timeout buys you time; it doesn't buy you a bound, because the throughput term is set by your users and not by you.
+
+The bound is what a **bulkhead** is for, and the same formula sizes it. Give recommendations its own pool of 20 connections and the answer stops depending on how fast the dependency is: 20 is the most it can ever take, and everything else fails instantly at the bulkhead instead of queuing inside your process.
+
+Run it the other way — `throughput = concurrency ÷ latency` — and you get the shape of the degraded state: `20 ÷ 5 = 4` requests a second still get real recommendations, the other 396 get the fallback, and checkout never notices. That's the whole toolkit in one line of arithmetic: the outage became a slightly worse sidebar.
+
+### The nines multiply, and that's the problem
+
+The other arithmetic people skip is what a chain of dependencies does to an availability figure. Availability composes by multiplication, not by averaging, and multiplication of numbers below 1 only goes one direction.
+
+```trace
+ten hard dependencies, each at three nines (99.9%)
+
+  0.999¹⁰     =  ~~0.99004~~   →  99.0%
+                 about ~~87 hours~~ of downtime a year
+
+compare: three nines on its own
+  0.999       =  99.9%     →  about ++8.8 hours++ a year
+```
+
+A service that depends on ten things each at three nines **cannot itself be at three nines.** It starts its life at 99.0% and then subtracts whatever its own bugs cost. You don't get to promise your users an availability number better than the product of everything you hard-depend on, and no amount of care in your own code changes that — you'd be trying to be more reliable than your inputs.
+
+Two honest caveats, both of which matter. First, this assumes failures are *independent*, and they usually aren't: shared availability zones, a shared config push, a shared identity service. Correlated failure makes the real number worse than the arithmetic, not better.
+
+Second, it assumes every dependency failure becomes *your* failure — and breaking that assumption is precisely what this entire guide is about. A timeout with a designed fallback converts a dependency's outage into a degraded response instead of an outage of your own, which takes that dependency out of the product entirely.
+
+<Note label="The number actually worth tracking">
+
+Not "how many dependencies do I have" but **"how many *hard* dependencies do I have"** — the ones with no fallback, where their bad day is definitionally your bad day. Count them. That count is your availability ceiling, and the useful reliability work is nearly always moving items off that list rather than making each one slightly better.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="gotchas" title="3. The gotchas that actually bite">
+
+The five walls are the part that fits on a slide. What follows is the part that shows up in postmortems.
+
+### Retry budgets: backoff controls timing, not volume
+
+Exponential backoff and jitter decide *when* retries happen. Nothing in either decides *how many*. During a broad outage, every client is failing, so every client is retrying, and politely staggered retries are still a multiplied traffic load arriving at a service that is already on the floor. Backoff spreads the stampede over a few seconds; it does not make it smaller.
+
+The volume control is a **retry budget**: a token bucket, refilled by *successful* requests, that permits retries only up to a small fraction of live traffic — on the order of 10%. The property this gives you is the one you want: when a few calls fail, retries are free and they work. When everything fails, there are no successes refilling the bucket, the budget empties, and retries simply stop. The system loses its ability to amplify its own outage at exactly the moment that ability would be most destructive.
+
+Pair it with the other rule: **retry at exactly one layer.** Three retries in the client SDK, three in the API gateway, and three in the service is not nine attempts — it's 3 × 3 × 3 = **27 requests** hitting the bottom of the stack for one user action, generated by three teams who each individually did the responsible thing.
+
+Pick the layer that knows enough to judge whether a retry is safe, retry there, and make every other layer fail fast. The [queues guide](/guides/message-queues/) has the other half of this: retries are only safe on operations that are idempotent.
+
+### Deadline propagation: a timeout set per hop is a lie
+
+Every service in the chain sets its own timeout, independently, based on its own sensible reasoning. The caller waits 1 second. The service it calls waits 3. So one second in, the caller has given up, returned an error to the user, and moved on — while the callee is still working, still holding a connection, still hammering the database, producing an answer that will be written to a socket nobody is reading. Under load, a meaningful share of your capacity goes to computing responses that are already garbage.
+
+The fix is to pass the **remaining deadline** down with the request — a header, a context object, whatever your stack calls it — and have each hop check it before starting work and refuse anything it can't plausibly finish in time.
+
+```sql
+POST /checkout           deadline = now + 1000ms
+  └─ POST /inventory     remaining: 940ms   → ok, proceed
+└─ SELECT ...     remaining: 780ms   → ok, proceed
+  └─ POST /recommend     remaining: 120ms   → p99 is 300ms
+→ refuse now, return fallback
+(don't start work nobody will wait for)
+```
+
+This is what makes timeouts *compose*. Without it you have a pile of unrelated numbers that happen to be in the same request path; with it you have one budget, spent down the stack, with every hop able to see how much is left.
+
+### Metastable failure: the outage that outlives its cause
+
+This is the most important idea missing from most reliability writing, and it's the one that produces the 3 a.m. phone call nobody can explain. Some systems, once pushed past a threshold, **stay collapsed after the original trigger is gone.** The deploy was rolled back twenty minutes ago. The slow query was killed. The dependency has been green for a while now. The service is still down.
+
+The reason is that the outage manufactured its own new load. The queued [retries](/guides/message-queues/) from every client that failed during the incident are still arriving. The [caches went cold](/guides/understanding-caching/) while the service was unavailable, so every request that does get through is now a full cache miss and costs ten times what it used to. Connection pools are churning.
+
+That combination — retry backlog plus cold cache — is, by itself, more load than the system can serve, which produces more failures, which produces more retries. The trigger is long gone; the feedback loop it created is self-sustaining.
+
+<Note type="war" label="The counter-intuitive part">
+
+**You cannot wait a metastable failure out.** Recovery requires actively removing load — aggressive shedding, flushing retry queues, sometimes turning traffic off entirely and reintroducing it in slices while caches refill. Deliberately taking down a service that is already down, at 3 a.m., is a call that must be decided, written down and rehearsed in advance. A 2021 HotOS paper named this failure mode *metastable failure*; a team that has the word recognises the shape in minutes instead of hours.
+
+</Note>
+
+### Gray failure: nothing is ever cleanly dead
+
+Every diagram in this guide implies a binary — up or down, healthy or failed, closed or open. Real outages are almost never that considerate. A node that is *slow*. A node failing *5%* of requests. A node that answers `GET /health` perfectly and cannot serve a single real query because the connection pool to its database is exhausted. A node that looks healthy to the load balancer sitting next to it in the same rack, and unreachable to the clients in another region.
+
+Each of these evades a binary health check, which is why gray failures last so much longer than clean ones: your automation sees nothing wrong and does nothing, while your users see everything wrong. The defences are behavioural rather than binary — health checks that exercise the real dependency path rather than returning a constant, latency-based ejection rather than error-based, breakers that count slow responses as failures, and outlier detection that compares a node against its peers instead of against a threshold.
+
+<Note type="key" label="The line to keep">
+
+**Every network partition is, in practice, a timeout you configured.** No packet ever arrives announcing a partition. There is only silence, and a number you chose that decides how long silence is allowed to last before it counts as failure. Which means the boundary between "slow" and "dead" isn't a property of the network — it's a product of your config file.
+
+</Note>
+
+### Fail open or fail closed is a product decision
+
+The auth service is down. Does the door open, or does it stay shut? Fail open and you're serving users you can no longer authenticate. Fail closed and you're locking out every legitimate customer over a dependency they've never heard of. The fraud checker is down — do you take the payment, or refuse the money? There is no engineering answer to either. There is a revenue answer, a legal answer, and a trust answer, and they don't all point the same way.
+
+Two things follow. First, **someone with the authority to make that trade-off must decide before the incident**, because during the incident the decision falls to whoever is on call, who does not have that authority and is guessing.
+
+Second, **the right answer differs per feature** within the same system: the session-validity check on a "recently viewed" widget can fail open without anyone caring, and the same check on the admin panel absolutely cannot. Treating fail-open as a system-wide switch is how you end up with one setting that's wrong somewhere important.
+
+### Circuit breaker tuning is where breakers go wrong
+
+The state machine is the easy part; nobody gets that wrong. The thresholds are where breakers earn their reputation for being more trouble than they're worth.
+
+Set them **too tight** — trip on 3 failures, or on a 10% error rate — and the breaker opens on ordinary background noise. You've now cut yourself off from a dependency that was fine, and you'll do it repeatedly, converting a service that was 99.5% available into one you refuse to call.
+
+Set them **too loose** — 90% errors over a five-minute window — and it never opens at all during the incident it existed for. Anything with a 5% error rate, which is most gray failures, will never cross a threshold set on error rate alone. And a breaker evaluated over too few requests trips on statistical noise: require a minimum volume in the window, or a quiet endpoint will open a circuit on the strength of two unlucky calls.
+
+Then **half-open**, which is the state people forget to tune. When the cooldown expires, the recovering service must be probed by a *trickle* — a handful of requests, one at a time. If every instance in your fleet resumes full traffic at the same moment the cooldown ends, you have built a synchronised stampede aimed at a service with cold caches and empty pools, and you will knock it straight back down. The same jitter that fixes retry timing belongs on breaker cooldowns for exactly the same reason.
+
+### And then the human factors, which cause more downtime than any of this
+
+Every mechanism in this guide is executed by tired people reading a screen at 3 a.m. That's the actual runtime environment, and it's the one least often designed for.
+
+<CardGrid>
+  <Card title="The runbook nobody has run">
+
+  Written once, at the end of a project, by someone who has since left. It references a dashboard that was renamed and a script that requires permissions the on-call doesn't have. A runbook is a hypothesis until someone has followed it start to finish.
+
+  </Card>
+  <Card title="The dashboard nobody can read">
+
+  Sixty panels, no ordering, and nothing that answers "is it us or is it them?" in the first five seconds. At 3 a.m. you get one glance. If the top of the page doesn't say what's broken, the dashboard is decoration.
+
+  </Card>
+  <Card title="Alerts too noisy to hear">
+
+  Every page that didn't need a human trains the next one to be ignored. Alert fatigue isn't laziness — it's a correctly learned response to a channel with a bad signal rate, and the real alert dies in that noise.
+
+  </Card>
+  <Card title="The unrehearsed rollback">
+
+  "We can always roll back" is a claim about a procedure nobody has performed under pressure. Then it turns out the migration wasn't backward-compatible, and you discover this during the incident rather than during a Tuesday.
+
+  </Card>
+  <Card title="Recovery paths that only run in emergencies">
+
+  Code that executes exclusively during disasters gets tested exclusively during disasters. Failover, fallback, restore, shed — anything on that list which hasn't run this month should be assumed broken.
+
+  </Card>
+  <Card title="The fix: make them routine">
+
+  The most reliable systems aren't the ones with the best failure handling. They're the ones whose failure handling runs constantly — failover as a weekly exercise, restores on a schedule, breakers that trip in normal operation and nobody notices.
+
+  </Card>
+</CardGrid>
+
+Which is the honest argument for the next section. [Chaos engineering](#chaos) isn't about breaking things for sport — it's the mechanism that moves a recovery path from the "only runs in emergencies" column to the "runs every Tuesday" column. That's the entire value proposition.
+
+<Note type="wild" label="◈ In the wild · Knight Capital rollback">
+
+In 2012, trading firm Knight Capital deployed new logic to 8 server instances, but one server didn't receive the update due to a manual deploy mismatch. The old code remained active, leading to automated stock purchases that lost the firm $440M in 45 minutes. This incident highlighted the necessity of automated rollbacks, deployment validation, and peer outlier detection.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="chaos" title="4. Testing with chaos">
+
+Here's the punchline to all of the above: **a failure path you've never triggered probably doesn't work.** Backups you don't restore, failovers you don't rehearse, circuit breakers you've never watched trip — they're all theories until tested. So the boldest teams break things *on purpose*, in production, during business hours, to prove the safety nets hold.
+
+<Note type="wild" label="◈ In the wild · Netflix Chaos Monkey">
+
+After a painful 2008 database outage and the move to AWS that followed, Netflix built [Chaos Monkey](https://netflixtechblog.com/the-netflix-simian-army-16e57fbab116) — part of a wider toolkit it called the "Simian Army" — to randomly terminate production instances during business hours. The point was to force every service to actually tolerate a sudden instance vanishing rather than merely hope it would, turning resilience into something continuously tested instead of quietly assumed.
+
+</Note>
+
+Netflix pioneered this with **Chaos Monkey**, a tool that randomly kills live servers to force engineers to build systems that don't care when a server dies. If a random instance vanishing is a non-event, then a real one dying at 3 AM is also a non-event — and everyone sleeps. Chaos engineering is just the discipline of finding your weaknesses before they find you.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="Recommendations has slowed to 4 seconds and your whole site is now failing, including endpoints that never call it. Do you shed load?" options={["Yes. The site is overloaded, so rejecting some traffic at the door frees capacity", "Yes, but only on the endpoints that call recommendations", "No. Threads are parked on an outbound call; you need a tight timeout, a bulkhead, a breaker that counts timeouts, and a fallback"]} answer={2}>
+
+No — you'd be treating the wrong flood. Shedding helps when there's more work than machine; here there's plenty of machine, and it's all parked on blocked threads waiting for an outbound call. Rejecting your own callers frees nothing.
+
+The right walls are a tight timeout (the concurrency you're spending on that call is throughput × timeout), a bulkhead so recommendations can only ever occupy its own small pool, a breaker that counts timeouts — not just errors — as failures, and a fallback so the page still renders. The general tell: threads blocked on outbound calls means dependency trouble, threads blocked on inbound queue depth means overload.
+
+</Quiz>
+
+<Quiz q="&quot;Our service is 99.99% available and it depends on four services that are each 99.9%.&quot; What's wrong with that sentence?" options={["Nothing, as long as each dependency runs in a different availability zone", "Availability multiplies: four hard dependencies at 99.9% cap you near 99.6%, unless fallbacks take them off the hard-dependency list", "Availability averages, so the honest figure sits somewhere between 99.9% and 99.99%"]} answer={1}>
+
+Availability composes by multiplication, so four hard dependencies at three nines put your ceiling at 0.999⁴ ≈ 99.6% — around 35 hours a year — before your own code contributes a single bug. You cannot be an order of magnitude more available than your inputs.
+
+The sentence is only rescuable if those four aren't *hard* dependencies: if each one has a timeout and a designed fallback, its outage becomes a degraded response rather than yours, and it drops out of the product entirely. That's the real point — the fix isn't making four services better, it's moving them off the hard-dependency list.
+
+</Quiz>
+
+<Quiz q="The dependency recovered ten minutes ago and your service is still down. What's happening, and what do you do?" options={["A metastable failure: the retry backlog and cold caches keep you down, so actively remove load and reintroduce traffic in slices", "The circuit breaker is still open; shorten its cooldown so it starts probing sooner", "Caches are still warming; wait a few more minutes and the service will recover on its own"]} answer={0}>
+
+This is a metastable failure: the outage created its own load — a backlog of client retries plus caches that went cold while you were unavailable — and that load alone is now enough to keep you down. The original trigger is irrelevant; you're stuck in a feedback loop it started.
+
+Waiting will not fix it, because nothing in the loop decays on its own. You escape by actively removing load: shed aggressively, drop or drain the retry backlog, and if necessary take traffic to zero and reintroduce it in slices so caches can refill against a survivable request rate. Yes, that means deliberately taking down something already down — which is why it should be a written, pre-approved procedure rather than a judgement call at 3 a.m.
+
+</Quiz>
+
+<Quiz q="The auth service is down. Do you fail open or fail closed?" options={["Fail closed everywhere, because security always outranks availability", "Fail open everywhere, because locking out every customer costs more than any breach", "Neither by default: it is a product decision, made per feature and in advance, by someone with the authority to make it"]} answer={2}>
+
+There is no engineering answer — it's a product decision about which risk the business prefers, and it must be made per feature rather than per system. Failing open on a session check for a "recently viewed" widget costs nothing; failing open on the admin panel or a payment authorisation is how you end up explaining yourself to a regulator.
+
+Failing closed on everything is safer and may still be the wrong answer if it means zero revenue for the duration. The engineering obligation is to surface the choice to someone with the authority to make it, in advance, and to build the switch so it can actually be flipped per feature during an incident — not to guess at 3 a.m.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Metastable Failures in Distributed Systems](https://sigops.org/s/conferences/hotos/2021/papers/hotos21-s11-bronson.pdf) — Bronson et al., HotOS 2021. The paper that named the outage that outlives its trigger, and the feedback loops that sustain it.
+- [Principles of Chaos Engineering](https://principlesofchaos.org/) — principlesofchaos.org. The short definition of chaos engineering: experiments against steady-state behaviour, run in production.
+
+</Reading>

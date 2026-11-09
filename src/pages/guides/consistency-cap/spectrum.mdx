@@ -1,0 +1,199 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "The spectrum and quorums"
+description: "Part 1 of Consistency & CAP. The ladder from linearizable to eventual, and what a read/write quorum does and does not promise when the network splits."
+chapter: "6"
+current: "6. Consistency & CAP"
+sections:
+  - id: "spectrum"
+    title: "The consistency spectrum"
+  - id: "quorum"
+    title: "Quorums: tuning the dial"
+  - id: "trace"
+    title: "A quorum under partition"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Statement, Table } from '../../../components';
+
+<Collapse id="spectrum" title="1. The consistency spectrum">
+
+"Strong vs. eventual" is a ladder, not a switch. Each rung below drops one promise and buys back coordination — which is to say, latency. Read it downward and watch what you're giving up.
+
+<Stack>
+  <Layer idx="1" title="Linearizable" speed="money · locks · leaders">
+    One global order that respects real time. If your write returned before my read began, I see it. This is CAP's C.
+  </Layer>
+  <Arrow>↓ drop the real-time tie ↓</Arrow>
+  <Layer idx="2" title="Sequential" speed="rarely sold on its own">
+    Everyone agrees on one order of operations — but that order needn't match wall-clock reality. Stale, consistently.
+  </Layer>
+  <Arrow>↓ drop the global order ↓</Arrow>
+  <Layer idx="3" title="Causal" speed="threads · comments · chat">
+    If A caused B, nobody sees B without A. Unrelated writes can land in any order. The reply never precedes the post.
+  </Layer>
+  <Arrow>↓ drop cross-user guarantees ↓</Arrow>
+  <Layer idx="4" title="Read-your-writes & monotonic reads" speed="the sane-UX floor">
+    You see your own changes, and time never runs backwards for you. Says nothing about anyone else's view.
+  </Layer>
+  <Arrow>↓ drop per-session guarantees ↓</Arrow>
+  <Layer idx="5" title="Eventual" speed="likes · feeds · view counts">
+    If writes stop, copies converge. No promise about when, and no promise that a read won't go backwards on the way.
+  </Layer>
+</Stack>
+
+Two things about this ladder catch people out. First, the session guarantees on rung 4 are *cheap* — they're mostly routing decisions, not consensus — which makes them the best value on the whole ladder. Second, "eventual" contains no bound at all: a replica that's been disconnected for six hours is still perfectly eventually consistent while it serves six-hour-old data.
+
+<Note type="key" label="The pragmatic move">
+
+You rarely need strong consistency *everywhere* — that's just paying maximum latency for data that doesn't need it. Pick per-feature: strong for money, inventory, and auth; read-your-writes for a user's own posts; plain eventual for like counts, feeds, and view tallies. The same tune you played with [cache TTLs](/guides/understanding-caching/) and [read replicas](/guides/database-scaling/).
+
+</Note>
+
+<Note type="wild" label="◈ In the wild · Amazon S3">
+
+For roughly its first fourteen years, S3 was only eventually consistent for overwrites and listings: you could write an object and briefly read back a stale version, or upload one and not yet see it in a bucket listing. Countless data pipelines were shaped around that footgun. In December 2020, [AWS made S3 strongly read-after-write consistent](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/) for every operation, at no extra cost or added latency. A whole rung of this spectrum quietly disappeared.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="quorum" title="2. Quorums: turning consistency into a dial">
+
+Here's the elegant trick AP databases use to *tune* where they sit. Say each piece of data is replicated to **N** nodes. You get to choose how many must respond:
+
+- **W** = how many replicas must confirm a *write* before it counts.
+
+- **R** = how many replicas you read from and compare.
+
+### Quorum Math Matrix
+
+<Table>
+
+| Quorum Condition | Condition Formula | Consistency & Latency Guarantee | Recommended Use Case |
+| :--- | :--- | :--- | :--- |
+| **Quorum Overlap** | R + W > N | **Strong Consistency** (Guaranteed overlap) | Financial ledgers, primary inventory |
+| **Write Heavy** | W = N, R = 1 | Fast reads, slow expensive writes | High-read caches, static configs |
+| **Read Heavy** | W = 1, R = N | Fast writes, slow expensive reads | High-throughput logging, telemetry ingest |
+| **Eventual / Loose** | R + W ≤ N | **Weak / Eventual Consistency** (No overlap guarantee) | Activity feeds, view counters, like counts |
+
+</Table>
+
+The beautiful part: if **R + W > N**, your read set is guaranteed to *overlap* the latest write on at least one node — so a read can return the latest *acknowledged* value on demand (which is a weaker promise than linearizability, and weaker still under failure — the next section walks a real one through a partition to show exactly where the edges are). Want speed instead? Lower R and W and accept staleness. One formula, a whole spectrum, chosen per query. Cassandra and DynamoDB expose exactly this.
+
+```bash
+N = 3 replicas
+W = 2, R = 2  →  R + W = 4 > 3  →  strong-ish, balanced
+W = 1, R = 1  →  R + W = 2 < 3  →  fast, possibly stale
+```
+
+</Collapse>
+
+<Collapse id="trace" title="3. A quorum under partition, step by step">
+
+Formulas are easy to nod along to and hard to actually believe. So here is `N=3, W=2, R=2` — the most common configuration in the world — walked through a real failure, one line at a time. Three replicas hold a key `x`, and one client writes it while another reads it.
+
+<Stack>
+  <Layer idx="◇" title="Client" speed="needs 2 of 3">
+    Doesn't know or care which replicas are healthy. Fires a request at all three and counts the answers.
+  </Layer>
+  <Arrow>↓ write x (W=2) · read x (R=2) ↓</Arrow>
+  <Layer idx="A" title="Replica A" speed="majority side">
+    Takes the write, answers the read. Stays reachable throughout.
+  </Layer>
+  <Layer idx="B" title="Replica B" speed="majority side">
+    Takes the write too. When the network splits, B is on A's side of the cut.
+  </Layer>
+  <Arrow>– – – the network cuts here – – –</Arrow>
+  <Layer idx="C" title="Replica C" speed="minority side">
+    Misses the write, serves stale data, and is later stranded on its own.
+  </Layer>
+</Stack>
+
+```trace
+**setup**  N=3 (A B C)   W=2   R=2   x = 0 @ v1
+
+**t0** writer → write x=1
+     A ack   B ack   ~~C timeout~~
+     2 acks ≥ W → ++client is told "written"++
+     A:1@v2   B:1@v2   ~~C:0@v1  ← stale, no error~~
+
+**t1** reader → read x, gets answers from A and C
+     A says 1@v2      ~~C says 0@v1~~
+     R+W > N, so the read set must contain a
+     node holding v2. It does: A.
+     compare versions → ++return 1@v2++
+     ++read-repair: push 1@v2 to C in the background++
+
+**t2** ~~PARTITION      { A  B }  |  { C }~~
+     majority side can still gather 2 acks
+     minority side can gather exactly 1
+
+**t2** read via A,B  → ++1@v2, served normally++
+     Most traffic never notices this outage at all.
+
+**t3** write x=2 arrives at C. 1 ack. W=2 unmet.
+     **CP** → ~~refuse it: "not enough replicas"~~
+          the caller gets an error; data stays sane
+     **AP** → accept it locally, sort it out later
+          ~~A,B: 1@v2    C: 2@v2'   diverged~~
+
+**t4** partition heals
+     **CP** → ++nothing to merge. x = 1.++
+     **AP** → two versions, neither descended from
+          the other. ++Something must now decide.++
+          If that something is last-write-wins,
+          ~~one of the two writes is discarded,~~
+          ~~with no error and no log line.~~
+```
+
+### What R + W > N actually buys you
+
+It buys you **intersection**, and only intersection. Any set of R nodes and any set of W nodes drawn from N must share at least one member, so the nodes you read from include at least one that acknowledged the most recent *successfully acknowledged* write. That's a genuine, useful property. It is also the entire property.
+
+Notice what that sentence doesn't say. It says a current copy is *present in the responses*, not that you can *identify* it — you still need versioning and a resolution rule to pick the winner out of the set, and if that rule is wrong the intersection guarantee doesn't save you.
+
+It says nothing about writes that *failed*: a write that reached one node out of three returns an error to the client but is not rolled back, so it can surface in a later read, or not, depending on which nodes answer.
+
+And it gives you nothing across operations — with reads landing on different node sets, two successive reads can go new-then-old until read-repair or anti-entropy catches up, which is a monotonicity violation, not a linearizability one, and users notice it.
+
+<Note type="warn" label="Precision matters here">
+
+**R + W > N is not linearizability.** Getting there needs more machinery: read-repair and anti-entropy so divergence actually converges rather than lingering; a conflict-resolution rule that doesn't silently drop data; and, for anything involving read-modify-write — increment a counter, check-and-set, reserve the last seat — a real consensus protocol, because no amount of quorum arithmetic gives you agreement on an *order*.
+
+Even for a plain read/write register, the classic construction only becomes linearizable when the reader writes the value it found back out to a quorum before returning it. Quorums are a dial for staleness. They are not a substitute for consensus, and a system that markets "tunable consistency" is selling you the dial, not the consensus.
+
+</Note>
+
+### Sloppy quorums and hinted handoff
+
+Now the part that quietly undoes the arithmetic. When the usual replicas for a key are unreachable, some Dynamo-style systems don't fail the write — they accept it on whichever N nodes they *can* reach, tagged with a hint saying "this really belongs to C," and hand it off once C returns. This is a **sloppy quorum** with **hinted handoff**, and it is excellent for durability and availability: your write is on disk somewhere, on the right number of machines, and it will get home.
+
+But during the handoff window, the write is sitting on nodes that are not in the key's replica set. A reader doing a strict R-of-N read against the proper replicas can intersect all it likes and still miss it. **The R + W > N intersection argument is simply not in force** at exactly the moment you were counting on it — the failure that made you want the guarantee is the failure that suspends it.
+
+Worth knowing which of your systems does this by default, because most of them advertise the formula and bury the exception.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="You run N=3, R=2, W=2 and you still lost an update. How can that happen?" options={["It can't: R + W > N guarantees that no acknowledged write is ever lost", "W=2 was too low; only W=3 prevents lost updates", "Last-write-wins with clock skew, or a sloppy quorum the strict read didn't intersect, among others"]} answer={2}>
+
+Easiest two: (1) last-write-wins plus clock skew — two writes conflicted, the resolution rule compared wall-clock timestamps from unsynchronised machines, and it kept the one that actually happened first. (2) A sloppy quorum — the write was accepted on substitute nodes during a blip, so the strict R-of-N read didn't intersect it during the handoff window.
+
+Two more, for credit: read-modify-write on a value read from a quorum has no atomicity, so two clients can both read 5 and both write 6; and a write that got only one ack and returned an error isn't rolled back, so it can win a later merge.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Consistency Models](https://jepsen.io/consistency) — Jepsen. A clickable map of the models on the ladder, from linearizable down, with what each one forbids.
+- [Dynamo: Amazon's Highly Available Key-value Store](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf) — DeCandia et al., SOSP 2007. Where N, R and W, sloppy quorums and hinted handoff came from.
+- [Amazon S3 Update – Strong Read-After-Write Consistency](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/) — AWS News Blog. The 2020 announcement that moved S3 up the ladder.
+
+</Reading>

@@ -1,0 +1,104 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "CDNs & the Edge — System Design Basics"
+description: "You cannot optimise your way out of the speed of light. You can only stop asking it for permission — by keeping a copy of the answer near the person who asked."
+chapter: "9"
+current: "9. CDNs & Edge"
+series:
+  lead: "A companion to"
+  guides: [understanding-caching, load-balancing]
+sections:
+  - id: "physics"
+    title: "Distance is a physics problem"
+  - id: "pop"
+    title: "What a PoP actually is"
+  - id: "routing"
+    title: "How a request finds its PoP"
+---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import DiagramCdnEdge1 from '../../../components/diagrams/DiagramCdnEdge1.astro';
+
+<ColdOpen tag="◇ one config change, most of the internet">
+
+On 8 June 2021 a Fastly customer pushed a perfectly valid configuration change. It was the kind of change customers make hundreds of times a day. It happened to satisfy the trigger conditions of a latent bug introduced in a software deployment three weeks earlier, and within moments roughly 85% of Fastly's network was returning errors — taking large parts of the web with it, none of which had done anything at all.
+
+Fastly identified the cause in about a minute and had most of the network healthy inside an hour. The lesson isn't that CDNs are fragile. It's that a network optimised to push one configuration to every point of presence in seconds is, by that exact same mechanism, optimised to push one *mistake* to every point of presence in seconds.
+
+</ColdOpen>
+
+<Collapse id="physics" title="1. Distance is a physics problem">
+
+Light in a vacuum travels at about 300,000 km/s. In glass fibre, with a refractive index around 1.5, it manages roughly **200,000 km/s**. That number is not an implementation detail you can optimise; it is a property of the universe, and it sets a hard floor under every request that crosses an ocean.
+
+<Note type="key" label="The arithmetic that justifies the entire industry">
+
+London to New York is about 5,600 km as the crow flies, and fibre routes are never straight — call it 6,000 km of actual glass. A round trip is 12,000 km. At 200,000 km/s that's **60 ms** of pure physics, before a single packet is processed. Real measured round trips sit around 70–80 ms once switching and routing are included.
+
+Now recall that establishing a connection is not one round trip. TCP's handshake is one, TLS 1.3's is another, and only then can you send the request and wait for the response. That's **four round trips ≈ 280–320 ms** before the first byte of HTML arrives — and this is with a perfectly healthy network and an origin that responds instantly.
+
+</Note>
+
+Sydney to Virginia is roughly 16,000 km, which puts a single round trip near 160 ms and that same four-trip sequence past **600 ms**. Your server's response time was 8 ms. Nobody cares.
+
+There are exactly two ways to make a request faster: do less work, or travel less distance. Everything in [Understanding Caching](/guides/understanding-caching/) is about the first. This guide is about the second — and the reason it deserves its own guide is that "move a copy closer" turns out to involve a dozen decisions, most of which can quietly cost you all of the benefit.
+
+<Figure>
+  <DiagramCdnEdge1 />
+</Figure>
+
+</Collapse>
+
+<Collapse id="pop" title="2. What a PoP actually is">
+
+A **point of presence** is a rack — sometimes several — of servers in a data centre or internet exchange, physically near a population of users. A large CDN operates somewhere between dozens and hundreds of these. Each one runs a caching proxy, holds a slice of your content on local SSDs, and terminates TLS.
+
+Three things happen at a PoP, and only the first is the one people think of:
+
+**It serves cached content.** A hit never touches your infrastructure. Your origin doesn't know the request happened, isn't billed for it, and cannot be taken down by it.
+
+<Note type="wild" label="◈ In the wild · Netflix Open Connect">
+
+Netflix takes the "near the user" idea to its logical extreme by running its own CDN, [Open Connect](https://openconnect.netflix.com/), and placing its caching appliances inside ISP networks rather than at neutral exchanges. Off-peak, it pushes the titles it predicts people will watch tomorrow onto those appliances — a practice it calls prepositioning — so the bytes are already inside your ISP before you press play. It is the PoP model of this section, extended with proactive warming at continental scale.
+
+</Note>
+
+**It terminates the connection.** This is the underrated one. TCP and TLS handshakes now happen over 5 ms of local network instead of 160 ms of ocean, and the PoP holds warm, already-established connections back to your origin. Even for a completely uncacheable response, you have replaced three cold round trips across the planet with three warm ones across the street — a substantial win on content the CDN never caches at all.
+
+**It absorbs abuse.** A volumetric attack lands on hundreds of PoPs with far more aggregate capacity than your origin, and gets filtered there.
+
+<Note label="A PoP is a cache, and every cache rule you already know applies">
+
+Finite capacity, eviction under pressure, cold after a restart, and a hit rate that depends entirely on how well you key it. A PoP serving a long tail of rarely-requested objects will evict them before the second request arrives, which means unpopular content is effectively uncached no matter what TTL you set. The distinction from an ordinary cache is that there are two hundred of them and they don't talk to each other — which is the problem [origin shielding](/guides/cdn-edge/caching/#shield) exists to solve.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="routing" title="3. How a request finds its PoP">
+
+Nothing in the client is CDN-aware. The browser resolves a name and opens a connection. Two mechanisms make that connection land somewhere near, and they fail differently.
+
+**Anycast.** The same IP address is announced from every PoP simultaneously, and internet routing does the rest — BGP delivers each packet to whichever announcement is closest in *routing* terms. There is nothing to look up and no decision to make; the network's own shortest-path behaviour is the load balancer.
+
+The caveat is that BGP optimises for its own notion of path cost, not for latency, and those diverge. A user in one city can be routed to a PoP two thousand kilometres away because of how two carriers have arranged their peering, and from the CDN's side this is close to invisible. Anycast also offers no capacity awareness whatsoever: if the nearest PoP is saturated, packets keep arriving anyway, because BGP has no idea what "busy" means.
+
+**DNS-based steering.** The CDN's authoritative nameserver returns different IP addresses depending on where the query appears to come from, and can weight those answers by PoP health and load. Far more control — and its accuracy depends on the resolver, not the user.
+
+Someone in Lagos using a public resolver whose nearest node is in Europe may be steered to Europe, because that's the only location the CDN can see. The EDNS Client Subnet extension exists to pass a truncated client subnet along and largely fixes this, when everyone in the chain supports it.
+
+<Table>
+
+| | Anycast | DNS steering |
+| --- | ------- | ------------ |
+| Who decides | Internet routing (BGP) | The CDN's nameserver |
+| Failover speed | Seconds — withdraw the route | Bounded by TTL and resolver caching |
+| Load awareness | None | Full |
+| Accuracy signal | Network topology | Resolver location, or client subnet |
+| Failure mode | Suboptimal routing you can't see | Stale answers cached past their TTL |
+
+</Table>
+
+Most large CDNs use both: anycast for the coarse geographic split and instant failover, DNS for finer steering within a region. The consistent-hashing and connection-distribution machinery inside a PoP is the same material as [Load Balancing](/guides/load-balancing/), applied one layer up.
+
+</Collapse>

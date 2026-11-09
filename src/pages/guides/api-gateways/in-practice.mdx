@@ -1,0 +1,127 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Limits in practice and auth"
+description: "Part 3 of APIs, Gateways & Rate Limiting. Choosing what to limit, rejecting well with 429, authentication at the edge, and the gotchas that bite."
+chapter: "8"
+current: "8. APIs & Gateways"
+sections:
+  - id: "keys"
+    title: "What are you limiting, exactly?"
+  - id: "429"
+    title: "429, Retry-After, and the well-behaved client"
+  - id: "auth"
+    title: "Auth at the edge"
+  - id: "gotchas"
+    title: "The gotchas that actually bite"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+
+<Collapse id="keys" title="1. What are you limiting, exactly?">
+
+The algorithm is the easy part. The key — the thing you count *per* — determines whether the limiter protects you or just annoys your customers.
+
+**Per API key or account** is the right default for authenticated traffic: it maps to a customer, a plan, and a bill, and it's forgeable only by stealing a credential.
+
+**Per IP** is what you're left with for unauthenticated traffic, and it's a blunt instrument — a corporate NAT or a mobile carrier gateway can put thousands of legitimate users behind one address, so any per-IP limit strict enough to stop an attacker will lock out an entire office. Meanwhile a determined attacker rotates through a residential proxy pool and never trips it. Per-IP limits are a speed bump, not a wall.
+
+**Per endpoint** matters because costs differ by orders of magnitude. A limit that's generous for `GET /health` is reckless for `POST /reports/generate`. The refinement is to charge by *cost* rather than by request: a cheap read deducts one token, an expensive aggregation deducts fifty. This is the only sane way to limit a GraphQL endpoint, where "1,000 requests per hour" is meaningless because one request can be a thousand times more expensive than another — compute the query's cost from its shape and deduct that.
+
+<Note label="Layer the limits">
+
+Real systems run several simultaneously: a global limit protecting the platform, a per-tenant limit enforcing the plan, a per-endpoint limit protecting expensive paths, and a per-IP limit on the unauthenticated surface. A request must pass all of them. Return a response that says *which* one it hit — otherwise a customer well within their documented quota gets a 429 and no way to understand why.
+
+</Note>
+
+One more distinction that saves arguments: **rate limits** smooth traffic over seconds and are about protecting infrastructure. **Quotas** cap consumption over a month and are about billing. They look identical in implementation and behave completely differently in incidents — you can safely relax a rate limit at 3 a.m. to get a customer moving; relaxing a quota is a commercial decision.
+
+</Collapse>
+
+<Collapse id="429" title="2. 429, Retry-After, and the well-behaved client">
+
+Rejecting a request is the easy half. The hard half is that the client's reaction determines whether your limiter reduced load or multiplied it.
+
+Return **429 Too Many Requests** — never 503, which means "server broken" and invites indiscriminate retries. Include **`Retry-After`** with the number of seconds until capacity exists; it converts a guess into an instruction. And expose the limit state on *successful* responses too, via `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers, so a well-written client can slow down before it hits the wall rather than after.
+
+<Note type="warn" label="Retry-After without jitter is a scheduling weapon">
+
+Ten thousand clients get a 429 saying `Retry-After: 60`. Ten thousand clients retry at exactly the same second. You have not spread the load — you have *synchronised* it, and built yourself a metronome that will keep ringing every sixty seconds. Clients must add random jitter; servers should help by varying the advertised value slightly per response. This is the same failure as synchronised cache expiry in [Understanding Caching](/guides/understanding-caching/) and the same fix.
+
+</Note>
+
+A 429 must also be *cheap*. If rejecting costs a database lookup to resolve the account and its plan, then an attacker sending a hundred thousand requests a second is still doing a hundred thousand database lookups a second, and your limiter has become the load. Resolve identity from a cached credential, check the counter, reject. Nothing else.
+
+The two ends of this are the same contract seen from opposite sides. Stripe's rate-limiter design and GitHub's REST quotas are both worth reading as worked examples of a provider making its limits legible enough that clients can behave; the corresponding client-side discipline — exponential backoff with jitter, a retry budget, and a circuit breaker for the case where backing off isn't working — is in [The Reliability Toolkit](/guides/reliability-toolkit/).
+
+</Collapse>
+
+<Collapse id="auth" title="3. Auth at the edge">
+
+Two questions, routinely conflated. **Authentication** is "who is this?" — it's uniform, cacheable, and belongs at the gateway. **Authorization** is "may they do this to that?" — it depends on the resource, and it belongs in the service that owns the resource.
+
+The reason the split matters is that gateway-side authorization requires the gateway to know your domain model. "Can this user edit this document?" depends on ownership, sharing rules, and organisational hierarchy, all of which live in the document service. A gateway that answers it has either duplicated that logic — where it will drift — or is calling back into the service anyway, which is the round trip you were trying to avoid.
+
+Practically: the gateway validates the token's signature and expiry, rejects anything malformed before it touches a service, and forwards a verified identity downstream. Validating a JWT locally against a cached public key set costs microseconds and no network call, which is the entire appeal — and also the entire drawback, since a locally-validated token cannot be revoked. Short expiry (minutes, not days) plus refresh tokens is the standard mitigation; a revocation list checked at the gateway is the belt-and-braces version, at the cost of a lookup.
+
+<Note type="warn" label="The forwarded-identity trap">
+
+Once the gateway injects `X-User-Id`, every internal service trusts that header. If any service is reachable without going through the gateway — a debug port, an internal load balancer, a pod someone can reach from a neighbouring namespace — then anyone who can reach it can set that header and become any user.
+
+Either strip and re-inject those headers at the boundary *and* make it impossible to reach services directly, or authenticate service-to-service calls independently with mTLS. The same reasoning applies to `X-Forwarded-For`, which is why [Load Balancing](/guides/load-balancing/) spends time on trusting the right hop.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="gotchas" title="4. The gotchas that actually bite">
+
+**Nested timeouts that disagree.** Gateway timeout 30 s, service timeout 60 s. At 45 seconds the gateway gives up and returns 504 while the service happily continues, finishes the work, and writes to the database. The client sees a failure, retries, and the work happens twice. Timeouts must decrease as you go inward, and the remaining deadline should be propagated with the request.
+
+**Body buffering at the gateway.** Many gateways buffer the full request body before forwarding, so they can retry or inspect it. A hundred concurrent 200 MB uploads is 20 GB of gateway memory. Stream large bodies, or route uploads past the gateway entirely to pre-signed storage URLs.
+
+**Rate-limiting the health check.** Health probes come from a small set of IPs at a steady rate. Put them behind a per-IP limiter and one day the limiter trips, probes fail, the load balancer marks every instance unhealthy, and the fleet removes itself from service. Exempt probes explicitly.
+
+**Limit headers as an oracle.** Returning different limits for valid and invalid API keys tells an attacker which keys are real. Returning 401 for "wrong password" and 404 for "no such user" enumerates your customer list. Be uniform about what you leak.
+
+**The unauthenticated endpoint nobody rate-limited.** Login, password reset, signup, and search are the four that get missed, and each is expensive in a different way — bcrypt burns CPU by design, password reset sends email that costs money and reputation, and search hits the most expensive index you own. Rate-limit them by IP *and* by target account, so an attacker cannot spread an attack on one account across many addresses.
+
+**Version drift between the gateway config and the services.** Routing rules, timeouts and limits usually live in gateway config, deployed on a different cadence from the services. Ship the two together or the config eventually references an endpoint that no longer exists — and gateway config changes have the widest blast radius of anything in your system, so they deserve canaries as much as code does.
+
+**Assuming clients read your documentation.** They read your errors. A 400 that says "invalid request" produces a support ticket; one that says `{"code":"invalid_currency","detail":"expected ISO 4217, got 'dollars'","field":"currency"}` produces a fix. Error messages are the most-read documentation you will ever write.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q='Why is "1,000 requests per hour" a meaningless limit for a GraphQL endpoint?' options={["GraphQL sends everything as POST, so the gateway can't count individual requests", "Clients batch many operations into one request, so the count is always too low", "One request can cost a thousand times more than another, so request count says nothing about load"]} answer={2}>
+
+Because request count has no relationship to cost when the client writes the query. One request can fetch a single field by primary key, and the next can walk users to orders to line items to recommendations and fan out into thousands of database round trips — the same one unit against your counter. A limiter counting requests will happily admit a thousand of the second kind.
+
+The workable approach is to compute a static cost for the query before executing it, by assigning weights to fields and multiplying through the pagination arguments at each level, and to deduct that cost from a token bucket; requests exceeding a per-query ceiling get rejected outright rather than deducted. Persisted queries make this dramatically easier, because you can compute and cache the cost of each registered query once instead of analysing arbitrary strings on the hot path, and they close the door on adversarial queries you never approved.
+
+</Quiz>
+
+<Quiz q="Gateway timeout is 30 s, the order service's own timeout is 60 s. A request takes 45 s. What does the customer experience?" options={["A success at 45 seconds, because the service timeout is the one that applies", "A 504 at 30 seconds while the service still creates the order, so a retry creates a second one", "A 504 at 30 seconds, and the gateway cancels the work in the service"]} answer={1}>
+
+The gateway returns 504 at thirty seconds and the client sees a failure — while the order service, entirely unaware, keeps working and successfully creates the order at forty-five seconds. The customer believes it failed, retries, and gets a second order.
+
+Timeouts must strictly decrease as you move inward so that an inner call can never outlive the outer one that is waiting for it, and the robust version of this is deadline propagation: the gateway computes an absolute deadline, passes it downstream, and each hop budgets against the time actually remaining rather than against a fixed local value.
+
+Where the work is genuinely long-running, the correct shape is not a longer timeout but a different contract — accept the request, return 202 with a status URL, and let the client poll or receive a webhook. And on anything that creates or moves money, an idempotency key makes the duplicate-on-retry case harmless regardless.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [RFC 6585: Additional HTTP Status Codes](https://www.rfc-editor.org/rfc/rfc6585.html) — IETF. Where 429 Too Many Requests is defined.
+- [Rate limits for the REST API](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) — GitHub. A provider making its limits and headers legible to clients.
+- [Security](https://graphql.org/learn/security/) — GraphQL. Depth limits, cost analysis and rate limiting for an endpoint where one request can cost a thousand.
+- [RFC 9110: HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html) — IETF. The meaning of each status code, and of `Retry-After`.
+
+</Reading>

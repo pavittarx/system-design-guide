@@ -1,0 +1,211 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Trace it, break it"
+description: "Part 3 of Design the Checkout. One request followed end to end, four realistic failures traced through the design, and what to add only when a signal demands it."
+chapter: "12"
+current: "12. Designing Checkout"
+sections:
+  - id: "trace"
+    title: "One request, end to end"
+  - id: "break"
+    title: "Now break it"
+  - id: "only-if"
+    title: "What you'd build only if you had to"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<Collapse id="trace" title="1. One request, end to end">
+
+The hub page promises you can follow a single request through the whole series. Here it is, on a normal Tuesday, with plausible latencies that sum to a stated total. Every hop is something one of the six guides taught you.
+
+```trace
+**POST /checkout**
+
+  **+0 ms**   TLS + L7 load balancer
+           picks a healthy instance
+           ++→ Load Balancing++
+
+  **+1 ms**   session lookup, cache hit
+           ++→ Caching++
+
+  **+2 ms**   cart read, cache hit
+           ++→ Caching++
+
+  **+3 ms**   price + stock check
+           primary, indexed, 4 ms
+           ++→ Databases++
+
+  **+7 ms**   reserve stock, conditional
+           UPDATE, 1 row, 6 ms
+           ++→ Consistency++
+
+  **+13 ms**  authorise payment
+           idempotency key attached
+           deadline: 787 ms remaining
+           ++→ Reliability++
+           ................ 240 ms
+
+  **+253 ms** BEGIN
+             INSERT order (confirmed)
+             INSERT outbox (placed)
+             confirm reservation
+           COMMIT                8 ms
+           ++→ Queues++
+
+  **+261 ms** ++201 Created++
+           "Order #4417291 confirmed"
+
+  ── customer is gone ──────────
+
+  **+300 ms** relay publishes from outbox
+  **+340 ms** 6 consumers pick it up:
+           receipt · invoice · warehouse
+           analytics · loyalty · recs
+  **+2.1 s**  receipt email delivered
+```
+
+261 milliseconds of customer-visible work; roughly 1.8 seconds of work that happens after they've closed the tab. That ratio is the entire argument of this series in one number. The naive version in [Part 1](/guides/design-the-checkout/design/#naive) did all of it inline and took 1.9 seconds on a good day — and fell over completely on a bad one.
+
+</Collapse>
+
+<Collapse id="break" title="2. Now break it">
+
+A design you haven't tried to break is a diagram. Four failures, each one traced, each one saved by something a guide taught.
+
+### Failure 1 — the payment provider gets slow, but not dead
+
+This is the worst kind of failure because nothing is *down*. Their p99 goes from 200 ms to 8 s. No error, no alert from them, just treacle.
+
+```trace
+**the arithmetic**
+  200 orders/s × 8 s
+    = 1,600 concurrent slots needed
+  thread pool = 400
+    ~~→ exhausted in ~2 s~~
+    ~~→ every endpoint dies,~~
+    ~~   including ones that never~~
+    ~~   touch payments~~
+
+**with a bulkhead of 300**
+  300 in flight ÷ 8 s
+    = 37 checkouts/s served
+  the other 163/s ++fail fast++
+  browsing, cart, history: ++unaffected++
+
+**then the breaker opens**
+  error rate crosses threshold
+  → stop calling for 30 s
+  → half-open: a trickle, jittered
+  ++→ recovery without a stampede++
+```
+
+Note what the bulkhead actually bought: not a working checkout — 163 customers a second still can't buy — but a working *site*, and a failure confined to the one feature that genuinely depends on the broken thing. That is the whole point of a bulkhead, and it's why a circuit breaker alone wouldn't have saved us: the breaker only opens after enough failures, and by then the pool is already gone.
+
+### Failure 2 — a replica falls behind at peak
+
+Replication lag is near zero until it isn't, and it spikes exactly when you're busiest. At 14:00 on Black Friday the replica is 4 seconds behind. A customer places an order, gets their 201, taps "My orders" — and the page, served from the replica, is empty. They have just been told their order doesn't exist. Some of them will order again.
+
+The fix is **read-your-writes**: after a customer writes, route their reads to the primary for a short window, or carry a version token (an LSN or GTID) with the session and have the replica wait until it has caught up to that point.
+
+The first is cruder and simpler; the second is precise and needs support from your database. Either is better than the third option, which is discovering this from a support ticket. And alert on replication lag in bytes as well as seconds — a lightly-loaded replica can report a small time lag while being far behind in work.
+
+### Failure 3 — the consumer fleet dies for twenty minutes
+
+A bad deploy takes out every queue consumer. Nobody notices immediately, because checkout is unaffected — orders are being taken and committed and the outbox is publishing happily. What's failing is invisible: no receipts, nothing reaching the warehouse.
+
+```trace
+**the backlog**
+  200 msg/s × 1,200 s
+    = 240,000 messages waiting
+
+**the drain**
+  each consumer: 50 msg/s
+  arrivals still: 200 msg/s
+  N consumers drain at
+    (N × 50) − 200 per second
+
+  N = 4  →   0/s  ~~never drains~~
+  N = 6  → 100/s  40 min
+  N = 12 → 400/s  ++10 min++
+```
+
+Two lessons. First, **a queue with no headroom above its arrival rate never recovers from a spike** — four consumers is exactly break-even and will sit at 240,000 messages forever, looking stable and being catastrophic. Second, the metric that would have caught this in ninety seconds is **consumer lag**, not queue depth. Depth tells you how much is waiting; lag tells you whether you're falling behind. Alert on lag and its rate of change.
+
+### Failure 4 — a config push marks every instance unhealthy
+
+Someone tightens the readiness check so it also verifies the recommendations service. Recommendations has a blip. Every instance in the fleet reports unready simultaneously, and the load balancer, doing exactly what it was told, has nowhere to send traffic. The site is down because an optional feature hiccuped.
+
+Two defences, both from the [Load Balancing guide](/guides/load-balancing/). A readiness check should only test dependencies the instance genuinely cannot serve without — recommendations is not one of them, which is why it fails open in [Part 2](/guides/design-the-checkout/correctness/#guardrails). And the load balancer needs a **panic threshold**: when the fraction of healthy backends drops below some level, ignore health status entirely and spray traffic across everything, on the reasoning that a degraded backend beats no backend. Health checks that can take down a whole fleet at once are not a safety feature.
+
+<Note type="war" label="The pattern across all four">
+
+Not one of these is a component *breaking*. A slow provider, a lagging replica, a stopped consumer, an over-eager health check — every single one is a system doing exactly what it was configured to do, in a situation nobody pictured while configuring it. This is what real incidents look like, and it's why the settings in [Part 2](/guides/design-the-checkout/correctness/#guardrails) deserve more design attention than the boxes in the diagram.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="only-if" title="3. What you'd build only if you had to">
+
+The last discipline is knowing what you left out and why. Here is everything a reader will be tempted to add to this design, and the specific signal that would justify each one. Absent the signal, adding it makes the system worse — more moving parts, more failure modes, more onboarding, and no benefit.
+
+<Table>
+
+| Tempting addition | The signal that would justify it |
+| ----------------- | -------------------------------- |
+| **Sharding the database** | Sustained writes within ~2× of the instance ceiling, or a hot dataset that won't fit the next hardware tier, or a restore time the business won't accept. Not "we're big now." |
+| **CQRS** (separate read and write models) | Read and write shapes that have genuinely diverged — the read side needs joins and aggregates the write side shouldn't be optimised for. Replicas solve the easy 90% of this first. |
+| **Event sourcing** | A hard audit requirement for every state change, or a real need to reconstruct historical state. It is a serious commitment: replay, versioning and snapshots become permanent concerns. |
+| **Multi-region active-active** | A regulatory data-residency requirement, or users far enough away that RTT is a product problem, or an availability target a single region provably can't meet. Then accept that you've bought a conflict-resolution problem for every writable field. |
+| **Service mesh** | Enough services that per-service retry, timeout and mTLS configuration has become unmanageable by hand. With six services, the mesh is more operationally complex than the thing it manages. |
+| **Microservices, generally** | Teams blocking each other on deploys. It's an organisational fix with a technical cost — you trade in-process calls for network calls, and every one of those is a new failure mode. |
+| **Kafka instead of a simple queue** | You need replay, multiple independent consumer groups over the same stream, or retention as a feature. If you need a work queue, use a work queue. |
+
+</Table>
+
+Notice that every justification is a *measurement* or a *constraint*, never an aspiration. That's the test. If the argument for a component is "we'll need it eventually," you are paying today's complexity for tomorrow's maybe — and the version of this system that gets built with restraint is also the version that's still comprehensible when the real problem arrives.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="The payment provider's p99 goes from 200 ms to 8 s. What happens to checkout, in order?" options={["The breaker opens on the first slow calls, so checkout fails fast and nothing else is affected", "The shared pool exhausts in about two seconds and every endpoint fails, unless a bulkhead caps payments at 300; the breaker opens later", "Checkout gets slower but completes, because the 3 s timeout bounds every call"]} answer={1}>
+
+Requests start piling up in flight: Little's Law says 200/s × 8 s demands 1,600 concurrent slots against a pool of 400, so the pool exhausts in roughly two seconds. Without a bulkhead, that pool is shared, so *every* endpoint fails — including browsing, which never touches payments. With a bulkhead of 300, checkout throughput drops to about 37/s and the rest of the site is untouched.
+
+The circuit breaker opens once the error rate crosses its threshold and stops you calling a dead dependency at all, then half-opens with a jittered trickle so recovery doesn't stampede. The breaker alone would not have saved you — it trips after failures, and the pool dies first.
+
+</Quiz>
+
+<Quiz q="A customer says they were charged twice. The logs show one request. What are the two most likely explanations?" options={["A visibility timeout expired mid-work so the broker redelivered, or a check-then-act idempotency race let two duplicates both charge", "The customer double-clicked and the second click was never logged", "The payment provider ignored the idempotency key on the retry"]} answer={0}>
+
+First, the visibility timeout: if the payment consumer's work takes longer than the queue's invisibility window, the broker assumes it died and redelivers to a second consumer while the first is still running — genuine concurrent duplicate processing, with no retry in the logs to show for it.
+
+Second, the check-then-act idempotency race: if the code checks "already processed?" and then does the work, two concurrent duplicates both read false before either writes, and both charge. The fix for the second is claiming the ID atomically before doing the work; the fix for the first is a timeout above your real p99 plus heartbeating. Note that "one request in the logs" is what makes both of these so nasty to diagnose.
+
+</Quiz>
+
+<Quiz q="Your interviewer says &quot;now make it handle 10× the traffic.&quot; What do you change, and what do you deliberately not change?" options={["Move to multi-region active-active and adopt event sourcing; keep everything else", "Nothing on the write path; add cache capacity and app instances", "Shard the write path by customer or order ID and scale cache and replicas; keep the outbox, idempotency keys, guardrails and per-field consistency"]} answer={2}>
+
+10× is 2,000 orders/s and 250,000 reads/s. The read path scales by adding cache capacity and replicas — that's more of the same, not a redesign. The app tier is stateless, so it scales horizontally by definition.
+
+The write path at 2,000/s is now within range of a single instance's ceiling rather than an order of magnitude below it, so *this* is where sharding finally earns its place — and you'd shard by customer or order ID, accept scatter-gather on cross-customer reporting, and move reporting off the transactional store entirely.
+
+What you don't change: the outbox, the idempotency keys, the guardrails, and the per-field consistency decisions. Those were correct at 200/s and they're correct at 2,000/s — which is a decent sign they were the right calls.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Avoiding insurmountable queue backlogs](https://aws.amazon.com/builders-library/avoiding-insurmountable-queue-backlogs/) — AWS Builders' Library. Why a queue without drain headroom stays backed up, and how to keep backlogs recoverable.
+- [Panic threshold](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/panic_threshold) — Envoy documentation. How a load balancer stops trusting health checks when too few hosts look healthy.
+- [CQRS](https://martinfowler.com/bliki/CQRS.html) — Martin Fowler. What separate read and write models buy, and his warning that most systems don't need them.
+
+</Reading>

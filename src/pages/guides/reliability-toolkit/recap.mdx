@@ -1,0 +1,77 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap and numbers"
+description: "The Reliability Toolkit in 60 seconds, and the numbers worth carrying in your head."
+chapter: "5"
+current: "5. Reliability Toolkit"
+sections:
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<Collapse id="recap" title="Recap in 60 seconds">
+
+<Recap>
+
+- **Redundancy** — answers "one machine died." Useless until you've actually failed over to the spare.
+
+- **Timeout** — answers "it's slow." Bounds the wait, and by doing so bounds the concurrency: `throughput × timeout`.
+
+- **Retry with backoff + jitter** — answers "it blipped." Fixes retry timing only.
+
+- **Retry budget** — answers "everything blipped at once." Fixes retry volume, which is the half that causes outages.
+
+- **Circuit breaker** — answers "it's down." Stops paying for calls you know will fail, and gives the sick service room. Says nothing about overload.
+
+- **Bulkhead** — answers "one thing is eating everything." The only tool that gives you a hard bound rather than a smaller number.
+
+- **Load shedding** — answers "there's more work than machine." Says nothing about a slow dependency.
+
+- **Graceful degradation** — answers "this part is optional." Decide the least-bad fallback before the incident, per feature.
+
+- **Deadline propagation** — makes the timeouts above compose instead of contradicting each other.
+
+- **Chaos engineering** — the only evidence that any of the above works.
+
+- **Metastable failure** — the outage that survives its own cause. Shed load to escape; you cannot wait it out.
+
+</Recap>
+
+And the numbers worth carrying in your head:
+
+<Table numeric>
+
+| Number | What it means |
+| ------ | ------------- |
+| 99% | 3.65 days of downtime a year — about 7.3 hours a month. "Two nines" sounds respectable and is roughly a working day per quarter. |
+| 99.9% | 8.76 hours a year — about 43.8 minutes a month. The default target most teams claim without checking. |
+| 99.95% | 4.38 hours a year — about 21.9 minutes a month. A common contractual middle ground. |
+| 99.99% | 52.6 minutes a year — about 4.4 minutes a month. Less than one bad deploy's worth. Requires automated recovery; humans are too slow to be in the loop. |
+| 0.999<sup>10</sup> ≈ 99.0% | Ten hard dependencies at three nines each. Your ceiling is the product, and it is much worse than any input. |
+| p99 × 1.5–2 | *Starting point* for a timeout. Measure your p99 first, set it there, then check what fraction of real traffic that number would have killed last week. |
+| 2 retries | *Starting point* for a retry cap — three attempts total, at exactly one layer, only on idempotent operations. |
+| ≈10% | *Starting point* for a retry budget: retries capped at roughly a tenth of live traffic, with the bucket refilled by successes. |
+| ≈50% / 20 reqs | *Starting point* for a circuit breaker: trip at about a 50% error rate, but only once the window holds at least ~20 requests, so a quiet endpoint can't trip on two unlucky calls. |
+| 1–5 probes | *Starting point* for half-open: a trickle, jittered across instances, never the whole fleet resuming at once. |
+| concurrency<br />= rps × latency | Little's Law. Sizes your pools, sizes your bulkheads, and explains every cascade you will ever debug. |
+
+</Table>
+
+<Note label="Read that table correctly">
+
+The availability rows are arithmetic — they're true regardless of what you're building. Everything below them is a **starting point to measure against, not a benchmark to hit.** A batch job and a payment API have no business sharing a timeout, and anyone who quotes you a universally correct retry count is quoting you a number they didn't measure.
+
+</Note>
+
+</Collapse>
+
+<Footer>
+  [SEC — Knight Capital Market Access Rule](https://www.sec.gov/newsroom/press-releases/2013-222) ·
+  [AWS — Summary of the S3 Service Disruption (Feb 2017)](https://aws.amazon.com/message/41926/) ·
+  [Netflix — Fault Tolerance & Hystrix](https://netflixtechblog.com/fault-tolerance-in-a-high-volume-distributed-system-91ab4faae74a) ·
+  [AWS Builders' Library — Timeouts, retries & backoff with jitter](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/) ·
+  [AWS Builders' Library — Using load shedding to avoid overload](https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/) ·
+  [Principles of Chaos Engineering](https://principlesofchaos.org/)
+</Footer>

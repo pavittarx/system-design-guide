@@ -1,0 +1,50 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap"
+description: "Systems That Push Back in 60 seconds, and the sources behind it."
+chapter: "11"
+current: "11. Real-Time Systems"
+sections:
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<Collapse id="recap" title="Recap in 60 seconds">
+
+<Recap>
+
+**Push makes servers stateful.** That one change breaks stateless load balancing, stateless deploys, and requests-per-second capacity planning all at once.
+
+**Climb the ladder only as far as you must.** Polling for rare updates, SSE for server-to-client streams, WebSockets when the client streams too. SSE is the most under-used option by a wide margin.
+
+**Connections are cheap; what you attach to them isn't.** 50 KB each is 5 GB at 100k. 500 KB each is 50 GB. Keep per-connection state small and send queues bounded.
+
+**Something must know where the user is.** Registry, broadcast bus, or sharded topics — the last one is what scales.
+
+**Fan out on write for normal users, on read for celebrities.** 100 million inbox writes for one post is not a design, and most of those inboxes are never opened.
+
+**Presence costs rate × audience.** Scope to who's looking, batch on an interval, debounce flapping, and never persist ephemeral signals.
+
+**Sequence numbers are load-bearing.** They give you gap-free reconnect, cheap resume, deduplication, and the freedom to disconnect slow clients.
+
+**The reconnect is the load test.** Jittered backoff on the client, cheap resume, and admission control at the gateway — all shipped before the incident.
+
+**Bound every send queue.** Drop, conflate, or disconnect. Unbounded buffering means one slow client can kill a server full of healthy ones.
+
+**Heartbeat everything.** Idle timeouts you never configured will close your connections, and TCP will not tell you.
+
+</Recap>
+
+</Collapse>
+
+<Footer>
+  Slack Engineering, "A Terrible, Horrible, No-Good, Very Bad Day at Slack" (2020) ·
+  Discord Engineering, "How Discord Scaled Elixir to 5,000,000 Concurrent Users" ·
+  WhatsApp/Erlang Factory, "Scaling to Millions of Simultaneous Connections" (2012) ·
+  RFC 6455 (The WebSocket Protocol) ·
+  WHATWG HTML, Server-Sent Events ·
+  Twitter Engineering, "Timelines at Scale" ·
+  Cloudflare, "Backpressure explained".
+</Footer>
