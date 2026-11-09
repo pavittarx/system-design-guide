@@ -1,0 +1,45 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Hands-on lab"
+description: "Part 4 of Understanding Caching. Build a cache stampede coalescer and watch it hold up under load where a naive cache falls over."
+chapter: "1"
+current: "1. Caching"
+sections:
+  - id: "lab"
+    title: "Hands-on Lab"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<Collapse id="lab" title="1. Hands-on Lab: Build a Cache Stampede Coalescer">
+
+<Lab
+  title="Build a Cache Stampede Coalescer"
+  tip="Put this project on your GitHub portfolio as a demonstrated benchmark of request coalescing and load protection."
+>
+
+Build this mini-project to see the difference between a naive cache and a production-grade coalesced cache under load:
+
+- **The Mock DB:** Write a simple HTTP server (in Go, Node.js, or Python) with an endpoint `/data`. If the key is not in Redis, simulate a slow database lookup by sleeping for **500ms**, then returning a random string.
+
+- **The Naive Cache:** Cache the result in Redis with a **5-second TTL**. Under a cache miss, read from the DB and write to Redis.
+
+- **Run the Stampede:** Use a load-testing tool like `k6` or `ab` (Apache Benchmark) to hit the endpoint with **200 concurrent users**. You will witness a **cache stampede**: since 200 requests arrive within the 500ms window, the mock DB is hammered 200 times for the same key.
+
+- **Build the Coalescer (Single-Flight):** Implement request coalescing. Ensure that if a DB read is in progress for key `X`, subsequent identical requests wait for the active read to finish and share the result, rather than sending a new query. (Use Go's `golang.org/x/sync/singleflight` or design a promise-sharing map in JS/Python).
+
+- **Verify the Fix:** Run the 200 VU load test again. Observe that the mock DB is now hit **exactly once** on a cache miss, and p99 latency stays flat!
+
+</Lab>
+
+</Collapse>
+
+<Reading>
+
+- [singleflight](https://pkg.go.dev/golang.org/x/sync/singleflight) — Go. The package the lab suggests; its small API is the whole coalescing pattern.
+- [Grafana k6 documentation](https://grafana.com/docs/k6/latest/) — Grafana Labs. How to script the 200-user test and read the latency percentiles it reports.
+- [How to tame the thundering herd problem](https://redis.io/blog/how-to-tame-the-thundering-herd-problem/) — Redis. Worth reading before you build, to see the alternatives to the coalescer.
+
+</Reading>

@@ -1,0 +1,48 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap"
+description: "APIs, Gateways & Rate Limiting in 60 seconds, and the sources behind it."
+chapter: "8"
+current: "8. APIs & Gateways"
+sections:
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+
+<Collapse id="recap" title="Recap in 60 seconds">
+
+<Recap>
+
+- **The API outlives the implementation.** Design the contract so a full backend rewrite wouldn't change it.
+
+- **REST buys the HTTP ecosystem; RPC buys efficiency; GraphQL buys one round trip** — and each hands you a different bill. GraphQL's is unbounded query cost, so depth limits, cost analysis and batching are mandatory.
+
+- **Additive changes are safe; removals, new enum values, tightened validation and changed defaults are not.** The last two break silently.
+
+- **Cursor pagination over offset,** always with a unique tiebreaker in the sort, or you will duplicate and skip rows.
+
+- **4xx means don't retry; 5xx means you might.** Never 200 with an error body — it poisons caches, metrics and client error handling at once.
+
+- **Gateways do cross-cutting concerns only.** Authentication at the edge, authorization in the service that owns the resource. Business logic in the gateway becomes an ESB.
+
+- **Token bucket or sliding-window counter** for almost everything; fixed windows let clients get 2× the limit across a boundary.
+
+- **Distributed limits are a coordination problem.** Divide-the-limit is cheap and wrong; a shared counter is accurate and adds a round trip plus a dependency. Decide fail-open vs fail-closed before it fails.
+
+- **Return 429 with Retry-After — and make sure clients jitter it,** or you've synchronised your traffic instead of spreading it.
+
+</Recap>
+
+</Collapse>
+
+<Footer>
+  [RFC 9110 — HTTP Semantics](https://www.rfc-editor.org/rfc/rfc9110.html) ·
+  [RFC 6585 — 429 Too Many Requests](https://www.rfc-editor.org/rfc/rfc6585.html) ·
+  [RFC 7807 — Problem Details for HTTP APIs](https://www.rfc-editor.org/rfc/rfc7807.html) ·
+  [RFC 8594 — The Sunset HTTP Header Field](https://www.rfc-editor.org/rfc/rfc8594.html) ·
+  [Stripe — Scaling your API with rate limiters](https://stripe.com/blog/rate-limiters) ·
+  [GitHub — Rate limits for the REST API](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api) ·
+  [GraphQL — Learn](https://graphql.org/learn/)
+</Footer>

@@ -71,7 +71,8 @@ Seq Scan on events  (actual time=0.031..~~4128.774~~ rows=1187)
 Execution Time: ~~4131.006 ms~~
 
 **after CREATE INDEX idx_events_created ON events (created_at):**
-Index Scan using idx_events_created on events  (actual time=0.028..++1.902++ rows=1187)
+Index Scan using idx_events_created on events
+  (actual time=0.028..++1.902++ rows=1187)
 Execution Time: ++2.140 ms++
 ```
 

@@ -1,0 +1,147 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Reconnects and backpressure"
+description: "Part 3 of Systems That Push Back. The reconnect storm, the slow consumer, and the gotchas that take persistent-connection systems down."
+chapter: "11"
+current: "11. Real-Time Systems"
+sections:
+  - id: "reconnect"
+    title: "The reconnect storm"
+  - id: "backpressure"
+    title: "Backpressure: the slow consumer"
+  - id: "gotchas"
+    title: "The gotchas that actually bite"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import DiagramRealTimeSystems2 from '../../../components/diagrams/DiagramRealTimeSystems2.astro';
+
+<Collapse id="reconnect" title="1. The reconnect storm">
+
+This is the failure mode from the [cold open](/guides/real-time-systems/), and it deserves its own section because it is the one that turns a small incident into a long one.
+
+The dynamics are brutally simple. Something disconnects a large number of clients simultaneously — a gateway crash, a deploy, a network blip, a load balancer restart. Every client notices at nearly the same moment and reconnects immediately. Reconnection is expensive: TLS handshake, authentication, subscription setup, state resync. The surviving capacity, already carrying the failed servers' share, receives a synchronised burst of the most expensive operation in the system. It falls over. Its clients now reconnect too.
+
+This is the metastable failure pattern from [The Reliability Toolkit](/guides/reliability-toolkit/) in its purest form: the system cannot recover even after the original trigger is gone, because the recovery traffic is itself the load.
+
+<Note type="key" label="The defences, in order of importance">
+
+**1 · Jittered exponential backoff, client-side.** Not `2^n` seconds — `random(0, 2^n)` seconds. Without randomisation, backoff merely reschedules the stampede to a later, tidier moment. Cap it at 30–60 s and reset it only after a connection has been *stable* for a while, so flapping does not reset the backoff on every attempt.
+
+**2 · Make reconnection cheap.** Resume from a sequence number instead of resending full state. A resume is a few kilobytes; a cold sync can be megabytes. This is the difference between a spike and an outage.
+
+**3 · Admission control at the gateway.** Cap new connections per second and reject the excess quickly with a retry hint. A fast rejection that a client backs off from is vastly better than a slow acceptance that takes the server with it.
+
+**4 · Server-directed reconnect.** On planned shutdown, send a close frame containing a suggested delay and, if you have it, a target gateway. Now you are scheduling the reconnects rather than receiving them.
+
+</Note>
+
+The uncomfortable part is that all four defences live in code you must have shipped *before* the incident, much of it on clients you cannot update quickly. A mobile app with a bad retry loop is a permanent liability — it will still be reconnecting aggressively months after you fix the server. Get backoff and jitter right in the client on day one; it is the highest-leverage twelve lines of code in the whole system.
+
+<Figure>
+  <DiagramRealTimeSystems2 />
+</Figure>
+
+</Collapse>
+
+<Collapse id="backpressure" title="2. Backpressure: the slow consumer">
+
+You are pushing messages at a client on a train with two bars of signal. It cannot keep up. Where do the messages go?
+
+By default, into a buffer, and buffers grow. One slow client with a large channel subscription can accumulate tens of megabytes of undelivered messages, and a few hundred such clients can exhaust the memory of a gateway serving fifty thousand healthy ones. The healthy connections die because of the sick ones — a failure of isolation, which is precisely what bulkheads exist to prevent.
+
+<Note type="warn" label="Unbounded queues are not a design, they are a deferral">
+Every send queue must have an explicit maximum, and an explicit policy for what happens when it is full. There are only four options, and refusing to choose means choosing "grow until the process dies".
+</Note>
+
+<CardGrid>
+  <Card pill="Drop oldest" tone="mid">
+    Keep the newest messages. Right for state-like streams — prices, positions, dashboards — where old values are worthless.
+  </Card>
+  <Card pill="Drop newest" tone="mid">
+    Preserve what's queued. Rarely what you want, but correct when the queued items are already committed work.
+  </Card>
+  <Card pill="Collapse / conflate" tone="good">
+    Replace superseded messages with the latest per key. A ticker sends one current price, not four hundred stale ones. The best option when it applies.
+  </Card>
+  <Card pill="Disconnect" tone="good">
+    Close the connection and let the client reconnect and resync from its sequence number. Brutal, bounded, and correct — it converts an unbounded memory problem into a bounded reconnect.
+  </Card>
+</CardGrid>
+
+"Disconnect and let them resync" is the option teams resist and then adopt, because it is the only one whose worst case is bounded. It is also why the sequence numbers from [Part 2](/guides/real-time-systems/delivery/#ordering) are load-bearing: cheap resume is what makes aggressive disconnection an acceptable policy rather than a data-loss event.
+
+The related discipline is to **send less**. Coalesce rapid updates into one frame on a short timer. Send deltas rather than full objects. Let the client declare what it is actually looking at and stop sending it everything else — a client viewing one channel does not need live updates for the other four hundred it is a member of.
+
+</Collapse>
+
+<Collapse id="gotchas" title="3. The gotchas that actually bite">
+
+<Note label="1 · Idle timeouts you didn't set">
+Load balancers, corporate proxies and mobile carrier NATs all close connections that have been idle for 30–120 seconds, usually without telling either side. Send application-level heartbeats every 20–30 s, and use them to detect death in both directions. A TCP connection can appear open for many minutes after the peer is gone.
+</Note>
+
+<Note label="2 · WebSockets bypass your HTTP middleware">
+Auth, rate limiting, logging, tracing and request-size limits usually live in HTTP middleware. After the upgrade, none of it runs. Every message on a socket needs its own authorisation check and its own rate limit — a client that authenticated an hour ago may have lost permissions since.
+</Note>
+
+<Note label="3 · Cross-Site WebSocket Hijacking">
+The WebSocket handshake sends cookies but is **not** protected by the same-origin policy. A malicious page can open a socket to your server as the logged-in user. You must validate the `Origin` header server-side and prefer a token in the first application message over cookie auth.
+</Note>
+
+<Note label="4 · Mobile backgrounding">
+iOS and Android suspend background apps and their sockets, typically within seconds. Real-time delivery to a backgrounded app does not work and cannot be made to work — that path is APNs/FCM push notifications, which is a different system with different semantics. Design for the foreground/background transition explicitly; do not treat it as an edge case.
+</Note>
+
+<Note label="5 · Least-connections balancing with long connections">
+Least-connections assumes connections are short. With persistent ones, the oldest server accumulates the most and never releases them, and a newly added server sits nearly idle. Balance new connections randomly or by capacity, and rebalance deliberately rather than hoping the algorithm does it.
+</Note>
+
+<Note label="6 · Per-recipient serialisation">
+Encoding the same message once per recipient turns a 200-byte broadcast into megabytes of allocation on a large channel. Serialise once, send the same buffer to everyone. This single change has rescued more real-time systems than any other micro-optimisation.
+</Note>
+
+<Note label="7 · Testing at one connection per client">
+Load tests from a single machine hit ephemeral port exhaustion at ~64k connections and rarely reproduce the thing that actually breaks you — the synchronised reconnect. Test the storm explicitly: connect 50,000 clients, kill a gateway, and watch what the survivors do.
+</Note>
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="Reconnection is a standard client requirement. Why is it also your system's most dangerous load test, and what defuses it on the server?" options={["Reconnecting clients re-download the app bundle; serve it from a CDN with longer cache headers", "Old sockets linger while new ones open, doubling connections; raise file-descriptor limits and add memory", "Every client reconnects at once with the most expensive operation in the system; use server-directed reconnect, admission control and cheap resumes"]} answer={2}>
+
+Reconnection is a dangerous load test because a mass disconnect causes thousands of clients to attempt to reconnect simultaneously. A reconnect is much more expensive than a simple request, requiring a full TLS handshake, client authentication, and a complete state resynchronization. This surge can saturate server CPU and memory, causing surviving servers to fall over, creating a cascading metastable failure loop.
+
+Three server-side mitigations are:
+
+- **Server-Directed Reconnect:** Send a close frame containing a randomized reconnect delay and targets, spacing out the stampede.
+
+- **Admission Control:** Set a strict limit on connection setup rates, quickly rejecting over-quota handshakes so they back off.
+
+- **Cheap Resumes:** Let clients resume from a sequence number to fetch only deltas instead of forcing a full cold sync.
+
+</Quiz>
+
+<Quiz q="WebSockets upgrade from HTTP. Why is this upgrade a security and rate-limiting trap?" options={["The upgrade drops TLS, so frames after the handshake travel unencrypted", "After the upgrade, HTTP middleware no longer runs, so authorisation, rate limits and size limits must apply per message", "Load balancers drop upgraded connections, so clients silently reconnect without authenticating"]} answer={1}>
+
+Because once the connection upgrades, it bypasses all standard L7 HTTP gateway middleware (logging, authorization filters, body-size limits, and WAF rules). The connection stays open for hours, and the server-side framework does not run validation on incoming WebSocket frames.
+
+Concretely: a user authorised for a channel an hour ago may have been removed since, and their still-open socket will keep receiving and sending unless something checks. A client can send ten thousand messages a second with no rate limiter in the path. A malformed or enormous frame can hit a parser that was never fuzzed because "the gateway limits body size".
+
+So: check authorisation per message against current state (cached with a short TTL, not read from the socket's initial context), apply a per-connection rate limit, bound frame size, and re-verify the token periodically — closing the connection when it expires rather than trusting it indefinitely. And validate the `Origin` header at handshake time, since the same-origin policy does not protect WebSockets.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Exponential Backoff And Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/) — AWS Architecture Blog. Simulations showing why backoff without jitter only reschedules the stampede.
+- [RFC 6455: The WebSocket Protocol](https://www.rfc-editor.org/rfc/rfc6455) — IETF. The handshake, the `Origin` header and the security considerations behind the gotchas above.
+
+</Reading>

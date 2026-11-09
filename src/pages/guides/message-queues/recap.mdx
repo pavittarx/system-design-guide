@@ -1,0 +1,56 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap"
+description: "Message Queues & Async in 60 seconds, and the sources behind it."
+chapter: "4"
+current: "4. Message Queues"
+sections:
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<Collapse id="recap" title="Recap in 60 seconds">
+
+<Recap>
+
+- **Async is a choice about waiting, not about work.** Do the essential bit inline, queue the rest, answer the user now.
+
+- **A queue is a shock absorber.** Bursty in, smooth out. Bound it, or the buffer becomes the outage.
+
+- **Work queue = one consumer gets it. Pub/sub = everyone does.** Task distribution vs. event notification.
+
+- **At-least-once is the real default.** Exactly-once end-to-end is a story; at-least-once plus idempotency is the implementation.
+
+- **Check-then-act is a race.** Claim the message ID with one atomic conditional insert, and only the winner does the work.
+
+- **A claim needs a status and a lease**, or a crash mid-work turns a message into a permanent silent loss.
+
+- **External side effects need the provider's idempotency key.** If you can't put the work in your transaction, push dedup to whoever owns it.
+
+- **Visibility timeout below your p99 = guaranteed duplicate processing**, and if it's slow for everyone, infinite redelivery. Heartbeat long jobs; cap receive count.
+
+- **Ordering is per-partition, and a partition is a queue of one.** Concurrency and strict ordering are mutually exclusive — pick.
+
+- **Never write to the DB and the broker as two steps.** Outbox table in the same transaction, or CDC off the replication log.
+
+- **Send a pointer, not a payload.** Claim check keeps the queue thin and inside broker size limits.
+
+- **Deploys are rolling, so schemas must be additive.** Tolerant readers, optional fields, never repurpose a field's meaning.
+
+- **Alert on lag and its slope, not depth.** Deep and draining is fine; shallow and growing is not.
+
+- **An unmonitored DLQ is a landfill.** Alert on arrival rate, rehearse the replay.
+
+- **N > A / C, always.** No headroom above arrival rate means a spike never drains.
+
+</Recap>
+
+</Collapse>
+
+<Footer>
+  [Apache Kafka Documentation](https://kafka.apache.org/documentation/) ·
+  [RabbitMQ — AMQP Concepts](https://www.rabbitmq.com/tutorials/amqp-concepts.html) ·
+  [AWS SQS Developer Guide](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html)
+</Footer>

@@ -1,0 +1,159 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Metrics"
+description: "Part 1 of Seeing Inside the Machine. Counters, gauges and histograms, why the average lies, and the RED and USE checklists."
+chapter: "7"
+current: "7. Observability"
+sections:
+  - id: "metrics"
+    title: "Metrics: counters, gauges, histograms"
+  - id: "average"
+    title: "Why the average lies"
+  - id: "red-use"
+    title: "RED and USE"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+
+<Collapse id="metrics" title="1. Metrics: counters, gauges, histograms">
+
+There are essentially three metric types, and choosing wrongly between them produces graphs that are worse than no graph, because they look authoritative.
+
+A **counter** only goes up. Requests served, bytes written, errors returned. You never read a counter's absolute value — it's meaningless, an artefact of how long the process has been running. You read its *rate*: the derivative. This is why counters survive restarts gracefully; the collector sees the value reset to zero and treats it as a new series rather than as a catastrophic negative spike.
+
+A **gauge** goes up and down. Queue depth, connections in use, memory resident, temperature. Gauges are instantaneous samples, which means they miss everything between samples. A gauge scraped every 15 seconds cannot see a queue that spikes to 50,000 and drains in 3 seconds. This is a real and common blind spot: your queue depth graph is flat and your users are timing out.
+
+A **histogram** counts observations into buckets. This is how you get latency distributions, and it is the type most people use least well.
+
+<Note type="warn" label="Histogram buckets are chosen in advance, forever">
+
+A histogram with buckets at 5 ms, 10 ms, 25 ms, 50 ms, 100 ms, 250 ms, 500 ms, 1 s tells you how many requests fell in each range — nothing more. If your real p99 is 1.4 seconds, every request above 1 s lands in the overflow bucket, and any p99 your query engine reports is an interpolation across a bucket with no upper bound. It will be confidently wrong. Pick buckets that bracket the latencies you actually care about, and revisit them when the service changes.
+
+</Note>
+
+The compensation for that awkwardness is enormous: histograms are *aggregatable*. You can add the bucket counts from 400 instances together and compute a fleet-wide p99 that is genuinely correct, because you're summing counts, not averaging summaries. That property is worth a great deal, and it's exactly the property that pre-computed percentiles lack — which brings us to the most common statistical error in this entire field.
+
+</Collapse>
+
+<Collapse id="average" title="2. Why the average lies">
+
+Take a service handling 100 requests. Ninety-nine of them complete in 20 ms. One takes 2 seconds.
+
+<Note type="key" label="The arithmetic">
+
+Mean = (99 × 20 ms + 1 × 2,000 ms) ÷ 100 = **39.8 ms**.
+
+Your dashboard shows a healthy 40 ms average. One user in a hundred waited two seconds. At 10,000 requests per second, that "one in a hundred" is **100 people every second** — 360,000 people per hour — having a visibly broken experience that your primary latency graph cannot represent.
+
+</Note>
+
+This is why latency is measured in percentiles. p50 (the median) is the typical experience. p99 is the experience of your unluckiest 1%. p99.9 is where the pathological cases live — the cold caches, the garbage collection pauses, the retries, the one shard that's rebuilding an index.
+
+Two things about percentiles trip up almost everyone:
+
+**You cannot average percentiles.** If instance A reports a p99 of 100 ms and instance B reports a p99 of 300 ms, the fleet p99 is not 200 ms. It is not any function of those two numbers.
+
+The p99 of a combined population depends on the full shape of both distributions and how many requests each served. The only correct approach is to aggregate the underlying histogram buckets and compute the percentile once, on the combined data. Every dashboard that shows "average p99 across hosts" is showing a number with no meaning.
+
+**The user's experience is worse than your p99.** A single page load might make 20 backend calls. If each has an independent 1% chance of being slow, the chance that *at least one* is slow is 1 − 0.99²⁰ ≈ **18%**. Your service's p99 is one in a hundred; your page's p99 is nearly one in five. This is why per-request percentiles flatter you and why measuring at the edge — where the user actually is — tells a different and more honest story than measuring inside a service.
+
+<Note type="war" label="Coordinated omission">
+
+Gil Tene's name for the most insidious measurement bug there is. A load generator that waits for each response before sending the next *stops sending while the system is stalled*, so a stall yields one slow sample instead of thousands. Real users don't pause while you recover. Reported p99s can read 50 ms when the truth is seconds.
+
+The fix is to measure against the schedule requests *should* have been sent on. HdrHistogram exists largely to make that correction possible.
+
+</Note>
+
+The practical consequence: if your load test says p99 is 40 ms and production says p99 is 900 ms, do not assume production is misconfigured. Check whether your load generator was coordinating with the thing it was supposed to be stressing.
+
+</Collapse>
+
+<Collapse id="red-use" title="3. RED and USE">
+
+Two mnemonics, each for a different kind of thing, and between them they cover most of what a new service needs on day one.
+
+**RED** is for services — anything that handles requests. *Rate* (requests per second), *Errors* (how many failed), *Duration* (distribution of how long they took). Three metrics per endpoint. If you instrument nothing else, instrument these, because almost every user-visible symptom shows up in one of them.
+
+**USE** is for resources — CPUs, disks, network links, connection pools, thread pools. *Utilization* (percentage of time busy), *Saturation* (how much work is queued and waiting), *Errors*. Brendan Gregg's insight was that saturation, not utilization, is the signal that matters: a disk at 100% utilization with an empty queue is fine — it's working. A disk at 70% utilization with a queue 200 deep is in trouble.
+
+<Note type="key" label="Saturation is the one people forget">
+
+Utilization saturates at 100% and then stops telling you anything. Every level of overload beyond that point looks identical on a utilization graph. Saturation keeps counting: queue depth, pool waiters, run-queue length, load average. When utilization pins at 100%, saturation is the only signal still carrying information about *how much* trouble you're in — and the only one that shows the problem growing before the utilization graph flattens.
+
+</Note>
+
+Google's **four golden signals** — latency, traffic, errors, saturation — are RED plus saturation, and are as good a starting list as any. The important thing is not which acronym you adopt but that you cover both shapes: the request-handling view and the resource view. A service can be failing because it's broken (RED shows it) or because something underneath it has run out (USE shows it), and the two demand completely different responses.
+
+<Note label="One refinement worth making early">
+
+Split latency by outcome. A fast failure and a fast success are both fast, and mixing them means an outage that turns 30% of your traffic into instant 500s will make your latency graph *improve*. More than one team has watched p99 drop during an incident and briefly felt good about it.
+
+</Note>
+
+<Lab
+  title="Build a RED Metric Prometheus Exporter"
+  tip="Put this local metric exporter setup on your portfolio as a demonstration of production-grade RED monitoring."
+>
+
+Build this mini-project to implement custom instrumentation and scrape setups:
+
+- **The Server:** Write an API server in Node.js or Python. Create endpoints `/checkout` (simulated 50ms latency) and `/hash` (simulated 200ms latency).
+
+- **The Metrics Endpoint:** Expose a `/metrics` route that outputs Prometheus-formatted metrics. Implement:
+
+  - A counter for request rates: `http_requests_total{method="POST", handler="/checkout", status="200"}`
+  - A bucketed histogram for latency durations: `http_request_duration_seconds_bucket{le="0.05", handler="/checkout"}`
+
+- **Prometheus Scrape Configuration:** Spin up a Prometheus instance in Docker with a `prometheus.yml` file configured to scrape your server's `/metrics` endpoint every 5s.
+
+- **Benchmarking under Load:** Run a load test using `k6` against your API server. Query your local Prometheus web console at `localhost:9090`, and calculate the exact p99 latency dynamically using:
+
+  ```promql
+  histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[1m])) by (le))
+  ```
+
+</Lab>
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="Your queue-depth gauge is flat at near zero, but consumers are visibly falling behind and users are timing out. Where's the gap?" options={["The queue fills and drains between scrapes, so every sample happens to catch it nearly empty", "The gauge reports a rate rather than a current value, so the backlog is smoothed away", "The consumers are the bottleneck, so the queue really is empty and the problem is downstream"]} answer={0}>
+
+A gauge is an instantaneous sample, so a 15-second scrape interval can only ever see 15-second-apart snapshots of a value that may be moving far faster. A queue that fills to 40,000 and drains in four seconds is completely invisible — every scrape happens to catch it empty.
+
+Anything bursty needs either a counter you can take the rate of (enqueued and dequeued totals, whose divergence reveals the backlog even between samples) or a high-water-mark gauge that the application resets each scrape rather than reporting the current value. The general lesson is that your scrape interval sets a hard floor on the duration of any phenomenon you can observe, and most of the interesting ones — GC pauses, pool exhaustion, lock contention — live below it.
+
+</Quiz>
+
+<Quiz q="Two instances report p99s of 100 ms and 300 ms. What's the fleet-wide p99?" options={["200 ms, the average of the two", "300 ms, the worse of the two", "It can't be known from those two numbers; you need the combined histogram buckets"]} answer={2}>
+
+Unknowable from those two numbers. A percentile is a property of a distribution, and you cannot recover the combined distribution from two summary points — the answer depends on the full shape of both and on how many requests each instance served. If the 300 ms instance handled 1% of traffic the fleet p99 is close to 100 ms; if it handled 60% it is much nearer 300 ms; and in a skewed population the true value can sit outside the range of the two inputs entirely.
+
+The only correct method is to sum the histogram bucket counts across instances and compute the percentile once on the combined counts, which is exactly why bucketed histograms are worth their awkward fixed boundaries. Any dashboard showing `avg(p99)` or `max(p99)` across hosts is displaying a number with no defined relationship to user experience.
+
+</Quiz>
+
+<Quiz q="Your load test reports a p99 of 40 ms; production is at 900 ms with the same traffic shape. Name the most likely measurement bug." options={["Production hardware is noisier, so every request runs slower there", "Coordinated omission: the load generator stopped sending requests while the system stalled", "The load test's histogram buckets were too coarse to record the tail"]} answer={1}>
+
+Coordinated omission in the load generator. A tool that sends a request, waits for the response, then sends the next one stops issuing load exactly when the system stalls — so a two-second freeze produces one slow sample instead of the thousands of slow samples that real users, who do not pause politely, would have generated. The stall is recorded as a single unlucky request rather than as a period during which everyone was queued, and the tail of the reported distribution is understated by orders of magnitude.
+
+The correction is to measure each request's latency against the time it *should* have been sent under the intended arrival rate, not the time it was actually dispatched; HdrHistogram's correcting recorders exist to do precisely this. Before rebuilding a service to chase a discrepancy like this, check whether the two numbers are even measuring the same thing.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Histograms and summaries](https://prometheus.io/docs/practices/histograms/) — Prometheus. Why bucketed histograms aggregate across instances and pre-computed quantiles don't.
+- [HdrHistogram](http://hdrhistogram.org/) — Gil Tene. The histogram library built to record tail latency honestly, including the coordinated-omission correction.
+- [The USE Method](https://www.brendangregg.com/usemethod.html) — Brendan Gregg. Utilization, saturation and errors for every resource, with checklists per OS.
+- [The RED Method](https://grafana.com/blog/2018/08/02/the-red-method-how-to-instrument-your-services/) — Tom Wilkie, Grafana. Rate, errors and duration as the minimum instrumentation for a service.
+
+</Reading>

@@ -1,0 +1,133 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Conflicts and fencing"
+description: "Part 2 of Consistency & CAP. Why last-write-wins loses data, what version vectors and CRDTs offer instead, and why a lock needs a fencing token."
+chapter: "6"
+current: "6. Consistency & CAP"
+sections:
+  - id: "conflicts"
+    title: "Clocks, vectors, CRDTs"
+  - id: "fencing"
+    title: "Locks & fencing tokens"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Statement, Table } from '../../../components';
+
+<Collapse id="conflicts" title="1. When writes collide: clocks, version vectors, CRDTs">
+
+Line `t4` of the [quorum trace](/guides/consistency-cap/spectrum/#trace) ended with "something must now decide." That something deserves its own section, because the default answer is bad and almost nobody changes it.
+
+### Last-write-wins is a data-loss policy with good branding
+
+The obvious rule is: attach a wall-clock timestamp to every write, and when two versions conflict, keep the newer one. It's simple, it's stateless, and it's wrong in a way that produces no evidence.
+
+Consider two nodes whose clocks disagree by 300 ms — an entirely ordinary amount of NTP drift, and a rounding error compared to what a bad VM migration or a leap-second handler can do. A user updates their shipping address on node A at 12:00:00.000; A's clock is fast, so the write is stamped `12:00:00.300`. A moment later, genuinely afterwards, they correct a typo via node B at 12:00:00.150; B's clock is accurate, so that write is stamped `12:00:00.150`.
+
+Last-write-wins compares the stamps, keeps the address from A, and discards the correction. The package goes to the old address. There was no error, no retry, no warning, no log line — the system did precisely what it was configured to do, and the only artefact is a confused customer. **With last-write-wins, your consistency guarantee is only as good as your clock synchronisation**, and clock synchronisation is a best-effort background daemon.
+
+<Note type="wild" label="◈ In the wild · Google Spanner">
+
+Google Spanner takes the opposite bet: instead of hoping the clocks agree, it measures how much they might disagree. Its [TrueTime](https://research.google/pubs/spanner-googles-globally-distributed-database-2/) API uses GPS receivers and atomic clocks in every datacentre to bound how wrong any clock can be, and a transaction waits out that uncertainty window before it commits. So commit timestamps never lie about ordering, which is what lets Spanner offer externally consistent (linearizable) transactions worldwide. Rather than trusting a clock, it prices in the doubt.
+
+</Note>
+
+### Logical clocks: ordering without trusting time
+
+The fix in principle is to stop asking "when did this happen?" and start asking "what did this write know about?" A **version vector** tags each value with a per-replica counter, so when two versions meet you can compare them structurally: if one vector dominates the other on every entry, that write genuinely happened *after* — keep it, no clocks involved.
+
+If neither dominates, the writes are **concurrent**, and you now know something a timestamp could never tell you: this is a real conflict, not a slow packet. (Lamport clocks give you a total order that's consistent with causality, but they can't distinguish concurrent from ordered; vectors can, which is why they're the ones you want at a merge point.)
+
+The honest costs. Vectors grow with the number of writers — fine for a handful of replicas, awkward when every client is an actor, which is why real systems reach for dotted version vectors, pruning, and other machinery to stop the metadata outgrowing the data.
+
+And detection is not resolution: a version vector can tell you two writes are concurrent, but it has no opinion about what your business wants done about it. Riak's answer was to hand the application both siblings and let it decide, which is honest and is also why teams found it exhausting. Someone still has to write the merge function, and that function is where the actual correctness lives.
+
+### CRDTs: make the conflict impossible instead
+
+The other move is to change the data type so there's nothing to resolve. A **CRDT** — conflict-free replicated data type — is one whose merge operation is commutative, associative and idempotent, meaning replicas that have seen the same set of updates in *any* order, with duplicates, end up identical. Order stops mattering, so divergence stops being a problem to fix and becomes a state to merge.
+
+It's the same instinct as making a queue consumer [idempotent](/guides/message-queues/): design the operation so repetition and reordering are harmless, rather than building machinery to prevent them.
+
+The catalogue is real and in production. Counters that only grow, or a pair of them for increment-and-decrement. Sets with explicit add/remove tagging so a concurrent add and remove resolve by rule rather than by luck. And collaborative text — the reason two people can type in the same document and neither one's cursor jumps.
+
+<Note type="warn" label="The limit, stated plainly">
+
+Not every problem has a commutative formulation. CRDTs converge; they do not enforce invariants that span replicas. "The set of items in the cart" merges beautifully. "This balance must never go below zero" does not — two replicas can each independently approve a withdrawal that's fine locally and catastrophic jointly, and no merge function can retroactively make that legal, because the invariant was violated before the merge existed. Global invariants need coordination. Your bank balance is not a CRDT, and neither is the last seat on the flight.
+
+</Note>
+
+<Lab
+  title="Build a Replicated PN-Counter CRDT"
+  tip="Include this CRDT implementation in your portfolio to showcase your understanding of coordinator-free conflict resolution."
+>
+
+Build this mini-project to implement conflict-free convergence across distributed instances:
+
+- **The Replicated Data Structure:** Design a Positive-Negative Counter (PN-Counter) object representing increments and decrements from different nodes:
+
+  ```javascript
+  {
+    p: { "node_a": 15, "node_b": 7 },
+    n: { "node_a": 2, "node_b": 0 }
+  }
+  ```
+
+- **The Value Function:** Write a getter `value()` that sums all entries in `p` and subtracts the sum of all entries in `n` (e.g. `(15+7) - (2+0) = 20`).
+
+- **The Merge Function:** Write a function `merge(otherCounter)`. For both `p` and `n`, take the union of all keys and resolve conflicts by taking the maximum value for each key (e.g. `merged.p[node] = Math.max(this.p[node], otherCounter.p[node])`).
+
+- **Reconcile Network Partitions:** Create two local PN-Counter instances (Node A and Node B). Increment Node A locally, decrement Node B locally, simulate a network partition heal by calling `A.merge(B)` and `B.merge(A)`, and verify that both converge to the exact same correct count without locking.
+
+</Lab>
+
+</Collapse>
+
+<Collapse id="fencing" title="2. Locks aren't enough: fencing tokens">
+
+Somewhere in your system there's a job that must only run once, guarded by a distributed lock. Here's why that lock, on its own, guarantees nothing.
+
+```trace
+**c1**   acquires lock, lease 10s, **token 33**
+**c1**   ~~stops. GC pause / VM freeze. 14 seconds.~~
+**+10s** lease expires. The lock service is right
+      to release it — c1 looks dead.
+**c2**   acquires lock, **token 34**
+**c2**   write(data, token=34)  → ++accepted++
+**c1**   ...wakes up. Believes it still holds
+      the lock, because from c1's point of
+      view no time passed at all.
+**c1**   write(data, token=33)  → ++rejected: 33 < 34++
+
+~~without the token, c1's write lands last and wins~~
+```
+
+The lease didn't fail; it did its job. The problem is that **"I hold the lock" is a statement about the past**, and an arbitrary amount of wall-clock time can elapse between checking it and acting on it. A stop-the-world GC pause of several seconds is routine. A VM being live-migrated or a laptop lid closing can be worse. No amount of re-checking closes the gap, because the pause can always land between the check and the write.
+
+The fix is a **fencing token**: the lock service hands out a monotonically increasing number with every grant, the client passes it along with every write, and *the storage layer* remembers the highest token it has seen and rejects anything lower.
+
+Note where the enforcement lives — not in the client, which is the thing that can't be trusted, and not in the lock service, which isn't in the write path. The resource itself has to check. If your storage can't do that, you don't have mutual exclusion; you have a strong hint. This is the cleanest example in the whole guide of why distributed correctness is about what you can *enforce*, not what you can *agree*.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="A batch job holds a 10-second lease, freezes for 20 seconds, wakes up and writes. What must have been in place for that to be safe?" options={["A longer lease, comfortably above the worst GC pause", "A fencing token, with the storage layer rejecting any write whose token is lower than one it has already seen", "The job re-checking that it still holds the lock immediately before writing"]} answer={1}>
+
+A fencing token, enforced at the storage layer. The lock service was right to expire the lease and right to grant it to someone else; nothing the client does can make "I hold the lock" true again, because the check happened 20 seconds ago. Safety requires that the resource itself track the highest token it has seen and reject the stale writer's lower one.
+
+If enforcement lives in the client or only in the lock service, you don't have mutual exclusion — you have an agreement between processes that one of them has stopped honouring.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [How to do distributed locking](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html) — Martin Kleppmann. The source of the fencing-token argument, written as a critique of Redlock.
+- [About CRDTs](https://crdt.tech/) — crdt.tech. Papers, implementations and talks on conflict-free replicated data types, in one place.
+- [Spanner: Google's Globally-Distributed Database](https://research.google/pubs/spanner-googles-globally-distributed-database-2/) — Corbett et al., Google. How TrueTime bounds clock uncertainty so commit timestamps can be trusted.
+
+</Reading>

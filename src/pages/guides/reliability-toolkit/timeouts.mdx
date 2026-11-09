@@ -1,0 +1,66 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Timeouts and retries"
+description: "Part 1 of The Reliability Toolkit. The cheapest defence against a slow dependency, and how retries turn a blip into an outage when nobody caps them."
+chapter: "5"
+current: "5. Reliability Toolkit"
+sections:
+  - id: "timeouts"
+    title: "Timeouts: the first defense"
+  - id: "retries"
+    title: "Retries & the retry storm"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import DiagramReliabilityToolkit1 from '../../../components/diagrams/DiagramReliabilityToolkit1.astro';
+
+<Collapse id="timeouts" title="1. Timeouts: the first and cheapest defense">
+
+Go back to the cold open. The root sin was *waiting forever* for a slow service. A call with no timeout is a promise to hang indefinitely — and hung threads are the fuel of every cascade.
+
+A timeout says: "if you haven't answered in 2 seconds, I'm giving up and moving on." It converts an unbounded hang into a fast, catchable failure you can handle. It's one line of code and it's the highest-value *cheap* habit in this whole guide. The catch is picking the number: too short and you kill healthy-but-busy calls; too long and you're back to hanging. Base it on real latency percentiles (p99), not vibes.
+
+</Collapse>
+
+<Collapse id="retries" title="2. Retries — and the storm they can summon">
+
+Transient failures (a blip, a brief network drop) often succeed on a second try, so retrying is smart. Retrying *naively* is how you turn a small problem into an outage.
+
+<Note type="war" label="War story · the retry storm">
+
+A service slows down. Every client immediately retries. Those retries *double* the load on the already-struggling service, so it slows further, so more calls fail, so more retries fire… a self-reinforcing avalanche that keeps the service down long after the original blip is gone. Naive retries don't help a struggling system recover — they hold its head underwater.
+
+</Note>
+
+The fix is **exponential backoff with jitter**: wait 1s, then 2s, then 4s before each retry (back off), and add a random wobble (jitter) so a thousand clients don't all retry in lockstep and re-synchronize the stampede. Also cap the number of retries, and don't retry things that aren't retryable (a `400 Bad Request` will be just as wrong the second time). Notice this only works because of **idempotency** from the [queues guide](/guides/message-queues/) — retrying a non-idempotent action is how you double-charge someone.
+
+Backoff and jitter fix retry *timing*. They do nothing about retry *volume*, which is the half that actually kills you — see [retry budgets](/guides/reliability-toolkit/practice/#gotchas) in Part 3.
+
+<Figure>
+  <DiagramReliabilityToolkit1 />
+</Figure>
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="You add retries and the outage gets worse. Why?" options={["Retries multiply load on a dependency that was already failing to keep up, and backoff only spreads that volume over time", "The retries had no jitter, so they arrived in lockstep; adding jitter alone would have fixed it", "The timeout was too long, so each retry held its thread for longer"]} answer={0}>
+
+Because retries are a load multiplier, and you applied one to a system whose problem was load. If the dependency is saturated rather than blipping, every retry is extra work aimed at the thing that's already failing to keep up. Two specific traps: retries configured at several layers multiply rather than add — three at the client, gateway and service is 27 attempts at the bottom — and backoff with jitter only spreads that volume over time, it doesn't reduce it.
+
+The missing piece is a retry budget that caps retries at a small fraction of live traffic and empties itself when there are no successes to refill it, so retries switch themselves off during exactly the broad outage where they'd do the most damage.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Timeouts, retries, and backoff with jitter](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/) — AWS Builders' Library. How Amazon sets timeouts from latency percentiles, and why retries need backoff, jitter and a token bucket.
+- [Exponential Backoff And Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/) — Marc Brooker, AWS Architecture Blog. Simulations showing why randomising backoff breaks up synchronised retry waves.
+
+</Reading>

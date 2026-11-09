@@ -1,0 +1,133 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Layers and algorithms"
+description: "Part 1 of Load Balancing. L4 versus L7, which layer you actually need, and the algorithms that pick a server."
+chapter: "3"
+current: "3. Load Balancing"
+sections:
+  - id: "l4l7"
+    title: "L4 vs L7"
+  - id: "pick-a-layer"
+    title: "Which layer do you need?"
+  - id: "algos"
+    title: "The algorithms"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import DiagramLoadBalancing1 from '../../../components/diagrams/DiagramLoadBalancing1.astro';
+import DiagramLoadBalancing2 from '../../../components/diagrams/DiagramLoadBalancing2.astro';
+
+<Collapse id="l4l7" title="1. L4 vs L7: two places to make the decision">
+
+<DiagramLoadBalancing1 />
+
+Load balancers come in two broad flavors, named after layers of the networking stack. The difference is *how much of the request they bother to read.*
+
+<CardGrid>
+  <Card title="Layer 4 (Transport)">
+
+  Routes by IP and port only. It doesn't open the envelope — just forwards packets. Blazing fast, protocol-agnostic, but can't make smart decisions based on *content*.
+
+  </Card>
+  <Card title="Layer 7 (Application)">
+
+  Reads the actual HTTP request — URL, headers, cookies. Can route `/api` to one pool and `/images` to another, do TLS termination, rewrite, and inspect. Smarter, slightly slower.
+
+  </Card>
+</CardGrid>
+
+### L4 vs. L7 Comparison Matrix
+
+<Table>
+
+| Dimension / Feature | Layer 4 (Transport) | Layer 7 (Application) |
+| :--- | :--- | :--- |
+| **Inspection Depth** | IP Address, TCP/UDP Ports | HTTP Method, Path, Headers, Cookies |
+| **Throughput & Speed** | Ultra-high (Millions of packets/s) | High (Requires HTTP parsing & TLS decryption) |
+| **Content Routing** | ❌ None (Protocol neutral) | ✓ Path-based (`/api`, `/static`), Header routing |
+| **TLS Termination** | Pass-through to backends | Decrypts TLS at the edge |
+| **Sticky Sessions** | IP Hash / Socket-based | Cookie-based / Session ID matching |
+| **Protocol Support** | Any TCP/UDP (Database, MQTT, gRPC) | Web protocols (HTTP/1.1, HTTP/2, WebSocket, gRPC) |
+
+</Table>
+
+Most modern web setups use L7 (Nginx, HAProxy, Envoy, AWS ALB) because content-aware routing is worth the tiny overhead. Reach for L4 (AWS NLB) when you need raw throughput or you're balancing non-HTTP traffic.
+
+</Collapse>
+
+<Collapse id="pick-a-layer" title="2. Which layer do you actually need?">
+
+The two-card summary is fine for a whiteboard and useless when you're staring at a Terraform file. So here it is as a decision table. Find the thing you need in the left column; the right column is what it costs you.
+
+<Table>
+
+| You want to… | Layer 4 | Layer 7 | The cost |
+| ------------ | ------- | ------- | -------- |
+| **Route by URL path** (`/api` here, `/img` there) | No — it never sees the URL | Yes | The LB must parse HTTP and terminate the client connection. |
+| **Terminate TLS** at the edge | Pass-through only — each backend does its own handshake | Yes | The LB holds your private keys and pays the handshake CPU. Backend traffic is now plaintext unless you re-encrypt. |
+| **Retry a failed request** on another backend | No — it can only fail the connection back to the client | Yes, for idempotent requests | Retries at multiple layers multiply. See [retry amplification](/guides/load-balancing/failure/#retry-amplification). |
+| **Preserve the client's source IP** with no extra work | Usually yes — packets reach the backend with the client's address intact | No — the backend sees the proxy; you read `X-Forwarded-For` | At L7, an untrusted header becomes your identity source. At L4, any mode that rewrites the source (SNAT) needs the PROXY protocol. See [client IP](/guides/load-balancing/failure/#client-ip). |
+| **Balance non-HTTP protocols** (SMTP, MQTT, raw TCP, UDP) | Yes — it doesn't care what's inside | Only if the proxy speaks that protocol natively | You give up every content-based decision on that traffic. |
+| **The lowest possible added latency** | Yes — forwarding, sometimes in kernel or hardware | No — parse, buffer, re-emit | The L7 tax is small in absolute terms but real when your own p50 is single-digit milliseconds. |
+| **Inspect or rewrite headers** (auth, tracing, canary flags) | No | Yes | Rewrites live in LB config, which is code nobody tests. Treat it as such. |
+| **Per-route rate limiting** | Only per-IP connection or packet limits | Yes — per path, per header, per token | Needs shared counters across LB instances, or you're limiting per-LB and multiplying your limit by the fleet size. |
+
+</Table>
+
+The short version: **if it's HTTP and you have opinions about it, go L7.** Go L4 when you need protocol neutrality, source-IP fidelity for free, or throughput at a price per request that L7 can't touch. And note that "L4 or L7" isn't exclusive — a very common shape is an L4 balancer at the edge fronting a tier of L7 proxies, which is how you get anycast-scale ingress and content routing at the same time.
+
+</Collapse>
+
+<Collapse id="algos" title="3. The algorithms: how it picks">
+
+<DiagramLoadBalancing2 />
+
+"Pick a healthy server" hides a real decision. The strategy matters more than it looks, because the naive choice quietly punishes you under uneven load.
+
+<Table>
+
+| Algorithm | How it chooses | Notes & trade-off |
+| --------- | -------------- | ----------------- |
+| **Round robin** | Next server in rotation, over and over. | Simple and common default, but ignores that requests differ — a server stuck with 10 heavy queries still gets more. |
+| **Least connections** | The server currently handling the fewest requests. | Often the better default; needs accurate live counts, and can dogpile a just-recovered (near-empty) server. |
+| **Weighted** | Bigger servers get a bigger share. | Great for mixed hardware — but only if you set the weights right. |
+| **IP hash** | Hash the client's IP → always the same server. | Gives stickiness, but uneven if a few IPs dominate (corporate NATs). |
+| **Consistent hashing** | Hash onto a ring so adding/removing a server reshuffles minimal keys. | The clever one — keeps caches warm when the fleet changes size; needs virtual nodes to spread evenly. |
+
+</Table>
+
+<Note type="key" label="Why consistent hashing is a big deal">
+
+With plain "hash mod N," adding one server changes *N* in the formula and remaps almost every key to a new server — every cache goes cold at once (hello, *thundering herd* from the [Caching guide](/guides/understanding-caching/)). Consistent hashing moves only a small slice of keys when the fleet grows or shrinks. It's the trick behind distributed caches, CDNs, and databases like Cassandra.
+
+</Note>
+
+<Note type="wild" label="◈ In the wild · Google Maglev">
+
+Maglev is Google's software network load balancer: it runs on commodity servers rather than dedicated hardware and fronts a large share of Google's incoming traffic. Consistent hashing chooses the backend, and per-connection tracking keeps every packet of a flow on the same backend, so growing or shrinking the fleet reshuffles only a small fraction of connections. That is why the "minimal reshuffling" property is worth the extra machinery at scale ([Google's Maglev paper](https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/)).
+
+</Note>
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="Your dashboard shows connections evenly spread across ten backends. One of them is at 90% CPU and the others are idle. What's happening?" options={["The busy backend has a slower CPU, so it needs a lower weight", "Sticky sessions pinned the heaviest users to that backend", "You're balancing connections, not requests, and long-lived HTTP/2 or gRPC connections carry very different amounts of work"]} answer={2}>
+
+You're balancing connections, not requests — an L4 hop in front of long-lived clients, and almost certainly HTTP/2 or gRPC, where one connection carries many concurrent streams. The connection counts are even and meaningless; the work behind them is not. Balance at L7 so the decision happens per request, or cap connection age so clients are periodically forced to reconnect and re-balance. Watch requests and in-flight count per backend, never connection count.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [Maglev: A Fast and Reliable Software Network Load Balancer](https://research.google/pubs/maglev-a-fast-and-reliable-software-network-load-balancer/) — Google, NSDI 2016. Consistent hashing plus connection tracking, running in front of Google's traffic.
+- [What Is a Load Balancer?](https://www.nginx.com/resources/glossary/load-balancing/) — F5 NGINX. A short tour of the common algorithms and of layer 4 versus layer 7.
+- [Elastic Load Balancing](https://aws.amazon.com/elasticloadbalancing/) — AWS. How a cloud provider splits the same choice into an Application (L7) and a Network (L4) load balancer.
+
+</Reading>

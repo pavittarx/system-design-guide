@@ -1,0 +1,79 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "APIs, Gateways & Rate Limiting — System Design Basics"
+description: "Your architecture is a private matter. Your API is a public promise — and unlike your architecture, you cannot quietly refactor a promise that a thousand clients have already built against."
+chapter: "8"
+current: "8. APIs & Gateways"
+series:
+  lead: "A companion to"
+  guides: [load-balancing, reliability-toolkit]
+sections:
+  - id: "promise"
+    title: "The API is the product"
+  - id: "styles"
+    title: "REST, RPC and GraphQL"
+---
+
+import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+
+<ColdOpen tag="◇ the field that was always there">
+
+The change is one line. An optional field in a response — `legacy_id`, unused, deprecated for two years, nobody has asked about it since — gets deleted. It ships on a Tuesday afternoon. Within four minutes, a mobile client on a version released eighteen months ago starts crashing on parse, because a developer long since departed wrote a decoder that treats every declared field as required.
+
+That client is on 340,000 phones. You cannot patch them. The rollback takes six minutes and the field is now permanent, in every response, forever, doing nothing. This is the API tax: the code is trivially deletable and the *promise* is not.
+
+</ColdOpen>
+
+<Collapse id="promise" title="1. The API is the product">
+
+Every other guide in this series is about things you can change. You can swap the database, replace the cache, re-shard, move to a different queue — the users never know. The API is the one layer where that stops being true, because the moment a third party writes code against it, its shape is no longer yours.
+
+This produces a specific and consistent engineering error: teams design APIs the way they design internal function signatures, optimising for what's convenient to implement today. Then the API survives three rewrites of the thing behind it, and every one of those rewrites is made harder by a contract that was never designed to outlive its first implementation.
+
+<Note type="key" label="The test that catches most of it">
+
+Before shipping an endpoint, ask: *if we replaced the entire backend next year, would this contract still make sense?* An endpoint called `/v1/get-user-from-cache` fails immediately. So does one whose response mirrors your table columns, whose pagination exposes your database offsets, or whose error codes are the ORM's exception names. Each of those has welded a caller's code to an implementation detail you were planning to change.
+
+</Note>
+
+The other thing worth internalising early: an API has at least two audiences with conflicting interests. The client developer wants exactly the data they need in one round trip. The API owner wants a small number of stable, cacheable, well-understood endpoints. Every API style below is a different resolution of that tension, and none of them dissolves it.
+
+</Collapse>
+
+<Collapse id="styles" title="2. REST, RPC and GraphQL">
+
+Three dominant styles, each optimising something different, each with a bill that arrives later.
+
+**REST** models the world as resources with a fixed set of verbs. `GET /orders/88213`. Its real advantage is not elegance but that it inherits the entire HTTP ecosystem for free: intermediary caches understand a GET, load balancers understand idempotency, browsers understand status codes, and every CDN on earth can serve a cacheable response without knowing anything about your domain. That's a large amount of infrastructure you don't have to build (see [CDNs & the Edge](/guides/cdn-edge/)).
+
+Its cost is round trips. Rendering a single screen may need an order, its line items, the customer, and shipping status — four requests, four latencies, and on a mobile connection with 120 ms of round-trip time that's half a second of nothing but waiting.
+
+**RPC** (gRPC, Thrift, and the plain JSON-over-POST that most "REST" APIs actually are) models the world as procedures. `SubmitOrder(request) → response`. It maps cleanly to how the code is actually organised, generates typed clients from a schema, and over gRPC gets HTTP/2 multiplexing, binary encoding and streaming.
+
+Its cost is opacity: to a cache, a proxy, or a browser, every call is an opaque POST. You have given up the free ecosystem in exchange for efficiency and type safety, which is often a good trade for service-to-service traffic and a poor one for a public API.
+
+**GraphQL** hands the client a query language and lets it ask for exactly the fields it wants in one round trip. This genuinely solves the mobile over-fetching problem, and it solves the "we need a new endpoint for the new screen" problem that produces API sprawl.
+
+<Note type="warn" label="GraphQL moves the cost, it does not remove it">
+
+Now every client can compose an arbitrary query, and some of those queries are expensive in ways nobody anticipated. A nested query walking users → orders → items → recommendations can fan out into thousands of database calls from a single HTTP request.
+
+Three defences are effectively mandatory: **query depth limiting**, **query cost analysis** (assign a cost to each field, reject anything over a budget), and **batching** at the data-loading layer so the N+1 becomes one query per level. Caching is also substantially harder, because every distinct query string is a distinct response — **persisted queries**, where clients send a hash of a pre-registered query, restore most of what you lost.
+
+</Note>
+
+<Table>
+
+| | REST | RPC / gRPC | GraphQL |
+| --- | ---- | ---------- | ------- |
+| Round trips per screen | Many | Many | One |
+| HTTP cacheable | Yes, natively | No | Only with persisted queries |
+| Typed client generation | Via OpenAPI | Built in | Built in |
+| Cost of a hostile client | Bounded per endpoint | Bounded per method | Unbounded without cost limits |
+| Best fit | Public APIs, cacheable reads | Internal service-to-service | Rich clients, many screens |
+
+</Table>
+
+Most large systems end up with all three: gRPC internally, REST at the public edge, and GraphQL for first-party apps. That is not indecision; it's each style being used where its trade-off is favourable.
+
+</Collapse>

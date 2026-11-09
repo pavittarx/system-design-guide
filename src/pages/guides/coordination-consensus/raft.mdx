@@ -1,0 +1,95 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Raft and quorums"
+description: "Part 1 of Getting Machines to Agree. How Raft elects a leader and commits a write, and why a majority of an odd-sized cluster is the number that matters."
+chapter: "10"
+current: "10. Coordination"
+sections:
+  - id: "raft"
+    title: "How Raft actually works"
+  - id: "quorum"
+    title: "Quorums and the odd-number rule"
+  - id: "check"
+    title: "Check your understanding"
+  - id: "reading"
+    title: "Related reading"
+---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import DiagramCoordinationConsensus1 from '../../../components/diagrams/DiagramCoordinationConsensus1.astro';
+
+<Collapse id="raft" title="1. How Raft actually works">
+
+Paxos is the famous one and Raft is the one people actually implement, because Raft was explicitly designed to be understandable. It is worth knowing in outline, because every managed coordination service you will use is running something very close to it.
+
+Every node is in one of three states: **follower**, **candidate**, or **leader**. Time is divided into numbered **terms** — a logical clock that only ever increases, and which is the mechanism that makes stale leaders detectable.
+
+<Stack>
+  <Layer idx="1">**Everyone starts a follower.** Followers do nothing but respond to messages. Each holds a randomised election timeout, typically 150–300 ms.</Layer>
+  <Layer idx="2">**The leader sends heartbeats.** As long as heartbeats arrive, followers reset their timers and stay followers.</Layer>
+  <Layer idx="3">**A timeout means a candidacy.** A follower that hears nothing increments the term, votes for itself, and asks everyone else for a vote.</Layer>
+  <Layer idx="4">**One vote per node per term.** A node grants its vote only if the candidate's log is at least as up to date as its own — this is what stops a node that missed writes from becoming leader.</Layer>
+  <Layer idx="5">**A majority wins.** The candidate that collects *n*/2 + 1 votes becomes leader and immediately starts heartbeating, which suppresses further elections.</Layer>
+  <Layer idx="6">**Split votes resolve by randomness.** If nobody wins, the term ends with no leader, timers fire again at different random times, and the next round almost always succeeds.</Layer>
+</Stack>
+
+Once elected, the leader handles every write as a **log append**. It appends the entry locally, sends it to all followers, and waits for a majority to acknowledge. Once a majority has it, the entry is **committed** — durable regardless of any subsequent failure, because any future leader must have it in order to have won an election. Only then does the leader apply it to the state machine and answer the client.
+
+<Note type="key" label="The two guarantees that make it work">
+
+**Election restriction:** a node cannot win an election unless its log is at least as current as a majority's. So the winner always has every committed entry.
+
+**Term monotonicity:** every message carries a term. A node receiving a message from an older term rejects it; a node receiving a newer term immediately steps down. This is how an isolated ex-leader learns it has been replaced — the moment it can talk to anyone again.
+
+</Note>
+
+That second guarantee is the direct answer to split brain *inside* the consensus group. An old leader partitioned away from the majority will keep believing it is leader, but it can never commit anything, because commits require a majority it does not have. Its writes hang. It is a leader with no power, which is exactly the right failure mode.
+
+<Figure>
+  <DiagramCoordinationConsensus1 />
+</Figure>
+
+</Collapse>
+
+<Collapse id="quorum" title="2. Quorums and the odd-number rule">
+
+A majority of *n* is ⌊*n*/2⌋ + 1. Two majorities of the same set must overlap in at least one member, and that overlap is the entire reason consensus works: any two decisions share a witness, so they cannot contradict each other.
+
+<Table numeric>
+
+| Nodes | Majority | Failures tolerated | Verdict |
+| ----- | -------- | ------------------ | ------- |
+| 1 | 1 | 0 | Not a cluster |
+| 2 | 2 | **0** | Worse than 1 — twice the failure surface, no tolerance |
+| 3 | 2 | 1 | The sensible minimum |
+| 4 | 3 | **1** | Same tolerance as 3, more cost, slower writes |
+| 5 | 3 | 2 | The standard for anything important |
+| 7 | 4 | 3 | Rarely worth the latency |
+
+</Table>
+
+The table explains the odd-number rule that everyone repeats and few justify: **an even cluster gives you nothing an odd one below it doesn't.** Four nodes tolerate exactly as many failures as three while requiring one more acknowledgement per write and adding a node that can itself fail. Going from 3 to 5 is a real upgrade; going from 3 to 4 is paying money to get slower.
+
+Larger is not better in general, either. Every write waits for a majority to acknowledge, so write latency is governed by the *slowest node in the fastest majority*. At five nodes you wait for the third-fastest. At seven you wait for the fourth-fastest, across more machines and probably more distance. Consensus clusters get slower as they get bigger, which is the opposite of the intuition people bring from stateless services in [Load Balancing](/guides/load-balancing/).
+
+This is also where cross-region deployment turns painful. Put five etcd nodes in three continents and every single write costs a cross-ocean round trip to reach a majority — 150 ms or more, per write, forever. The usual answer is to keep the consensus group inside one region (or a few nearby availability zones) and treat other regions as asynchronous consumers of its decisions. When you truly need global consensus, you are in the territory of Spanner and its atomic clocks, discussed in [Consistency & the CAP Theorem](/guides/consistency-cap/).
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="Why are even-numbered cluster sizes (like 4 nodes) almost always a bad design?" options={["A 4-node cluster tolerates the same single failure as 3 nodes, but every write waits for one more acknowledgement", "Raft cannot elect a leader when the number of voters is even", "An even cluster can split into two equal halves that each elect their own leader"]} answer={0}>
+
+Because a 4-node cluster requires 3 nodes to agree for a majority quorum (4/2 + 1 = 3), meaning it can only tolerate 1 failure (4 - 3 = 1). A 3-node cluster also requires 2 nodes for quorum, allowing it to tolerate 1 failure as well. Therefore, adding the 4th node does not increase the cluster's fault tolerance, but it increases hardware cost, write latency (waiting for 3 ACKs instead of 2), and adds another node that can fail. You pay more to get a slower, less reliable cluster.
+
+</Quiz>
+
+</Collapse>
+
+<Reading>
+
+- [In Search of an Understandable Consensus Algorithm](https://raft.github.io/raft.pdf) — Ongaro & Ousterhout. The Raft paper itself: elections, log replication and safety, written to be read.
+- [The Raft Consensus Algorithm](https://raft.github.io/) — raft.github.io. An interactive visualization of elections and log replication, plus a list of implementations.
+- [Tuning](https://etcd.io/docs/v3.5/tuning/) — etcd. How heartbeat interval and election timeout trade failover speed against false elections in a real cluster.
+
+</Reading>

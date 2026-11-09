@@ -1,0 +1,51 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap"
+description: "CDNs & the Edge in 60 seconds, and the sources behind it."
+chapter: "9"
+current: "9. CDNs & Edge"
+sections:
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+
+<Collapse id="recap" title="Recap in 60 seconds">
+
+<Recap>
+
+**Distance is a hard floor.** Light in fibre travels ~200,000 km/s. London to New York is ~60 ms of physics per round trip; four round trips is ~280 ms you cannot optimise away in code. The only fix is to be closer.
+
+**A PoP is a cache plus a TLS terminator plus a router.** It saves bytes on hits and handshakes on everything — which is why a CDN speeds up uncacheable content too.
+
+**Anycast finds the PoP.** One IP announced from everywhere; BGP picks the nearest. DNS steering is the older alternative and sees the resolver, not the user, unless EDNS Client Subnet is in play.
+
+**Origin load per PoP is 60 ÷ TTL per minute.** Short TTLs are cheap; they are only expensive if users wait for the revalidation.
+
+**The cache key is the whole game.** Every dimension you add multiplies storage and divides hit rate. `Vary: Cookie` is a per-user cache, which is no cache.
+
+**Shield your origin.** Without one, 100 PoPs missing together means 100 origin fetches for identical bytes. With one, it means 1.
+
+**Fingerprint, don't purge.** A content hash in the filename makes every deploy a new key. When you must purge, prefer soft purge and surrogate keys.
+
+**Serve stale deliberately.** `stale-while-revalidate` takes origin latency off the user's critical path; `stale-if-error` turns an origin outage into mild staleness.
+
+**Edge compute is a request filter, not a backend.** If it needs your database, it belongs next to your database.
+
+**CDNs fail at the control plane.** Both canonical outages were config pushed globally in seconds. Keep your origin survivable and your DNS TTLs short.
+
+</Recap>
+
+</Collapse>
+
+<Footer>
+  Fastly, "Summary of June 8 outage" (2021) ·
+  Cloudflare, "Details of the Cloudflare outage on July 2, 2019" ·
+  RFC 9111 (HTTP Caching) ·
+  RFC 5861 (`stale-while-revalidate`, `stale-if-error`) ·
+  RFC 8446 (TLS 1.3) ·
+  MDN Web Docs, `Vary` ·
+  Cloudflare Learning Center, "What is a CDN?" ·
+  Fastly Developer Hub, "Purging" and "Surrogate keys".
+</Footer>

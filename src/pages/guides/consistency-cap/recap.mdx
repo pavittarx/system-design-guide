@@ -1,0 +1,67 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Recap and numbers"
+description: "Consistency & CAP in 60 seconds, and the numbers worth carrying in your head."
+chapter: "6"
+current: "6. Consistency & CAP"
+sections:
+  - id: "recap"
+    title: "Recap in 60 seconds"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Statement, Table } from '../../../components';
+
+<Collapse id="recap" title="Recap in 60 seconds">
+
+<Recap>
+
+- **CAP's C is linearizability. ACID's C is your constraints.** They share a letter and nothing else. Ask which one someone means before you design anything.
+
+- **P isn't a choice.** The real decision is C or A, and only during a partition. A single node is trivially CP, which tells you how little the label is worth.
+
+- **A partition is a timeout you configured.** Shorter timeout, more partitions resolved faster; longer timeout, fewer partitions that hurt longer. There is no zero.
+
+- **PACELC's else-branch is the one that runs.** Latency vs. consistency is decided on every request all day; availability vs. consistency is decided a few minutes a year.
+
+- **R + W > N means the read set and the write set intersect.** That's all it means. Not linearizable, no help for read-modify-write, and suspended entirely during a sloppy quorum.
+
+- **Last-write-wins is a data-loss policy.** If your clocks disagree by 300 ms, so does your idea of "last" — and the loss is silent. Version vectors detect concurrency honestly; CRDTs remove it by construction; neither decides what a conflict *means* to your business.
+
+- **A lock is a statement about the past.** Add a fencing token the storage layer checks, or accept that a paused process will eventually wake up and overwrite you.
+
+- **Compensation is not rollback.** The intermediate state was visible, some actions can't be undone, so put the irreversible steps last. And 2PC's real danger is the blocking window when the coordinator dies mid-protocol.
+
+- **Read-your-writes is the one users notice.** Route their reads to the primary for a window, or carry an LSN/GTID and wait for the replica to reach it.
+
+- **Choose per data type, not per system.** Strong for money and inventory, session guarantees for a user's own content, eventual for counters.
+
+</Recap>
+
+And the numbers underneath all of it. These are **order-of-magnitude** figures — your network is not these numbers, but it is within a factor of two or three of them, and that's enough to do the arithmetic that matters.
+
+<Table numeric>
+
+| Rough number | What it is | What it costs you |
+| ------------ | ---------- | ----------------- |
+| ~0.5 ms | Round trip within a rack / one AZ | A three-node quorum here is essentially free. This is why the default single-region setup feels fast and teaches you nothing about the trade-off. |
+| ~1–2 ms | Round trip cross-AZ, same region | A synchronous quorum across three availability zones costs a millisecond or two per write. That's cheap insurance against losing a data centre — take it. |
+| ~60–90 ms | Round trip cross-continent (US east↔west, US↔EU) | One majority round trip. A synchronous three-region quorum write cannot complete faster than the RTT to the *second-closest* region. Full stop. |
+| ~200 ms | Round trip to the far side of the planet (~40,000 km of fibre) | The floor for a globally synchronous write. Not a target to optimise toward — a wall. |
+| ~200,000 km/s | Speed of light in fibre, about two-thirds of *c* | The constant generating every row above. It has not improved and will not. |
+| 1–2 RTT | Round trips a commit actually needs | Raft/Paxos in steady state is roughly one majority RTT; a prepare-then-commit protocol is two. Multiply the rows above, don't divide them. |
+
+</Table>
+
+The point those numbers exist to make: **synchronous cross-region consensus has a latency floor set by physics, and no engineering gets under it.** If someone asks for global strong consistency with a p99 under 50 ms, they haven't asked for an optimisation — they've asked you to move Europe closer. The only real move is to shrink the set of data that needs global agreement until what's left can afford the round trip, and let everything else be regional, cached, or eventual.
+
+</Collapse>
+
+<Footer>
+  [GitHub — October 21 Post-Incident Analysis](https://github.blog/news-insights/company-news/oct21-post-incident-analysis/) ·
+  [Amazon — Dynamo Paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf) ·
+  [Google — Spanner TrueTime](https://cloud.google.com/spanner/docs/true-time-external-consistency) ·
+  [PACELC Theorem](https://en.wikipedia.org/wiki/PACELC_theorem) ·
+  [Kleppmann — How to do distributed locking](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html) ·
+  [Jepsen — Consistency Models](https://jepsen.io/consistency) ·
+  [CRDT.tech — Conflict-free Replicated Data Types](https://crdt.tech/)
+</Footer>

@@ -1,0 +1,97 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Understanding Caching — A Practical Guide"
+description: "What a cache really is, where caches live, the read/write patterns worth knowing, and the parts that quietly break in production — explained for developers."
+chapter: "1"
+current: "1. Caching"
+series:
+  lead: "The opener to"
+  guides:
+    - database-scaling
+    - load-balancing
+    - { slug: message-queues, label: "Message Queues" }
+    - { slug: reliability-toolkit, label: "Reliability" }
+    - consistency-cap
+sections:
+  - id: "what"
+    title: "What a cache is"
+  - id: "layers"
+    title: "The layers"
+---
+
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import DiagramUnderstandingCaching1 from '../../../components/diagrams/DiagramUnderstandingCaching1.astro';
+
+<ColdOpen tag="◇ the ninety seconds after the key expired">
+
+19:42 on a Tuesday, the busiest hour of the week. One key — the homepage feed, cached for an hour, requested about 8,000 times a second — reaches the end of its TTL. Every one of those 8,000 requests looks in the cache, finds nothing, and does the obvious thing: asks the database.
+
+The query takes 40 ms when the database is idle. It is not idle; it is now running 8,000 of them at once, so it takes four seconds, then twelve. Clients time out at two seconds and retry, which adds a second wave on top of the first. Nobody deployed anything. Nobody's disk failed. A timer ran out, and by 19:44 the site is down.
+
+</ColdOpen>
+
+<Collapse id="what" title="1. What a cache actually is">
+
+A **cache** is a small, fast store that keeps copies of data close to where it's needed, so you don't have to redo expensive work — a database query, an API call, a heavy computation, a network round-trip. You spend a little memory and some added complexity to buy a lot of speed and a much lighter load on the systems behind it.
+
+The reason it matters is a gap in speed. Reading from an in-memory cache is measured in microseconds (local) to well under a millisecond (a Redis hop); the same request that falls through to a database and back can take **tens of milliseconds** — often orders of magnitude slower. When most requests are answered by the cache, average latency collapses and the origin barely notices the traffic.
+
+<Note type="key" label="The whole tension in one line">
+
+*"There are only two hard things in Computer Science: cache invalidation and naming things."* — attributed to Phil Karlton. Caching is easy to add and hard to keep *correct*. That's the real subject of this guide.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="layers" title="2. The layers: where caches live">
+
+Caching isn't one thing — it's a series of layers between the user and the source of truth. A request can be satisfied at any of them, and the earlier it's answered, the cheaper it is. Walk a request from the browser inward:
+
+<DiagramUnderstandingCaching1 />
+
+These layers **compound**: one page load might be served partly from the browser, partly from the CDN, and partly computed fresh. Each layer needs its own story for staying correct. Let's break down what each layer handles:
+
+<Stack>
+
+<Layer idx="1" title="Browser / client cache" speed="fastest">
+The user's own device stores assets and responses. Nothing beats not making a request at all. Governed by HTTP headers.
+</Layer>
+
+<Arrow>↓ on miss</Arrow>
+
+<Layer idx="2" title="CDN / edge cache" speed="very fast">
+
+A global network (Cloudflare, Fastly, CloudFront) caches content near users. Cuts latency *and* origin load.
+
+**◈ In the wild:** Netflix Open Connect places caches directly inside ISP networks. They proactively pre-warm (push) popular shows to these edge caches during off-peak hours so they are already warm before viewers hit play.
+
+</Layer>
+
+<Arrow>↓ on miss</Arrow>
+
+<Layer idx="3" title="Reverse-proxy / gateway" speed="fast">
+Varnish or Nginx in front of your app, caching whole responses before they reach application code.
+</Layer>
+
+<Arrow>↓ on miss</Arrow>
+
+<Layer idx="4" title="Application cache" speed="fast">
+Inside your service — an in-process map (Caffeine, Guava) or a shared store (Redis, Memcached). Where "caching strategies" live.
+</Layer>
+
+<Arrow>↓ on miss</Arrow>
+
+<Layer idx="5" title="Database cache" speed="the origin">
+The DB's own buffer pool / query cache and materialized views. The source of truth, with its own caching inside.
+</Layer>
+
+</Stack>
+
+<Note label="Local vs. distributed">
+
+An **in-process** cache is fastest (no network hop) but every server has its own copy — they can disagree, and you multiply memory use. A **distributed** cache (Redis/Memcached) adds a network hop but gives every instance one shared, consistent view. Once you have more than one server, distributed is usually the answer.
+
+</Note>
+
+</Collapse>

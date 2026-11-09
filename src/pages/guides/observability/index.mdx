@@ -1,0 +1,69 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Seeing Inside the Machine — System Design Basics"
+description: "Every guide before this one told you what to build. This one tells you how to know whether it's working — because the alternative is finding out from a customer on social media."
+chapter: "7"
+current: "7. Observability"
+series:
+  lead: "A companion to"
+  guides: [reliability-toolkit, load-balancing]
+sections:
+  - id: "green"
+    title: "Green dashboards, broken system"
+  - id: "signals"
+    title: "Three signals, three jobs"
+---
+
+import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+
+<ColdOpen tag="◇ the outage nobody could see">
+
+Support tickets start arriving at 09:14. Checkout is broken, they say. You open the dashboard: request rate normal, error rate 0.02%, CPU flat, database healthy, every panel a calm green. You cannot reproduce it. For forty minutes you argue with the evidence, because the evidence says nothing is wrong.
+
+At 09:56 someone tries a purchase on a phone over cellular data and watches it hang for eleven seconds before succeeding — a *success*, counted as a success, averaged into a mean that never moved. The system wasn't lying to you. You had simply built instrumentation that could only see the failures you'd already thought of.
+
+</ColdOpen>
+
+<Collapse id="green" title="1. Green dashboards, broken system">
+
+There is a specific kind of professional misery that comes from staring at a wall of healthy graphs while customers tell you the product is unusable. It is worth understanding exactly how it happens, because it is not bad luck — it's a predictable consequence of how most instrumentation gets built.
+
+Monitoring, as most teams practise it, means picking a set of things that might break and watching them. CPU. Memory. Disk. Error rate. Those are all real, and every one of them has caught a real outage. But the list is written in advance, by people reasoning about failures they can imagine. The failure that takes you down is, almost by definition, the one nobody put on the list.
+
+<Note type="key" label="The distinction worth keeping">
+
+**Monitoring** answers questions you thought of in advance. **Observability** is the property of a system that lets you answer questions you *didn't* think of in advance, without shipping new code. The first is a set of dashboards. The second is a property of your data: enough dimensions, retained at enough granularity, that you can slice a problem in a direction you've never sliced it before and still get an answer.
+
+</Note>
+
+The checkout outage above is the canonical shape. Every dashboard was an aggregate. Aggregates are lossy on purpose — that's what makes them cheap. And the loss is not random: aggregation systematically hides small populations. A failure affecting 2% of users disappears into a 0.02% error rate if it manifests as slowness rather than errors. A failure affecting one customer — who happens to be your largest — disappears entirely.
+
+So the practical question is not "do we have monitoring." Everyone has monitoring. The question is: *when something breaks in a way we did not anticipate, can we find it from the data we're already collecting?* Most teams discover the answer is no at the worst possible time.
+
+</Collapse>
+
+<Collapse id="signals" title="2. Three signals, three jobs">
+
+The industry has more or less converged on three kinds of telemetry. They are not three formats for the same information — they are three different trade-offs between cost, breadth, and detail, and using the wrong one for a job is where most of the waste lives.
+
+<Table>
+
+| Signal | What it is | Cost shape | Answers |
+| ------ | ---------- | ---------- | ------- |
+| **Metrics** | Numbers aggregated over time, tagged with a few labels | Cost grows with *distinct label combinations*, not with traffic | "Is something wrong, and roughly where?" |
+| **Logs** | Discrete events, one record per thing that happened | Cost grows *linearly with traffic* | "What exactly happened to this one request?" |
+| **Traces** | One request's journey across every service it touched | Cost grows with traffic × services, usually sampled | "Where did the time go, and who called whom?" |
+
+</Table>
+
+The cost shapes are the important column and the one people skip. Metrics are cheap at any traffic volume because ten million requests and ten requests both increment the same counter — but they get expensive fast when you add labels, and we'll spend a whole section on why. Logs are the opposite: one label costs nothing, but ten million requests cost ten million records. Traces sit in between and are almost always sampled, which introduces its own class of problem.
+
+<Note label="A rule of thumb that holds up">
+
+Metrics tell you *that* something is wrong. Traces tell you *where*. Logs tell you *why*. If you find yourself trying to answer "why" from a metric, you are about to add a label you will regret.
+
+</Note>
+
+A fourth signal, **profiles** (continuous CPU and memory profiling in production), has become practical in the last few years and is worth knowing about — it answers "which line of code is burning the CPU" in the same way traces answer "which service is burning the latency." It's not yet table stakes the way the other three are.
+
+</Collapse>

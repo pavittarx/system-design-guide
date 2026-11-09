@@ -1,0 +1,84 @@
+---
+layout: ../../../layouts/MainLayout.astro
+title: "Getting Machines to Agree — System Design Basics"
+description: "One machine always knows what it thinks. The trouble starts at two, because now there is a question — and no way to ask it that cannot be lost, delayed, or answered by a ghost."
+chapter: "10"
+current: "10. Coordination"
+series:
+  lead: "A companion to"
+  guides:
+    - { slug: consistency-cap, label: "Consistency & the CAP Theorem" }
+    - reliability-toolkit
+sections:
+  - id: "why"
+    title: "Why agreement is hard"
+  - id: "leader"
+    title: "Leader election, and why you want one"
+  - id: "check"
+    title: "Check your understanding"
+---
+
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+
+<ColdOpen tag="◇ 21 October 2018, GitHub">
+
+Routine maintenance on optical equipment severs the link between GitHub's East Coast data centre and its primary. The partition lasts **43 seconds**. In those 43 seconds, the orchestration layer does exactly what it was designed to do: it promotes a replica in the other site to primary, because the old primary is unreachable and unreachable means dead. Both sites now accept writes.
+
+When the link returns, there are two divergent histories of the same database and no automated way to merge them. GitHub spends the next **24 hours and 11 minutes** in degraded service, much of it with humans manually reconciling records. Forty-three seconds of network trouble; a day of consequences. The failure was not the fibre. The failure was that two components independently concluded they were in charge.
+
+</ColdOpen>
+
+<Collapse id="why" title="1. Why agreement is hard">
+
+Ask a single process what the value of `x` is and you get an answer. Ask five processes and you have invented a research problem, because the network between them can do three things to any message: deliver it, lose it, or deliver it much later than you expected. From the sender's point of view those are indistinguishable. You sent a message and got no reply. Did it not arrive? Did it arrive and the reply was lost? Is the other machine dead, or just busy?
+
+<Note type="key" label="The one fact underneath everything in this guide">
+
+In an asynchronous network, **you cannot distinguish a slow node from a dead one.** Not with a better timeout, not with a better heartbeat, not with a smarter algorithm. The information required to tell them apart does not exist at the observer.
+
+</Note>
+
+This is not pedantry. It is the direct cause of the GitHub incident above and of most of the outages in this guide. Every failure detector in every distributed system is a timeout, and every timeout is a guess. Set it short and you declare healthy nodes dead, triggering unnecessary failovers. Set it long and real failures go unnoticed while requests pile up behind a corpse. There is no correct value, only a trade you are making — usually without writing it down.
+
+The theoretical statement of the problem is the **FLP impossibility result** (Fischer, Lynch and Paterson, 1985): in an asynchronous system where even one node may fail by crashing, there is no deterministic algorithm guaranteed to reach consensus. Not "no efficient algorithm" — no algorithm. The proof is that any algorithm can be forced into an indefinitely undecided state by unlucky message timing.
+
+Real systems escape FLP not by being cleverer but by weakening the guarantee. Raft and Paxos are always *safe* — they never produce two conflicting decisions — but they are only *live* when the network behaves for long enough. If messages keep getting delayed at exactly the wrong moments, a Raft cluster can keep holding elections and never elect anyone. It will not be wrong; it will just be stuck.
+
+In practice, randomised timeouts make that outcome vanishingly unlikely, which is engineering's usual answer to an impossibility proof: make the bad case rare rather than absent.
+
+</Collapse>
+
+<Collapse id="leader" title="2. Leader election, and why you want one">
+
+Coordination among *n* peers is an *n*-way conversation, and *n*-way conversations are where inconsistency lives. The single most effective simplification in distributed systems is to elect one node the leader and route all decisions through it. Now the system is a sequence of decisions made by one machine, which is a problem you already know how to reason about.
+
+Leaders show up everywhere once you look. The primary in a replicated database orders all writes. The controller in a Kafka cluster assigns partitions. The scheduler in Kubernetes decides placements. The coordinator of a sharded system decides who owns which range. In each case, the point is not that the leader is faster — it is that having exactly one writer removes an entire category of conflicts.
+
+<Note type="wild" label="◈ In the wild · Google Chubby">
+
+Most of this pattern traces back to Google's [Chubby](https://research.google/pubs/the-chubby-lock-service-for-loosely-coupled-distributed-systems/), a small, Paxos-backed, strongly consistent store built as a lock service. In practice its dominant use turned out not to be locking at all but leader election and name resolution: systems like GFS and Bigtable elect their primary by racing to acquire a single Chubby lock, and the winner is the leader. It is the direct inspiration for ZooKeeper.
+
+</Note>
+
+<CardGrid>
+  <Card pill="What a leader buys you" tone="good">
+    A single ordering of events. No write conflicts to merge. Simple invariants ("only the leader may do X"). One place to put caches, rate limits, and admission control. Straightforward reasoning during incidents.
+  </Card>
+  <Card pill="What it costs you" tone="bad">
+    A throughput ceiling at one machine. A failover window on every leader death. A new failure mode — two leaders — that is worse than no leader. Extra latency for anyone not co-located with the leader.
+  </Card>
+</CardGrid>
+
+The failover window is the part people underestimate. Between "leader dies" and "new leader is serving", the system is not available for writes. That interval is at minimum the failure-detection timeout plus the election round plus the new leader catching up on any log it was missing. A well-tuned etcd cluster does this in a second or two. A database with a 30-second detection timeout and a large replication backlog can take minutes. Your availability budget from [The Reliability Toolkit](/guides/reliability-toolkit/) has to pay for every one of those windows.
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="Why is a perfect failure detector impossible in an asynchronous network?" options={["Heartbeats cannot be sent often enough to catch every failure in time", "Network delay is unbounded, so to the observer a slow node and a dead node look identical", "Clocks on different machines drift, so no two nodes measure a timeout the same way"]} answer={1}>
+
+Because you cannot distinguish a slow node from a dead one. In an asynchronous system, network delay is unbounded, which means a message or heartbeat might be delayed indefinitely. If you set a timeout, no matter how large, a healthy but slow node (or one experiencing a network partition) might exceed it, causing you to falsely declare it dead. This fundamental limit, formalized by the FLP impossibility result, is why failure detection in distributed systems always requires trading off false positives (unnecessary failovers) against false negatives (slow reaction to real deaths).
+
+</Quiz>
+
+</Collapse>
