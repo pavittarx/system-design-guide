@@ -11,57 +11,67 @@ series:
     - database-scaling
 sections:
   - id: "why"
-    title: "Why one server isn't enough"
+    title: "Why one server stops being enough"
   - id: "what"
-    title: "The load balancer, explained"
+    title: "One address, many servers"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Arrow, ColdOpen, Collapse, Layer, Note, Stack } from '../../../components';
 
 <ColdOpen tag="◇ 3:00 AM · the launch that worked too well">
 
-Your product hits the front page. Traffic 40×'s in ten minutes. Somewhere, a single server — the one you've been meaning to "clean up later" — glows red-hot, accepts one connection too many, and quietly dies. Every user gets a spinning wheel. The tragedy isn't that you had too many visitors. It's that you had exactly one server to greet them, and nobody was standing at the door directing traffic. That doorman is a load balancer, and this guide is about hiring one.
+Your product hits the front page and traffic jumps 40× in ten minutes. All of it lands on one server, the one you've been meaning to "clean up later". It runs out of CPU, accepts one connection too many, and dies. Every visitor gets a spinning wheel.
+
+Too many visitors wasn't the problem. The problem was that you had exactly one server to greet them, and nobody at the door sending people somewhere else. That doorman is a load balancer, and this guide is about hiring one.
 
 </ColdOpen>
 
-<Collapse id="why" title="1. Why one server isn't enough">
+<Collapse id="why" title="1. Why one server stops being enough">
 
-A single server has a ceiling: finite CPU, memory, and network. You can buy a bigger one (*vertical scaling*), but that ladder runs out — and a single anything is a single point of failure. The moment it reboots, your whole product is offline.
+Every server has a ceiling: so much CPU, so much memory, so much network. When you hit it, the first instinct is to buy a bigger machine. This is called **vertical scaling**, and it works until there's no bigger machine to buy.
 
-The alternative is **horizontal scaling**: run many identical servers and split the work between them. It scales almost linearly and survives individual deaths. But it raises one immediate question — when a request arrives, *which* server should handle it? Answering that, well and instantly, millions of times a second, is the entire job of a load balancer.
+It also leaves a worse problem in place. With one server, every reboot, crash or bad deploy takes your whole product offline. A part whose failure takes everything down with it is called a **single point of failure**.
+
+The other way out is to run many identical copies of your app and split the traffic between them. This is called **horizontal scaling**. Capacity grows roughly in step with the number of servers, and one server dying just means the others carry a bit more.
+
+It raises one question straight away: when a request arrives, *which* copy should handle it? Answering that correctly and instantly, for every request, is the whole job of a load balancer.
 
 </Collapse>
 
-<Collapse id="what" title="2. The load balancer, explained">
+<Collapse id="what" title="2. One address, many servers: what a load balancer does">
 
-<Note type="wild" label="◈ In the wild · Anycast + DNS at the Edge">
+Your users type one address. Behind it you now have ten servers. Something has to stand between the two, accept each request and pass it to one of the ten, and it has to skip any server that has just died.
 
-Before a request even reaches a traditional load balancer, providers like Cloudflare announce the *same* IP address from data centers worldwide (anycast), so the network itself routes you to the nearest physical location. Load balancing starts at the level of the internet's routing tables.
+That something is the **load balancer**. Clients connect to *it*; it picks a healthy server and forwards the request. The servers behind it are called **backends**, and the group of them is the **pool**. To the outside world there is one address; behind it, a crowd.
 
-</Note>
-
-A load balancer sits in front of your fleet of servers. Clients connect to *it*; it picks a healthy server and forwards the request. To the outside world there's one address; behind it, a crowd. Think of a restaurant host: diners don't wander in and fight over tables — the host seats them, keeps things even, and quietly skips the table with a broken chair.
+Think of a restaurant host. Diners don't wander in and fight over tables. The host seats them, keeps the sections evenly busy, and quietly skips the table with the broken chair.
 
 <Stack>
-  <Layer idx="→" title="Clients">
+  <Layer idx="1" title="Clients">
 
-  All hit one address (the load balancer's).
+  Everyone connects to one address: the load balancer's.
 
   </Layer>
   <Arrow>↓ distributes to ↓</Arrow>
-  <Layer idx="LB" title="Load balancer" speed="the doorman">
+  <Layer idx="2" title="Load balancer" speed="the doorman">
 
-  Picks a healthy backend per request, using an algorithm.
+  For each request, picks a healthy backend using a rule called the balancing algorithm (Part 1).
 
   </Layer>
   <Arrow>↓ forwards to one of ↓</Arrow>
-  <Layer idx="3×" title="Server pool" speed="the fleet">
+  <Layer idx="3" title="Server pool" speed="the fleet">
 
   Identical, interchangeable app servers. Add more to scale.
 
   </Layer>
 </Stack>
 
-Because that one address is now itself a single point of failure, real deployments run the load balancer *redundantly* too (multiple LBs, DNS-level distribution, or a cloud service that handles this for you). Turtles, but only a couple deep.
+You've moved the single point of failure, not removed it: if the load balancer dies, so does the one address. So real deployments run the load balancer redundantly too: several of them, spread with DNS, or a cloud service that handles this for you. Turtles, but only a couple deep.
+
+<Note type="wild" label="◈ In the wild · Anycast at the edge">
+
+Balancing can start before a request reaches any load balancer. Providers like Cloudflare announce the *same* IP address from data centres worldwide, so the internet's own routing sends you to the nearest one. This is called **anycast**: load balancing done by the internet's routing tables.
+
+</Note>
 
 </Collapse>

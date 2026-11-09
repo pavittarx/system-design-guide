@@ -6,9 +6,9 @@ chapter: "1"
 current: "1. Caching"
 sections:
   - id: "http"
-    title: "HTTP Caching & CDN"
+    title: "HTTP caching and CDNs"
   - id: "ops"
-    title: "Operational reality"
+    title: "Redis and Memcached surprises"
   - id: "dont"
     title: "When not to cache"
   - id: "metrics"
@@ -19,37 +19,47 @@ sections:
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Race, Reading, Recap, Stack, Table } from '../../../components';
 
-<Collapse id="http" title="1. HTTP Caching & CDN Guardrails">
+<Collapse id="http" title="1. HTTP caching and CDNs: rules you set with headers">
 
-If you work on anything web-facing, this layer is standardized and immediately actionable. It's controlled by response headers.
+Every page view re-downloads your JavaScript bundle, even though it hasn't changed in a week. Browsers and CDNs would happily keep a copy; they just need you to tell them it's safe. If you work on anything web-facing, this layer is standardised and you can act on it today. You control it with response headers.
 
-### Cache-Control — the main lever
+### Cache-Control: how long, and who may keep a copy
+
+The `Cache-Control` header answers two questions about each response. *How long* may a cache reuse it without asking your server again? And *who* may store it: only the user's own browser, or shared caches like a CDN too? A response that may still be reused is called **fresh**.
 
 <Table>
 
 | Directive | What it does |
 | --------- | ------------ |
-| `max-age=SECONDS` | How long the response is fresh in the browser. |
-| `s-maxage=SECONDS` | Same, but for shared caches (CDNs); overrides `max-age` there. |
-| `public` / `private` | Any cache may store it / only the end user's browser may. |
-| `no-cache` | May be stored, but must revalidate before reuse. |
-| `no-store` | Never store at all — for sensitive data. |
-| `immutable` | This URL's bytes never change; don't even revalidate. |
-| `stale-while-revalidate=S` | Serve slightly stale content instantly while refreshing in the background. |
+| `max-age=SECONDS` | How long any cache, browser or CDN, may treat the response as fresh. |
+| `s-maxage=SECONDS` | The same, but only for shared caches (CDNs); overrides `max-age` there. |
+| `public` / `private` | Any cache may store it / only the end user's own browser may. |
+| `no-cache` | May be stored, but must be checked with the server before each reuse. |
+| `no-store` | Never store it at all. For sensitive data. |
+| `immutable` | This URL's content never changes; don't even check. |
+| `stale-while-revalidate=S` | For S seconds after it goes stale, serve the old copy instantly while fetching a new one in the background. |
 
 </Table>
 
-### Validation & 304s
+### Asking "has it changed?" instead of downloading it again
 
-Instead of re-sending a whole resource, the client revalidates cheaply. The server sends an **ETag** (a content fingerprint); the browser later sends `If-None-Match`. If nothing changed, the server replies `304 Not Modified` with no body. (`Last-Modified` + `If-Modified-Since` is the timestamp-based equivalent.) Big bandwidth savings, still fresh.
+When a cached copy is no longer fresh, the browser doesn't have to download the whole thing again. It can ask whether it changed:
+
+<Stack>
+  <Layer idx="1" title="First response" speed="full download">The server sends the file with an **ETag**, a fingerprint of its content.</Layer>
+  <Layer idx="2" title="Later request" speed="tiny">The browser sends the fingerprint back in an `If-None-Match` header: "I have this version; is it still current?"</Layer>
+  <Layer idx="3" title="Nothing changed" speed="no body">The server replies `304 Not Modified` with no body, and the browser reuses its copy.</Layer>
+</Stack>
+
+This is called **revalidation**. (`Last-Modified` with `If-Modified-Since` does the same with a timestamp instead of a fingerprint.) Big bandwidth savings, and the content is still guaranteed current.
 
 <CardGrid>
 
 <Card title="Fingerprinted assets">
 
-`app.a1b2c3.js` — cache forever. Modern bundlers (Vite, Webpack, Next.js) name files by a hash of their content. Because any change in the code generates a new filename, a deploy never serves stale JavaScript/CSS. We can safely cache them for a year:
+`app.a1b2c3.js`: cache forever. Modern bundlers (Vite, Webpack, Next.js) name files after a hash of their content, so any code change produces a new filename and a deploy can never serve stale JavaScript or CSS. That makes a year-long cache safe:
 
 ```bash
 Cache-Control: public,
@@ -58,9 +68,9 @@ Cache-Control: public,
 
 </Card>
 
-<Card title="Frequently-updated HTML">
+<Card title="Frequently updated HTML">
 
-Serve recent copies fast, revalidate quietly, pair with an ETag:
+Serve a recent copy fast, check for a newer one quietly, and pair it with an ETag:
 
 ```bash
 Cache-Control: public,
@@ -72,59 +82,70 @@ Cache-Control: public,
 
 </CardGrid>
 
-CDNs apply these same rules at the edge — which is exactly why the `s-maxage` (edge lifetime) vs `max-age` (browser lifetime) split is so useful.
+CDNs apply these same rules at the edge, which is exactly why having `s-maxage` (how long the CDN keeps it) separate from `max-age` (how long everyone else does) is so useful.
 
-### Vary — the header that leaks other people's data
+### How a CDN showed Alice's dashboard to Bob
 
-A shared cache keys entries on the URL. That is the whole model. If two different responses can come back from the same URL, the cache needs to be told which request headers made them different, and that is what `Vary` is for: `Vary: Accept-Encoding` means "store gzip and brotli separately," `Vary: Accept-Language` means "store per language."
+`GET /dashboard` shows the logged-in user's name. Someone tuning performance gave it `Cache-Control: public, max-age=60`. Then two users load it a few seconds apart:
 
-Now consider `GET /dashboard`, which renders the logged-in user's name, and which your framework marks `Cache-Control: public, max-age=60` because someone was tuning performance. The response varies by the session cookie. The header does not say so. The CDN stores Alice's dashboard under the URL alone and serves it to Bob for the next sixty seconds. This is not a hypothetical class of bug; it has shipped, repeatedly, at companies you have heard of, and it usually surfaces as a support ticket that reads "I'm logged in as someone else."
+<Race a="Alice" b="Bob" result="Result: Bob sees Alice's dashboard for the next 60 seconds" steps={[
+  { a: "Requests /dashboard. The CDN has no copy, so it asks your server" },
+  { a: "Server renders Alice's dashboard. The CDN stores it under the URL /dashboard" },
+  { b: "Requests /dashboard. The CDN has a fresh copy for that URL" },
+  { b: "Gets Alice's dashboard, with her name and data", tone: "bad" }
+]} />
+
+A shared cache files each response under its URL. That's the whole model. If one URL can return different content, you have to tell the cache which request headers make the difference, and that's what the `Vary` header does: `Vary: Accept-Encoding` means "store the gzip and brotli versions separately", `Vary: Accept-Language` means "store one per language". The dashboard differs by session cookie, and nothing said so.
+
+This is not a hypothetical class of bug. It has shipped, repeatedly, at companies you have heard of, and it usually shows up as a support ticket that reads "I'm logged in as someone else."
 
 <Note type="warn" label="The blunt instrument, and why you want it">
 
-`Cache-Control: private` tells shared caches not to store the response at all — only the end user's own browser may. For anything personalised, reach for `private` (or `no-store` if it's sensitive) rather than trying to get `Vary` exactly right. `Vary: Cookie` is technically correct and practically useless: if your site sets any cookie at all, every visitor has a unique key and your hit rate goes to roughly zero.
+`Cache-Control: private` tells shared caches not to store the response at all; only the user's own browser may. For anything personalised, reach for `private` (or `no-store` if it's sensitive) rather than trying to get `Vary` exactly right. `Vary: Cookie` is technically correct and practically useless: if your site sets any cookie at all, every visitor gets their own copy and your hit rate falls to roughly zero.
 
-The real fix for a page that is *mostly* public is to cache the public shell and fetch the personalised fragment separately.
+The real fix for a page that is *mostly* public is to cache the public shell and fetch the personalised part separately.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="ops" title="2. Operational Reality: Redis and Memcached">
+<Collapse id="ops" title="2. Redis and Memcached: the surprises in running one">
 
-### Redis: `maxmemory-policy` defaults to `noeviction`
+### Why a full Redis stops caching: maxmemory-policy defaults to noeviction
 
-This one catches almost everybody. Redis is a database that people use as a cache, and its defaults are a database's defaults. Set `maxmemory`, leave `maxmemory-policy` alone, and when the cache fills up Redis does not evict anything — it starts returning `OOM command not allowed when used memory > 'maxmemory'` on every write. Your cache stops accepting new entries, which means every miss stays a miss, which means the database takes the full load. A full cache has become a total cache outage, quietly, without a single alarm firing.
+You set `maxmemory` so Redis can't eat the server, and leave `maxmemory-policy` alone. The cache fills up. Redis doesn't make room. Instead, every write starts failing with `OOM command not allowed when used memory > 'maxmemory'`.
 
-- For a pure cache you want `allkeys-lru` or `allkeys-lfu`. Then a full cache does what you expect: makes room.
-- `volatile-lru` and friends only consider keys that *have* a TTL set. Forget the TTL on one code path and those keys become permanently un-evictable — and if enough of them accumulate, Redis runs out of eviction candidates and falls back to erroring anyway.
-- Don't leave `maxmemory` at its default of 0 (unlimited) either. That just moves the failure from Redis to the kernel's OOM killer, which is a worse place for it.
-- Redis's LRU is *approximate* — it samples a handful of keys (`maxmemory-samples`, default 5) and evicts the best candidate among them, rather than tracking a true global ordering. Close enough for caching, but don't reason as if it's exact.
+This catches almost everybody. Redis is a database that people use as a cache, and its defaults are a database's defaults: never silently throw data away. But for a cache it's a disaster. New entries can't be stored, so every miss stays a miss, and the database takes the full load. A full cache has become a total cache outage, quietly, without a single alarm firing.
 
-### Memcached: slab calcification
+- For a pure cache you want `allkeys-lru` or `allkeys-lfu`. Then a full cache does what you'd expect: drops the least useful keys and makes room.
+- `volatile-lru` and friends only consider keys that *have* a TTL. Forget the TTL on one code path and those keys can never be evicted; if enough pile up, Redis runs out of keys it's allowed to drop and starts erroring anyway.
+- Don't leave `maxmemory` at its default of 0 (unlimited) either. That just moves the failure from Redis to the operating system's out-of-memory killer, which is a worse place for it.
+- Redis's LRU is *approximate*. Instead of tracking a true global order, it samples a handful of keys (`maxmemory-samples`, default 5) and evicts the best candidate among them. Close enough for caching, but don't reason as if it's exact.
 
-Memcached carves memory into pages and assigns each page to a *slab class* — a bucket for items of a particular size range. Once a page belongs to the 1 KB class, it stays there.
+### Why Memcached evicts while showing free memory: slab calcification
 
-So if your workload shifts — you start storing bigger serialised objects, or a new feature caches small counters — the new size class runs out of pages and starts evicting aggressively while another class sits half-empty holding memory it no longer needs. Your hit rate drops and your memory graph shows plenty free. That's calcification. Modern versions can rebalance (`slab_reassign` / `slab_automove`), but it is not something to discover during an incident: watch per-slab eviction counts, not just the total.
+Memcached divides memory into pages and gives each page to a *slab class*: a bucket for items in one size range. Once a page belongs to the 1 KB class, it stays there.
+
+So when your workload shifts (you start storing bigger objects, or a new feature caches tiny counters), the size class you now need runs out of pages and starts evicting hard, while another class sits half-empty holding memory it no longer uses. Your hit rate drops and your memory graph shows plenty free. This is called **slab calcification**. Modern versions can rebalance (`slab_reassign` / `slab_automove`), but don't discover it during an incident: watch eviction counts per slab class, not just the total.
 
 ### The numbers may not mean what you think
 
-Redis reports `mem_fragmentation_ratio` in `INFO memory` — resident memory divided by the memory Redis thinks it's using. Meaningfully above 1 (say 1.5) means the allocator is holding memory it isn't handing back, so your 8 GB instance is really using 12 and your capacity planning is fiction. Below 1 is worse: it means part of your in-memory cache has been swapped to disk, and a cache that reads from disk is just a slow database with extra steps. Check it before you conclude anything from a memory graph.
+Redis reports `mem_fragmentation_ratio` in `INFO memory`: the memory the process really occupies, divided by the memory Redis thinks it's using. Well above 1 (say 1.5) means the memory allocator is holding memory it isn't giving back, so your 8 GB instance is really using 12 and your capacity planning is fiction. Below 1 is worse: part of your in-memory cache has been swapped to disk, and a cache that reads from disk is just a slow database with extra steps. Check it before you trust a memory graph.
 
-Likewise, `keyspace_hits` and `keyspace_misses` are server-wide counters since boot — if three services share the instance, that ratio is nobody's hit rate. Instrument hit rate in your own client, per cache.
+Likewise, `keyspace_hits` and `keyspace_misses` count across the whole server since it started. If three services share the instance, that ratio is nobody's hit rate. Measure hit rate in your own client code, per cache.
 
 </Collapse>
 
 <Collapse id="dont" title="3. When not to cache">
 
-Caching isn't free — it adds a whole new class of bugs (stale reads, invalidation races). Skip or minimize it when:
+A cache is a second copy of your data, and every second copy brings a new class of bugs: stale reads, invalidation races. Sometimes that price isn't worth it. Skip caching, or keep it minimal, when:
 
-- Data changes constantly and must be exact — financial ledgers, inventory at checkout.
-- Data is user-specific and rarely re-read — a low hit rate is pure overhead.
-- Correctness beats latency and you can't tolerate *any* staleness.
+- Data changes constantly and must be exact: financial ledgers, stock levels at checkout.
+- Data is specific to one user and rarely re-read, so the hit rate would be low and the cache pure overhead.
+- Correctness matters more than speed and you can't tolerate *any* staleness.
 - The added complexity outweighs a modest speedup.
 
-A cache you can't reason about is a liability, not an optimization. **Measure the hit rate** — a cache with a low hit rate is often worse than none.
+A cache you can't reason about is a liability, not an optimisation. **Measure the hit rate**: a cache with a low hit rate is often worse than none, because every miss now pays for the cache lookup *and* the database.
 
 </Collapse>
 
@@ -133,22 +154,30 @@ A cache you can't reason about is a liability, not an optimization. **Measure th
 <CardGrid>
 
 <Card title="Hit / miss rate">
-The headline number. A low hit rate means the cache isn't earning its keep.
+The headline number: the share of reads the cache answered. A low hit rate means the cache isn't earning its keep.
 </Card>
 
 <Card title="Latency (p50 / p99)">
-The actual user-facing win — watch the tail, not just the average.
+The real user-facing win. p99, the time 99% of requests beat, shows the slow tail that averages hide.
 </Card>
 
 <Card title="Eviction rate">
-High evictions suggest the cache is too small for the working set.
+How often the cache throws out entries to make room. High eviction suggests the cache is too small for the data you actually use.
 </Card>
 
 <Card title="Origin load reduction">
-How much traffic the cache absorbs before it reaches the DB/API.
+How much traffic the cache absorbs before it reaches the database or API behind it.
 </Card>
 
 </CardGrid>
+
+<Note type="key" label="What to remember">
+
+- Anything personalised gets `Cache-Control: private`. A shared cache files responses by URL and will hand one user's page to the next.
+- Set Redis's `maxmemory-policy` to `allkeys-lru` (or `allkeys-lfu`) for a cache; the default refuses writes when full.
+- Measure hit rate per cache in your own client, and track hit and miss latency separately.
+
+</Note>
 
 </Collapse>
 
@@ -156,19 +185,25 @@ How much traffic the cache absorbs before it reaches the DB/API.
 
 <Quiz q="Which of these must never be cached in a shared CDN, and why: (a) the logged-in dashboard HTML, (b) app.9f2a1c.js, (c) /api/me, (d) a public product image?" options={["(b) and (d), because static files go stale between deploys", "All four, because a CDN can't tell one user from another", "(a) and (c), because they return different content to different users at the same URL"]} answer={2}>
 
-(a) and (c). A shared cache keys on the URL plus whatever `Vary` declares, and both of those return different bytes to different people at the same URL — so the first response gets stored and handed to the next visitor. Mark them `Cache-Control: private`, or `no-store` if they carry anything sensitive. Don't rely on `Vary: Cookie` to save you: it's correct in theory and gives you a ~0% hit rate in practice, so someone will eventually "optimise" it away.
+(a) and (c). A shared cache files responses by URL, plus whatever `Vary` declares, and both of these return different content to different people at the same URL. The first response gets stored and handed to the next visitor.
+
+Mark them `Cache-Control: private`, or `no-store` if they carry anything sensitive. Don't rely on `Vary: Cookie` to save you: it's correct in theory and gives a hit rate of roughly zero in practice, so someone will eventually "optimise" it away.
 
 </Quiz>
 
 <Quiz q="You set Redis maxmemory, you didn't touch maxmemory-policy, and writes start returning OOM errors instead of dropping old keys. What did you get wrong?" options={["maxmemory must stay at 0 for Redis to evict anything", "maxmemory-policy defaults to noeviction, so a full Redis refuses writes instead of making room", "The keys had no TTL, and Redis only ever evicts keys that have one"]} answer={1}>
 
-`maxmemory-policy`, which defaults to `noeviction` because Redis is a database first and a cache second. A full cache that refuses writes can never fill a miss, so every miss stays a miss and the whole read load lands on the origin. Set `allkeys-lru` or `allkeys-lfu` for a pure cache. Avoid `volatile-*` unless you're certain every key has a TTL — those policies only consider keys that have one, and can run out of candidates and start erroring anyway.
+`maxmemory-policy`, which defaults to `noeviction` because Redis is a database first and a cache second. A full cache that refuses writes can never fill a miss, so every miss stays a miss and the whole read load lands on the database.
+
+Set `allkeys-lru` or `allkeys-lfu` for a pure cache. Avoid `volatile-*` unless you're certain every key has a TTL: those policies only consider keys that have one, and can run out of candidates and start erroring anyway.
 
 </Quiz>
 
 <Quiz q="Your hit rate is 94% and p99 latency got worse after you added the cache. What's the likely cause?" options={["p99 is made of the 6% that miss, and each miss now pays a cache round trip on top of the database query", "A 94% hit rate means the cache is too small, so evictions slow down every request", "Cached responses are stale, so clients retry them"]} answer={0}>
 
-p99 is made of the 6% that miss, and a miss now costs a cache round trip *plus* the database query it always cost — you added latency to exactly the requests that were already slowest. Averages improved, the tail didn't. Look also for serialisation cost on large objects, connection-pool contention against the cache, and one slow node in the cache cluster dragging a slice of traffic. Instrument hit latency and miss latency as separate metrics; a single blended number will hide this forever.
+The slowest 1% of requests all come from the 6% that miss, and a miss now costs a cache round trip *plus* the database query it always cost. You added latency to exactly the requests that were already slowest. The average improved; the tail didn't.
+
+Also look for serialisation cost on large objects, contention for connections to the cache, and one slow cache node dragging down a slice of traffic. Measure hit latency and miss latency separately; one blended number will hide this forever.
 
 </Quiz>
 

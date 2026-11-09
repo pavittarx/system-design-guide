@@ -9,31 +9,31 @@ sections:
     title: "Recap in 60 seconds"
 ---
 
-import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Collapse, Footer, Recap } from '../../../components';
 
 <Collapse id="recap" title="Recap in 60 seconds">
 
 <Recap>
 
-**You cannot tell slow from dead.** Every failure detector is a timeout, and every timeout is a guess with a cost on both sides.
+**You can't tell slow from dead.** A missing reply looks the same either way, so every failure detector is a timeout, and every timeout is a guess that can be wrong in both directions.
 
-**FLP says perfect consensus is impossible; Raft chooses safety over liveness.** It will never decide two things; it may occasionally decide nothing for a moment.
+**No algorithm can guarantee agreement under every timing (FLP); Raft picks safety.** It will never decide two conflicting things, but it may occasionally decide nothing for a moment.
 
-**Elect a leader.** One writer removes whole categories of conflict. Pay for it with a failover window on every leader death.
+**Pick one leader.** One writer removes whole kinds of conflict. The price is a gap in service every time the leader dies.
 
-**Raft = terms + elections + a replicated log.** Commit means a majority has it; an election winner must have every committed entry; a newer term makes an old leader step down.
+**Raft is numbered terms, majority-vote elections and a shared log.** A write is committed once a majority has it; only a node with every committed write can win an election; a leader that sees a newer term steps down.
 
-**Odd numbers only.** 3 tolerates 1, 5 tolerates 2, 4 tolerates the same as 3 while being slower. Bigger clusters are slower, not faster.
+**Use odd numbers.** 3 nodes survive 1 failure, 5 survive 2, and 4 survive no more than 3 while being slower. Bigger clusters are slower, not faster.
 
-**Fencing tokens are non-negotiable** for any lock protecting correctness. The resource rejects stale tokens; the client cannot be trusted to notice it was paused.
+**Fencing tokens are non-negotiable** for any lock that protects correctness. The storage rejects writes with an old token, because a paused client can't tell it was paused.
 
-**Leases are locks with expiry** — timed by the store, on a monotonic clock, never by the client.
+**A lease is a lock that expires.** Time it at the store, on a clock that only counts forward, never on the client.
 
-**Classify your locks.** Efficiency locks can be cheap and occasionally wrong. Correctness locks need consensus plus fencing, or they are decoration.
+**Decide what your lock protects.** Efficiency locks can be cheap and occasionally wrong. Correctness locks need consensus plus fencing, or they're decoration.
 
-**Coordination stores hold decisions, not data.** Low thousands of writes/second, tens of megabytes. Watch and cache; never put them on the request path.
+**Coordination stores hold decisions, not data.** One throughput limit for the whole cluster, data in the tens of megabytes. Watch and cache; never call them on every request.
 
-**The best coordination is none.** Partition ownership, make operations idempotent, use database constraints, prefer commutative operations.
+**The best coordination is none.** Give each key one owner, make operations safe to repeat, let the database enforce rules, and prefer operations whose order doesn't matter.
 
 </Recap>
 

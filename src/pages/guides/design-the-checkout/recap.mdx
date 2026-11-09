@@ -15,29 +15,29 @@ import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, 
 
 <Recap>
 
-- **Numbers first.** Requests per second, read/write ratio, payload size, storage growth, latency budget. A design defended without them is a guess.
+- **Numbers first.** Orders per second, reads per order, size of an order, data per year, and how long the customer may wait. A design defended without them is a guess.
 
-- **Separate must-finish-now from must-finish-soon.** Take the money, record the order, return. Everything else is a message.
+- **Split what must finish now from what must finish soon.** Take the money, record the order, return. Everything else is a message on a queue.
 
-- **Statelessness is the enabling move** — it's what makes load balancing, autoscaling and rolling deploys possible.
+- **Make every server interchangeable.** If no server keeps anything the next request needs, you can load-balance, autoscale and deploy one at a time.
 
-- **The read path is usually the scaling problem.** 120:1 browse-to-buy means caching matters two orders of magnitude more than sharding.
+- **The reads are usually the scaling problem.** People view 120 pages per order, so caching matters far more than sharding.
 
-- **Indexes before replicas, replicas before sharding, and sharding probably never.** Name the metric that forces each rung.
+- **Indexes before replicas, replicas before sharding, and sharding probably never.** Name the number that forces each step.
 
-- **Two writes with no transaction between them is a bug waiting for a crash.** Outbox for your own events; idempotency keys for someone else's API.
+- **Two writes with nothing tying them together will disagree after a crash.** Put your own events in the order's transaction (the outbox); send an idempotency key to someone else's API.
 
-- **Consistency is a per-field decision.** The inventory you display and the inventory you decrement are different values with different rules.
+- **Decide consistency field by field.** The stock you display can be a little stale; the stock you decrement can't.
 
-- **A timeout is a concurrency budget.** Bulkheads cap what any one dependency can consume; breakers stop you calling the dead; shedding is for too much load, not slow dependencies.
+- **A timeout is a limit on how many requests can pile up.** A bulkhead caps what one dependency can use; a breaker stops you calling one that's down; shedding is for too much traffic, not for slow dependencies.
 
-- **Propagate deadlines, budget retries, retry at one layer only.**
+- **Pass the deadline along, cap retries, and retry at one layer only.**
 
-- **A queue with no headroom above its arrival rate never recovers.** Alert on consumer lag, not depth.
+- **A queue with no spare capacity above its arrival rate never recovers.** Alert on consumer lag, not queue depth.
 
-- **Real incidents are components behaving as configured** in situations nobody pictured. The settings deserve more attention than the diagram.
+- **Real incidents are components doing exactly what they were configured to do**, in a situation nobody pictured. The settings deserve more attention than the diagram.
 
-- **Every addition needs a signal.** No signal, no component.
+- **Every addition needs a signal.** No number, no component.
 
 </Recap>
 
@@ -54,7 +54,7 @@ import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, 
 | 1,600 | Concurrent slots a slow payment provider would demand, unguarded |
 | 300 | Bulkhead cap that keeps the rest of the site alive instead |
 | 240,000 | Messages after a 20-minute consumer outage |
-| N × 50 − 200 | Drain rate with N consumers. Below N=4, it never drains. |
+| N × 50 − 200 | Drain rate with N consumers. At N=4 or fewer, it never drains. |
 
 </Table>
 

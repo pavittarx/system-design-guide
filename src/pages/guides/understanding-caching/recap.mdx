@@ -15,18 +15,18 @@ import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pi
 
 <Recap>
 
-- A cache trades memory and a new class of bugs for latency and origin load. The bugs are the price, not a defect.
-- **Cache-aside** is the default: read cache, miss, read DB, fill, return; on write, update DB and *delete* the key. Deleting beats writing the new value, because two concurrent writers can land in either order.
-- "The app still works without the cache" means it degrades rather than errors. A cache absorbing 95% of reads leaves the database facing 20× its normal load the instant it goes cold.
-- Always set a TTL. It is the only mechanism that repairs an invalidation you got wrong, and you will get one wrong.
-- **Jitter fixes synchronised mass expiry** (many keys written together). **Single-flight fixes a hot key expiring** (one key, many concurrent misses). They are different problems; jitter does nothing for the second.
-- The **stale-forever race**: a slow reader writes its pre-update value into a slot the writer just cleared. Invalidation-on-write alone can't prevent it; the TTL is what eventually cleans it up.
-- Cache negative results deliberately, with a short TTL and a distinguishable sentinel. Not caching them at all is an open channel to your database.
-- A hot key is not fixed by more cache nodes — consistent hashing sends it all to one node anyway. Split the key, or add a client-local tier with a one-second TTL.
-- Personalised responses need `Cache-Control: private`. A shared cache keys on URL; getting `Vary` subtly wrong serves one user's page to another.
-- Version your keys (`v3:user:123`) so a serialisation change never forces you to choose between a flush and reading garbage.
-- Redis's `maxmemory-policy` defaults to `noeviction`: a full cache returns write errors instead of making room. Set `allkeys-lru`.
-- Once retries are amplifying, the outage is **self-sustaining**. Recovery is shedding load, not waiting.
+- A cache trades memory and a new class of bugs for speed and a lighter database. The bugs are the price, not a defect.
+- **Cache-aside** is the default: check the cache; on a miss, read the database, store the value, return it. On a write, update the database and *delete* the key. Deleting beats storing the new value, because two writers can reach the cache in the opposite order from the database.
+- "The app still works without the cache" means it slows down instead of erroring. If the cache was answering 95% of reads, losing it hands the database 20× its normal load at once.
+- Always set a TTL. It's the only thing that repairs an invalidation you got wrong, and you will get one wrong.
+- **Jitter fixes many keys expiring together.** **Single-flight fixes one popular key expiring**, by letting one request rebuild it while the rest wait. Different problems: jitter does nothing for the second.
+- The **stale-forever race**: a slow reader stores the old value right after a writer deleted the key. Deleting on write can't prevent it; the TTL is what eventually cleans it up.
+- Cache "not found" on purpose, with a short TTL and a marker you can tell apart from real data. Never caching it leaves an open door to your database.
+- More cache nodes don't fix a hot key: hashing sends that key to one node however many there are. Split the key, or cache it inside each app server for a second.
+- Personalised responses need `Cache-Control: private`. A shared cache files responses by URL, and a missing or wrong `Vary` serves one user's page to another.
+- Put a version in your keys (`v3:user:123`), so changing the stored format never forces you to choose between emptying the cache and reading garbage.
+- Redis's `maxmemory-policy` defaults to `noeviction`: a full cache refuses writes instead of making room. Set `allkeys-lru`.
+- Once retries are feeding the outage, it **sustains itself**. You recover by turning load away, not by waiting.
 
 </Recap>
 
@@ -39,7 +39,7 @@ These are **order-of-magnitude figures, not benchmarks**. They exist so you can 
 | Rough figure | What | Why it matters |
 | ------------ | ---- | -------------- |
 | ~100 ns | In-process hash lookup (Caffeine, a plain map) | Effectively free. No network, no serialisation. |
-| ~0.2–1 ms | Redis/Memcached round trip, same AZ | ~1,000–5,000× slower than local, still ~10× faster than a DB query. |
+| ~0.2–1 ms | Redis/Memcached round trip, same AZ | ~2,000–10,000× slower than local, still ~10× faster than a DB query. |
 | ~1–10 ms | Indexed database query, warm buffer pool | The thing you're avoiding. Add a lot if it goes to disk or joins. |
 | ~10–30 ms | CDN edge hit from a nearby POP | Dominated by the user's last-mile latency, not the cache. |
 | ~60–150 ms | Cross-region round trip (US coast-to-coast → transatlantic) | Speed of light. No cache tuning fixes this; move the data closer. |

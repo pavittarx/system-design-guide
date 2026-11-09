@@ -9,29 +9,29 @@ sections:
     title: "Recap in 60 seconds"
 ---
 
-import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { Collapse, Footer, Recap } from '../../../components';
 
 <Collapse id="recap" title="Recap in 60 seconds">
 
 <Recap>
 
-- **The API outlives the implementation.** Design the contract so a full backend rewrite wouldn't change it.
+- **The API outlives the code behind it.** Design the contract so a full backend rewrite wouldn't change it.
 
-- **REST buys the HTTP ecosystem; RPC buys efficiency; GraphQL buys one round trip** — and each hands you a different bill. GraphQL's is unbounded query cost, so depth limits, cost analysis and batching are mandatory.
+- **REST gets the whole HTTP ecosystem for free; RPC gets speed and typed clients; GraphQL gets one round trip per screen.** Each sends a different bill. GraphQL's is that one query can cost thousands of database calls, so depth limits, cost limits and batching are mandatory.
 
-- **Additive changes are safe; removals, new enum values, tightened validation and changed defaults are not.** The last two break silently.
+- **Adding is usually safe; removing, renaming, new enum values, stricter validation and changed defaults are not.** The last two break clients without any error to notice.
 
-- **Cursor pagination over offset,** always with a unique tiebreaker in the sort, or you will duplicate and skip rows.
+- **Page with a cursor, not an offset,** and always add a unique tiebreaker to the sort, or rows get duplicated and skipped.
 
-- **4xx means don't retry; 5xx means you might.** Never 200 with an error body — it poisons caches, metrics and client error handling at once.
+- **4xx means the client must change something before retrying (429 and 408 aside); 5xx means a retry might work.** Never send 200 with an error body: caches, metrics and client error handling all read it as success.
 
-- **Gateways do cross-cutting concerns only.** Authentication at the edge, authorization in the service that owns the resource. Business logic in the gateway becomes an ESB.
+- **The gateway does only the jobs every service shares.** It checks who the caller is; the service that owns the data decides what they may do. Business logic in the gateway grows into a bottleneck every team depends on.
 
-- **Token bucket or sliding-window counter** for almost everything; fixed windows let clients get 2× the limit across a boundary.
+- **Use a token bucket or a sliding-window counter** for almost everything; a fixed window lets a client through at double the limit across a boundary.
 
-- **Distributed limits are a coordination problem.** Divide-the-limit is cheap and wrong; a shared counter is accurate and adds a round trip plus a dependency. Decide fail-open vs fail-closed before it fails.
+- **One limit across many gateways is a coordination problem.** Splitting the limit is cheap and wrong; a shared counter is accurate but adds a round trip and a dependency. Decide what happens when the limiter fails before it does.
 
-- **Return 429 with Retry-After — and make sure clients jitter it,** or you've synchronised your traffic instead of spreading it.
+- **Reject with 429 and Retry-After, and make sure clients add jitter,** or every rejected client comes back in the same second.
 
 </Recap>
 

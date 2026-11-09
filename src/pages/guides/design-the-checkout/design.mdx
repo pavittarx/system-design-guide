@@ -6,11 +6,13 @@ chapter: "12"
 current: "12. Designing Checkout"
 sections:
   - id: "naive"
-    title: "The naive version, and exactly where it breaks"
+    title: "Why the day-one version falls over on Black Friday"
   - id: "moves"
-    title: "The forced moves"
+    title: "Four moves, each forced by a number"
   - id: "notshard"
-    title: "The move we are not making"
+    title: "Why we don't shard"
+  - id: "check"
+    title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
@@ -18,11 +20,11 @@ sections:
 import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
 import DiagramDesignTheCheckout1 from '../../../components/diagrams/DiagramDesignTheCheckout1.astro';
 
-<Collapse id="naive" title="1. The naive version, and exactly where it breaks">
+<Collapse id="naive" title="1. Why the day-one version falls over on Black Friday">
 
-Start with the thing you'd actually build on day one, because it's correct and it's fast to ship: one application server, one database, everything synchronous.
+Start with what you'd actually build on day one, because it's correct and fast to ship: one application server, one database, and everything done in order while the customer waits.
 
-```sql
+```text
 POST /checkout
   1. validate cart
   2. check inventory
@@ -36,9 +38,19 @@ POST /checkout
  10. return 200 OK
 ```
 
-Now apply the numbers. Steps 1–5 are the parts a customer is actually waiting for; steps 6–9 are roughly 1.3 seconds of work the customer does not care about and cannot see. Our budget was 800 ms. We are over it before anything goes wrong.
+Apply the numbers. Steps 1–5 are what the customer is actually waiting for. Steps 6–9 add up to 400 + 600 + 200 + 100 = 1.3 seconds of work the customer can't see and doesn't care about. Our budget was 800 ms. We're over it before anything goes wrong.
 
-And here is what breaks first, which is not what most people guess. It isn't the database — 200 writes a second is comfortable. It's **concurrency**. Little's Law says the number of requests in flight is throughput multiplied by latency:
+### What runs out first: threads, not the database
+
+Most people guess the database breaks first. It doesn't: 200 writes a second is comfortable. What runs out is **threads**. A thread is a worker in the app server, and each request holds one from start to finish, including all the time it spends waiting on the card network or the email server. The pool has a fixed size, say 200.
+
+How many threads are busy at once? Picture a coffee shop: if 2 customers arrive per minute and each stays 10 minutes, about 20 are inside at any moment. The same rule, called **Little's Law**, applies to requests:
+
+$$
+\text{requests in flight} = \text{arrival rate} \times \text{time each one takes}
+$$
+
+In plain words: the slower each request, the more of them are inside at once, each holding a thread. The whole naive request takes about 1.9 s on a good day:
 
 ```trace
 **normal day**
@@ -54,7 +66,7 @@ And here is what breaks first, which is not what most people guess. It isn't the
   thread pool of 200   =   ~~total collapse in ~1 s~~
 ```
 
-Read that last block again, because it contains the whole argument for everything that follows. The site does not go down because buying is hard. It goes down because *the email server had a slow afternoon* and we made every customer wait for it. Every request in the process is holding a thread while it waits, and threads are the resource that runs out. The [Reliability guide](/guides/reliability-toolkit/) covers this arithmetic in detail; here it is deciding our architecture on the first page.
+Read the last block again; it holds the argument for everything that follows. The site doesn't go down because buying is hard. It goes down because *the email server had a slow afternoon* and we made every customer wait for it. Each waiting request holds a thread, and threads are what run out. The [Reliability guide](/guides/reliability-toolkit/) covers this arithmetic in depth; here it decides our architecture on page one.
 
 <Figure>
   <DiagramDesignTheCheckout1 />
@@ -62,13 +74,13 @@ Read that last block again, because it contains the whole argument for everythin
 
 </Collapse>
 
-<Collapse id="moves" title="2. The forced moves">
+<Collapse id="moves" title="2. Four moves, each forced by a number">
 
-Now we build it up. The rule for this section — and for your own designs — is that **every move must be forced by a number or a failure.** Not by fashion, not by what the last place you worked used, and definitely not by what sounds impressive. If you can't name the figure that made a component necessary, the component is decoration.
+Now build it up, with one rule for this section and for your own designs: **every move must be forced by a number or a failure.** Not by fashion, not by what your last job used, and not by what sounds impressive. If you can't name the figure that made a component necessary, the component is decoration.
 
-### Move 1 — split the request in two
+### Move 1: stop making the customer wait for the email
 
-Steps 6–9 are not part of the transaction the customer is waiting on. Push them onto a queue and return as soon as the money is taken and the order is recorded. This is the single highest-leverage change in the entire design and it costs one component.
+The slow-email collapse happened because invoices, receipts and analytics ran while the customer waited. None of them needs to. So split the request in two: do the part that must finish now, return, and hand the rest to a **queue**, a list of jobs that background workers pick up and finish shortly after.
 
 ```trace
 **synchronous, must finish now**
@@ -81,31 +93,44 @@ Steps 6–9 are not part of the transaction the customer is waiting on. Push the
   ≈ 1.3 s, nobody watching
 ```
 
-Concurrency drops from 380 in flight to about 52 at peak, and the slow-email scenario stops existing: the email is now a message in a queue, and a queue getting longer is a metric, not an outage. See the [Queues guide](/guides/message-queues/) for why the queue must be bounded — an unbounded buffer just relocates the failure.
+Why this works: Little's Law again. At peak, 200 orders/s × 0.26 s means about 52 requests in flight instead of 380. And the slow email no longer touches checkout at all. It's a message waiting in a queue, and a queue getting longer is a number on a dashboard, not an outage. This is the highest-leverage change in the whole design, and it costs one component. See the [Queues guide](/guides/message-queues/) for why the queue itself needs a size limit: an unlimited buffer just moves the failure somewhere else.
 
-### Move 2 — make the app tier stateless, then multiply it
+### Move 2: make any server able to handle any request, then run many
 
-200 orders/s and 25,000 reads/s is more than one box, and one box is a single point of failure regardless. Put a load balancer in front and run many identical instances. The prerequisite is **statelessness**: no session in local memory, no cart on the local disk, nothing an instance knows that another instance couldn't reconstruct. Sessions go in a shared cache; carts go in the database with a cache in front.
+200 orders/s plus 25,000 reads/s is more than one machine, and one machine is a single point of failure anyway. So put a **load balancer** in front and run many identical app servers.
 
-This move is what buys you rolling deploys, autoscaling, and surviving an instance death. It's also the move that makes every later move possible — the [Databases guide](/guides/database-scaling/) assumes a stateless app tier the moment it starts talking about replicas. Read the [Load Balancing guide](/guides/load-balancing/) for the settings that make this safe: connection draining so deploys don't produce error spikes, readiness distinct from liveness so a warming instance doesn't get traffic, and a health check that fails *before* the box is unusable rather than after.
+That only works if the servers are **stateless**: a server keeps nothing the next request needs. No session in local memory, no cart on local disk. If a customer's next click lands on a different server, it must work just the same. Sessions go in a shared cache; carts go in the database with a cache in front.
 
-### Move 3 — cache the read path, because that's where the traffic is
+This move is what gives you rolling deploys, autoscaling, and surviving the death of a server. It's also what makes every later move possible: the [Databases guide](/guides/database-scaling/) assumes a stateless app tier as soon as it talks about replicas. The [Load Balancing guide](/guides/load-balancing/) has the settings that make it safe:
 
-25,000 reads/s against a database that is comfortably handling 200 writes/s is the actual scaling problem, and it barely involves the checkout at all. It's people looking at products.
+- **Connection draining**, so a server being deployed finishes its requests before it stops, and deploys don't cause error spikes.
+- **Separate readiness and liveness checks**, so a server that's still warming up isn't sent traffic.
+- **A health check that fails early**, before the server is unusable rather than after.
 
-The catalogue is nearly static, read enormously, and tolerant of being a few seconds stale — which is the exact profile of something that should be cached. A cache in front of the product and pricing reads takes the overwhelming majority of that 25,000 rps and never troubles the database with it. The [Caching guide](/guides/understanding-caching/) covers the two traps waiting here: jittered TTLs so a batch of keys written together doesn't expire together, and single-flight so a popular key expiring doesn't send a thousand simultaneous misses at the database.
+### Move 3: cache the product pages, because that's where the traffic is
+
+25,000 reads/s against a database comfortably handling 200 writes/s is the real scaling problem here, and it barely involves checkout. It's people looking at products.
+
+The catalogue changes rarely, is read constantly, and can be a few seconds out of date without anyone minding. That's exactly what a cache is for. A cache in front of product and price reads absorbs the vast majority of those 25,000 requests a second, and the database never sees them. The [Caching guide](/guides/understanding-caching/) covers the two traps here:
+
+- **Jittered expiry times**, so a batch of keys written together doesn't expire together.
+- **Single-flight**, so when a popular key expires, one request refills it instead of a thousand hitting the database at once.
 
 <Note type="warn" label="The thing you must not cache">
 
-Inventory counts on the checkout path. Everywhere else, staleness costs you a slightly wrong number on a page. Here it costs you an oversell, a cancelled order and an angry customer. We'll handle inventory explicitly in [Part 2](/guides/design-the-checkout/correctness/#staleness) — the rule for now is that the number you *display* and the number you *decrement* are two different values with two different consistency requirements, and conflating them is one of the most common bugs in commerce systems.
+Inventory counts on the checkout path. Everywhere else, a stale number just looks slightly wrong on a page. Here it means selling stock you don't have: an oversell, a cancelled order and an angry customer. [Part 2](/guides/design-the-checkout/correctness/#staleness) handles inventory properly. The rule for now: the number you *display* and the number you *decrement* are two different values with different consistency needs, and mixing them up is one of the most common bugs in commerce systems.
 
 </Note>
 
-### Move 4 — indexes first, then replicas
+### Move 4: fix the queries, then add read-only copies
 
-Before adding any database machinery, check the queries. The [Databases guide](/guides/database-scaling/)'s rule zero applies: an unindexed lookup on a 400-million-row orders table will destroy you long before your write rate does, and adding replicas to a system with a missing index just gives you more machines running the same terrible query.
+Before adding any database machinery, check the queries. The [Databases guide](/guides/database-scaling/)'s rule zero: an orders table with 400 million rows and a lookup that has no index will hurt you long before your write rate does. Adding replicas to a system with a missing index just gives you more machines running the same terrible query.
 
-Once the queries are honest, add read replicas for the things that genuinely only read: order history, admin reporting, the analytics extracts. Keep the checkout path on the primary. And note the trap now, because it will bite in [Part 3](/guides/design-the-checkout/trace/#break) — a customer who places an order and is immediately shown a history page served by a lagging replica will not see their own order. That's a read-your-writes violation, and it appears only under load, which means only in production.
+Once the queries are sound, add **read replicas**, read-only copies of the database that follow the main one (the **primary**), for things that only read: order history, admin reports, analytics exports. Keep checkout on the primary.
+
+Note the trap now, because it bites in [Part 3](/guides/design-the-checkout/trace/#break). A replica runs slightly behind the primary. A customer who places an order and is immediately shown a history page from a lagging replica won't see their own order. That's called a **read-your-writes** violation, and it only appears under load, which means only in production.
+
+Here is the design after all four moves:
 
 <Stack>
   <Layer idx="1" title="Load balancer" speed="~1 ms">
@@ -135,21 +160,66 @@ Once the queries are honest, add read replicas for the things that genuinely onl
 
 </Collapse>
 
-<Collapse id="notshard" title="3. The move we are not making">
+<Collapse id="notshard" title="3. Why we don't shard">
 
-Here is where most designs go wrong, including in interviews, where candidates shard because they think sharding is the answer the interviewer wants. Let's price it honestly.
+**Sharding** means splitting one database across several machines, each holding a slice of the data. Many designs reach for it here, especially in interviews, because candidates think it's the answer the interviewer wants. Let's price it honestly.
 
-We write 200 orders/s at peak and roughly 12/s the rest of the year. We accumulate about 2 TB of order data per year including indexes, and 18 months of that is hot — call it 3 TB of working set, with the rest archived. A single modern database instance handles both of those figures without breathing hard. **Sharding is not indicated.**
+### What the numbers say
 
-And the bill for doing it anyway, from the [Databases guide](/guides/database-scaling/): every schema migration becomes N migrations. Every backup becomes N backups plus a coordinated restore procedure you have to actually test. Cross-shard queries become scatter-gather or become unavailable. Cross-shard transactions become a saga, which means compensating actions, which means the intermediate state was visible to somebody. Resharding stops being a task and becomes a quarter.
+We write 200 orders/s at peak and about 12/s the rest of the year. We add about 2 TB of order data a year including indexes, and 18 months of that is in active use: call it 3 TB, with the rest archived. One modern database server handles both figures without breathing hard. **Sharding is not needed.**
 
-What you do instead, in this order, and only when a metric demands it: archive cold orders out of the hot table; partition the orders table by month so old data can be dropped and queries can prune; add replicas for anything that only reads; and move genuinely separate workloads — analytics, reporting — off the transactional database entirely.
+### What sharding would cost anyway
+
+From the [Databases guide](/guides/database-scaling/), the bill for sharding:
+
+- Every schema change becomes N schema changes.
+- Every backup becomes N backups, plus a coordinated restore you have to actually test.
+- A query across shards has to ask every shard and merge the answers, or becomes impossible.
+- A transaction across shards becomes a **saga**: a series of steps, each with an undo action, where others can see the half-finished state in between.
+- Rebalancing shards stops being a task and becomes a quarter's work.
+
+### What to do instead, and when
+
+In this order, and only when a metric demands it:
+
+1. **Archive** old orders out of the active table.
+2. **Partition** the orders table by month, so old months can be dropped and queries skip the months they don't need.
+3. **Add replicas** for anything that only reads.
+4. **Move separate workloads**, like analytics and reporting, off the transactional database entirely.
 
 <Note type="key" label="The signal that would change our mind">
 
-Not "we're big now." Specifically: sustained write throughput within ~2× of what the instance can do, *or* a hot dataset that no longer fits in memory and won't after the next hardware tier, *or* a restore time that has grown past what the business will tolerate. Any of those is a real reason. None of them is currently true, so the correct architecture diagram has one database on it, and being able to say why is worth more than being able to draw sixteen.
+Not "we're big now." Specifically: sustained writes within ~2× of what the server can do, *or* active data that no longer fits in memory even on the next size of machine, *or* a restore time that has grown past what the business will tolerate. Any one of those is a real reason. None is true today, so the correct diagram has one database on it, and being able to say why is worth more than being able to draw sixteen.
 
 </Note>
+
+<Note type="key" label="What to remember">
+
+- Little's Law: requests in flight = arrival rate × time each takes. Anything slow that the customer waits on eats threads, so move it to a queue.
+- Add each component only when a number forces it: the queue for the slow email, stateless servers for scale, a cache for the 25,000 reads/s, replicas after indexes.
+- At 200 writes a second, one database is enough. Sharding costs far more than it buys until a specific metric says otherwise.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="On Black Friday the email provider slows from 0.6 s to 6 s per receipt. Nothing else changes. Why does the whole naive checkout collapse?" options={["The database can't keep up with 200 writes per second", "Each request holds a thread while it waits for the email, so about 1,300 requests are in flight against a pool of 200", "The email provider rejects the extra traffic and checkout retries every receipt"]} answer={1}>
+
+Little's Law: requests in flight = arrival rate × time each takes. At 200 orders/s and about 6.5 s per request, that's about 1,300 requests at once, each holding a thread. The pool has 200, so requests queue, time out, and within about a second nothing gets through.
+
+The database is fine; 200 writes a second is well within one server. The fix is Move 1: send the receipt from a queue after checkout returns, so the slow email server makes the queue longer instead of making customers wait.
+
+</Quiz>
+
+<Quiz q="At peak the site sees 200 orders/s and 25,000 reads/s. Which change does this page make before anything else on the database side?" options={["Shard the orders table by customer ID to spread the writes", "Check the indexes, then add read replicas for history and reporting, keeping checkout on the primary", "Cache the inventory count used at checkout so the database sees fewer reads"]} answer={1}>
+
+Indexes come first: a missing index on a 400-million-row table hurts long before 200 writes a second does, and replicas would just run the same slow query on more machines. Then replicas take reads that can be slightly behind, like order history and reports.
+
+Sharding isn't needed: one server handles 200 writes/s with room to spare. And the inventory count you decrement at checkout must never come from a cache; a stale count sells stock you don't have.
+
+</Quiz>
 
 </Collapse>
 

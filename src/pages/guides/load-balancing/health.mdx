@@ -6,18 +6,35 @@ chapter: "3"
 current: "3. Load Balancing"
 sections:
   - id: "health"
-    title: "Health checks & failover"
+    title: "Noticing a server has died"
   - id: "sticky"
-    title: "Sticky sessions & statelessness"
+    title: "Why users get logged out"
   - id: "auto"
-    title: "Autoscaling"
+    title: "A fleet that grows and shrinks"
+  - id: "check"
+    title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Collapse, Layer, Note, Quiz, Reading, Stack } from '../../../components';
 
-<Collapse id="health" title="1. Health checks & failover">
+<Collapse id="health" title="1. Health checks: noticing a server has died">
+
+A server in your pool crashes at 3 AM. The load balancer doesn't know. It keeps handing that server one request in every ten, and one user in ten gets an error until somebody wakes up. Spreading traffic is only half the job; the other half is noticing when a server should stop getting any.
+
+### Asking every few seconds
+
+The load balancer finds out by asking. Every few seconds it sends each backend a small request, usually `GET /health`, and watches the answer. This is called a **health check**.
+
+<Stack>
+  <Layer idx="1" title="Probe" speed="every 5–10 s">The load balancer calls each backend's health URL.</Layer>
+  <Layer idx="2" title="Strike out" speed="2–3 failures">After a few failed or timed-out checks in a row, the backend is marked unhealthy and taken out of rotation. One failure is noise; two or three is a signal.</Layer>
+  <Layer idx="3" title="Keep asking" speed="while out">The load balancer goes on probing the removed backend.</Layer>
+  <Layer idx="4" title="Come back" speed="2 passes">After a couple of passing checks in a row, it's put back in rotation.</Layer>
+</Stack>
+
+Traffic reroutes to the healthy servers and users never see the dead one. This is **failover**, and you get it for free: if you have spare capacity, a server can crash at 3 AM and nobody needs to wake up.
 
 <Note type="wild" label="◈ In the wild · The health check endpoint">
 
@@ -25,49 +42,93 @@ Almost every service you've ever used has an unglamorous `/health` URL that a lo
 
 </Note>
 
+### A check that says yes when the answer is no
+
+Now a subtler failure. The server's database connection has died, but the web process is still running. A check that only asks "is the port open?" gets a yes, so the load balancer keeps sending real requests to a server that fails every one of them.
+
+The fix is a check that tests what actually matters. If a request needs the database, the health check should find out whether this server can reach the database. A **shallow** check proves the process is running; a **deep** check proves it can do the work.
+
 <Note type="war" label="War story · the doorman who quit">
 
-A load balancer's health checks assume a dead server *stops answering*. The nastier failure is the server that keeps answering but returns garbage or hangs at 30 seconds — "brownout," not blackout. Netflix engineered around exactly this with adaptive concurrency limits and circuit breakers, because a slow server that a load balancer keeps feeding is more dangerous than one that cleanly dies. (More in [the Reliability guide](/guides/reliability-toolkit/).)
+Health checks assume a dead server *stops answering*. The nastier failure keeps answering but hangs for 30 seconds or returns garbage: a brownout, not a blackout. Netflix built adaptive concurrency limits and circuit breakers because a slow server that a load balancer keeps feeding is more dangerous than one that dies cleanly. (More in [the Reliability guide](/guides/reliability-toolkit/).)
 
 </Note>
 
-A load balancer is only as good as its ability to notice a server has died. It constantly pokes each backend — "you alive? `GET /health`" — and the instant one stops answering, it's pulled from rotation. Traffic silently reroutes to healthy servers; users never see the corpse.
+### Don't health-check yourself to death
 
-This is the quiet superpower: **failover for free.** A server can crash at 3 AM and, if you've got spare capacity, nobody wakes up. The subtlety is designing the health check well — a shallow "is the port open?" check will happily send traffic to a server whose database connection is dead but whose web process is technically running. Good health checks test the thing that actually matters.
+Health checks are traffic too. If every check queries the same shared database, thousands of servers checking every few seconds can *cause* the overload they're meant to detect.
 
-<Note type="warn" label="The gotcha: don't health-check yourself to death">
+And a check that passes and fails on alternate rounds bounces the server in and out of rotation, which is called **flapping**. Tune the interval and thresholds so one blip doesn't move a server.
 
-Health checks that are too aggressive, or that hit a shared dependency, can *cause* the overload they're meant to detect — thousands of checks hammering one database. And if a check flaps, servers yo-yo in and out of rotation. Tune the interval and thresholds.
+</Collapse>
+
+<Collapse id="sticky" title="2. Sticky sessions, and why users get logged out">
+
+A user logs in. Your app stores their session, the record that says "this browser belongs to Priya", in the memory of server 2. Their next click goes through the load balancer, lands on server 5, and server 5 has never heard of them. They're logged out.
+
+The load balancer did its job. The problem is that the user's state lives on one particular server. Two ways out:
+
+### The band-aid: keep each user on one server
+
+**Sticky sessions** pin each user to the same server, usually with a cookie the load balancer sets, or with the IP hash from [Part 1](/guides/load-balancing/layers/#algos). It works, but now that server can't be replaced without logging out everyone pinned to it, and load gets lumpy, because a server stuck with heavy users can't hand them off.
+
+### The real fix: remember nothing on the server
+
+Keep *no* per-user state on the app server. Put sessions in a shared store, such as Redis or a database, or in a signed cookie the browser carries. A server built this way is called **stateless**. See [the Caching guide](/guides/understanding-caching/) for how that shared store is built and what happens when it's cold.
+
+Why this works: if no server holds anything the others don't, any server can answer any request. The load balancer can send each click anywhere, and you can kill or replace any server without anyone noticing.
+
+<Note label="The thread that connects every guide">
+
+Statelessness is *why* caching and horizontal scaling come as a pair. Move session state into a shared cache ([Caching guide](/guides/understanding-caching/)) and your app servers become disposable clones a load balancer can shuffle freely. It also pays off one layer down: every sharding and read-replica scheme in [the Database Scaling guide](/guides/database-scaling/) quietly assumes the app tier is stateless, because a shard map only works if any app server can be pointed at any shard.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="sticky" title="2. Sticky sessions & the case for statelessness">
+<Collapse id="auto" title="3. Autoscaling: a fleet that grows and shrinks">
 
-Here's a trap. Say a user logs in and their session lives in *that specific server's* memory. Now the load balancer's next request from them lands on a different server, which has never heard of them. Suddenly they're logged out. Rude.
+Traffic triples every lunchtime and drops to almost nothing at 2 AM. Size the fleet for lunch and you pay for idle machines all night; size it for 2 AM and lunch falls over.
 
-Two ways out:
+Once servers are stateless and disposable, you can add and remove them automatically as load changes: **autoscaling**. Traffic climbs, five more servers start and join rotation as their health checks pass; traffic drops, and they're shut down.
 
-- **Sticky sessions** — pin each user to the same server (via a cookie or IP hash). Works, but it's a band-aid: that server now can't be replaced without logging people out, and load gets lumpy.
+### The catch: new capacity is slow and cold
 
-- **Statelessness** — the real fix. Keep *no* per-user state on the app server. Push sessions into a shared store — Redis, a signed cookie, a database. See [the Caching guide](/guides/understanding-caching/) for how that shared store is built and what happens when it's cold. Now every server is truly interchangeable and any of them can serve any request.
+A new server has to boot and start the app, and then it runs **cold**: empty caches, so slow for a while (see [the Caching guide](/guides/understanding-caching/)). There's always a lag between "we're overloaded" and "the new capacity is ready".
 
-<Note type="key" label="The thread that connects every guide">
+So good autoscaling scales **up early**, on a signal that moves before the servers are already overloaded, and scales **down slowly**, so a brief dip doesn't remove servers you'll want back in five minutes.
 
-Statelessness is *why* caching and horizontal scaling exist as a pair. Move session state into a shared cache ([Caching guide](/guides/understanding-caching/)) and your app servers become disposable clones a load balancer can shuffle freely. It also cashes out one layer down: every sharding and read-replica scheme in [the Database Scaling guide](/guides/database-scaling/) quietly assumes the app tier is stateless, because a shard map only works if any app server can be pointed at any shard. Fast, scalable, resilient — all unlocked by refusing to remember anything locally.
+### What autoscaling is for, and what it isn't
+
+Autoscaling absorbs the shape of a normal day: the lunchtime ramp, the Monday morning wall, the marketing email. It does not save you from a fleet collapsing in real time, because a new server needs minutes and a collapse takes seconds. That needs a different tool, covered in [the death spiral](/guides/load-balancing/failure/#death-spiral) in Part 3.
+
+<Note type="key" label="What to remember">
+
+- A health check is only as good as what it tests. Check what a real request needs, not just that the process is running.
+- If a user's state lives on one server, the load balancer can't move them. Keep app servers stateless and put state in a shared store.
+- Autoscaling handles the daily curve in minutes. It cannot stop a collapse that takes seconds.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="auto" title="3. Autoscaling: the fleet that breathes">
+<Collapse id="check" title="Check your understanding">
 
-Once servers are stateless and disposable, you can add and remove them automatically based on load. Traffic climbs at lunchtime → spin up five more servers → the load balancer folds them into rotation as their health checks pass. Traffic drops at 2 AM → scale back down and stop paying for idle machines.
+<Quiz q="Every server passes its health check, yet one in five requests fails with a database error. The health handler checks that the web process can answer. What's wrong?" options={["The health check interval is too long to catch the failure", "The check is shallow: one server has lost its database connection, but its process still answers, so it stays in rotation", "The load balancer is ignoring failed health checks"]} answer={1}>
 
-The catch is **cold starts** (new servers boot with empty caches and briefly run slow — see [the Caching guide](/guides/understanding-caching/)) and the lag between "we're overloaded" and "new capacity is ready." Good autoscaling scales up *early* on a leading signal, and down *slowly* so a brief dip doesn't kill servers you'll want back in five minutes.
+A check that only proves the process is running will pass on a server that can't do any real work. One server's database connection is dead, so every request it gets fails, while `/health` keeps saying yes.
 
-And be clear-eyed about what autoscaling is for. It absorbs the shape of a normal day — the lunchtime ramp, the Monday morning wall, the marketing email. It does not save you from a fleet collapsing in real time, because a new instance needs minutes and a collapse needs seconds. That's a different tool, and it's in [the death spiral](/guides/load-balancing/failure/#death-spiral) in Part 3.
+Make the check test what a request needs, such as whether it can reach the database. Keep it cheap, though: thousands of checks all querying one shared database can cause the overload they're meant to detect.
+
+</Quiz>
+
+<Quiz q="You added sticky sessions to stop users being logged out. Now every deploy logs out a slice of your users. Why?" options={["The deploy cleared the load balancer's cookie table", "Sessions still live in each server's memory, so replacing a server loses the sessions pinned to it", "The new servers use a different session cookie name"]} answer={1}>
+
+Sticky sessions keep each user on the server that holds their session, but the session still lives only there. A deploy replaces servers, and every session in a replaced server's memory disappears with it.
+
+The fix is to make servers stateless: keep sessions in a shared store like Redis, a database or a signed cookie, so any server can serve any user and servers can be replaced freely.
+
+</Quiz>
 
 </Collapse>
 

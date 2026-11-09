@@ -6,9 +6,9 @@ chapter: "4"
 current: "4. Message Queues"
 sections:
   - id: "delivery"
-    title: "Delivery guarantees"
+    title: "Lost, or delivered twice?"
   - id: "idem"
-    title: "Idempotency: the survival skill"
+    title: "Making duplicates harmless"
   - id: "visibility"
     title: "Visibility timeouts"
   - id: "check"
@@ -17,113 +17,130 @@ sections:
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Collapse, Note, Quiz, Race, Reading, Table } from '../../../components';
 
-<Collapse id="delivery" title="1. Delivery guarantees: the three honesties">
+<Collapse id="delivery" title="1. Delivery guarantees: lost, or delivered twice?">
 
-Networks fail, consumers crash mid-task. So every queue has to answer: if things go wrong, how hard do we try to deliver? There are three honest answers, and physics won't let you have a perfect fourth.
+A consumer takes a "charge $50" message, charges the card, and crashes before it can tell the broker "done". The broker never heard back. Should it hand the message to someone else?
+
+If it does, the customer may be charged twice. If it doesn't, and the crash happened *before* the charge, the order is never paid. The broker can't tell those two crashes apart, so every queue has to pick which mistake it would rather make.
+
+### The confirmation: an ack
+
+The "done" a consumer sends back is called an **acknowledgement**, or **ack**. Until the broker gets an ack, it doesn't know whether the work happened. The choice is what it does when the ack doesn't come.
+
+- **Deliver once and never retry.** Nothing is ever duplicated, but a crash loses the message. This is called **at-most-once**.
+- **Retry until acked.** Nothing is lost, but a lost ack means the work runs again. This is called **at-least-once**.
+- **Exactly once** would be neither lost nor duplicated. The next note explains why that's mostly a story.
 
 <Table>
 
-| Guarantee | Meaning | Risk | Use when |
-| --------- | ------- | ---- | -------- |
-| **At-most-once** | Fire and forget. Deliver 0 or 1 times. | Messages can be *lost*. | Metrics, logs — a dropped one won't hurt. |
-| **At-least-once** | Retry until confirmed. Deliver 1 or more times. | Messages can be *duplicated*. | Almost everything — the common default. |
-| **Exactly-once** | Deliver precisely once. The holy grail. | Expensive, complex, and often a comforting fiction. | Rarely truly needed; usually faked with at-least-once + idempotency. |
+| Guarantee | In plain words | Risk | Use when |
+| --------- | -------------- | ---- | -------- |
+| **At-most-once** | Fire and forget: delivered 0 or 1 times | Messages can be *lost* | Metrics, logs: a dropped one won't hurt |
+| **At-least-once** | Retry until acked: delivered 1 or more times | Messages can be *duplicated* | Almost everything; the common default |
+| **Exactly-once** | Delivered precisely once | Expensive, complex, and often a comforting fiction | Rarely truly needed; usually faked with at-least-once plus idempotency |
 
 </Table>
 
 <Note type="warn" label="The dirty secret">
 
-*End-to-end* "exactly-once delivery" — across systems with real side effects — is famously close to impossible. The obstacle is the same one [the CAP & Consistency guide](/guides/consistency-cap/) circles: two independent systems can't agree on "this happened" in one indivisible step over an unreliable network, so somebody always has to choose between retrying (maybe twice) and giving up (maybe never).
+*End-to-end* exactly-once delivery, across systems with real side effects, is famously close to impossible. The obstacle is the one [the CAP & Consistency guide](/guides/consistency-cap/) circles: two separate systems can't agree that "this happened" in one indivisible step over an unreliable network, so somebody must choose between retrying (maybe twice) and giving up (maybe never).
 
-What people actually build is **at-least-once delivery + idempotent processing**: deliver possibly twice, but make processing a duplicate a harmless no-op. The result *looks* exactly-once from the outside, which is all anyone wanted. (Kafka's exactly-once *processing* within its own ecosystem — idempotent producer + transactions — is the real exception, but it doesn't extend to arbitrary external side effects.)
+What people actually build is **at-least-once delivery plus idempotent processing**: a message may arrive twice, but processing the duplicate does nothing. From outside it *looks* exactly-once, which is all anyone wanted. Kafka's exactly-once *processing* inside its own ecosystem (idempotent producer plus transactions) is the real exception, but it doesn't extend to arbitrary external side effects.
 
 </Note>
 
 <Note type="wild" label="◈ In the wild · WhatsApp">
 
-This is how WhatsApp delivers to a phone that's switched off: the server holds the message in an in-memory queue and retries until the device reconnects and *acks* receipt, then deletes it. The two grey ticks (✓✓) are that ack. In early 2014 it moved roughly **50 billion messages a day** for 450 million users on around 550 servers, run by **32 engineers**, on Erlang and a sharded in-memory [Mnesia store that tracked every in-flight message](https://newsletter.systemdesign.one/p/whatsapp-engineering). At-least-once-until-acked, at planetary scale.
+WhatsApp holds a message for a switched-off phone in an in-memory queue, retries until the device reconnects and *acks* it, then deletes it; the two grey ticks are that ack. In early 2014 that was about **50 billion messages a day** for 450 million users on around 550 servers, run by **32 engineers** ([write-up](https://newsletter.systemdesign.one/p/whatsapp-engineering)).
 
 </Note>
 
 </Collapse>
 
-<Collapse id="idem" title="2. Idempotency: the survival skill">
+<Collapse id="idem" title="2. Idempotency: making duplicates harmless">
 
-Idempotent means: **doing it twice has the same effect as doing it once.** Pressing an elevator button five times doesn't summon five elevators. This single property is what makes at-least-once delivery safe, and it's worth internalizing because it shows up everywhere in distributed systems.
+You chose at-least-once, so duplicates will happen. A payment consumer gets the same "charge $50" message twice, because the first ack got lost, and charges the customer $100. You need processing a duplicate to do nothing at all.
 
-The classic horror is a payment consumer that gets the same "charge $50" message twice (because the first ack got lost) and charges the customer $100. The fix: give each message a unique ID and record which IDs you've already processed. See a repeat? Skip it. Now the retry that would've double-charged is a shrug.
+An operation where doing it twice has the same effect as doing it once is called **idempotent**. Pressing a lift button five times doesn't summon five lifts. This one property is what makes at-least-once delivery safe, and it shows up everywhere in distributed systems.
 
-That's the idea. The obvious way to write it is wrong.
+The plan: give each message a unique ID and remember which IDs you've processed. See a repeat? Skip it. That's the idea. The obvious way to write it is wrong.
 
-### The version everybody writes first — and it's broken
+### The version everybody writes first, and why it breaks
 
-```bash
-on message(id, action):
+```python
+def on_message(id, action):
     if already_processed(id):   # seen this one?
-        return ok               # harmless no-op
+        return                  # skip the duplicate
     do(action)
     mark_processed(id)
 ```
 
-Read it as a single thread and it's flawless. Read it as two consumers — which is the entire point of a queue — and there's a gap between the check and the mark that is wide enough to drive a double charge through. Duplicates don't politely arrive one after the other; they arrive at the same moment, on two machines.
+Read it as one worker and it's flawless. But a queue exists so that several consumers run at once, and duplicates don't politely arrive one after the other. They can arrive at the same moment, on two machines:
 
-```trace
-**t1**  C1 gets msg #7847 (charge $50)
-**t1**  C2 gets msg #7847 — a duplicate
-**t2**  C1  already_processed(7847)? → no
-**t3**  C2  already_processed(7847)? → no
-**t4**  C1  do(charge $50)  → card charged
-**t5**  C2  do(charge $50)  → ~~charged again~~
-**t6**  C1  mark_processed(7847)
-**t7**  C2  mark_processed(7847)  (no-op)
+<Race a="Consumer 1" b="Consumer 2" result="Result: $100 taken for a $50 order" steps={[
+  { a: "Gets message #7847: charge $50" },
+  { b: "Gets message #7847 too: a duplicate" },
+  { a: "Already processed #7847? No" },
+  { b: "Already processed #7847? No" },
+  { a: "Charges $50", tone: "good" },
+  { b: "Charges $50 again", tone: "bad" },
+  { a: "Marks #7847 processed" },
+  { b: "Marks #7847 processed (no effect)", note: true }
+]} />
 
-~~result: $100 taken for a $50 order~~
-```
-
-Both consumers looked before either wrote. The guard did nothing. Note that no line of that trace is unusual — it's just two ordinary executions overlapping by a few milliseconds, which is the normal condition of any system with more than one worker.
+Both consumers looked before either wrote, so the guard did nothing. No step in that sequence is unusual. It's two ordinary runs overlapping by a few milliseconds, which is the normal condition of any system with more than one worker. This is a **race condition**: the result depends on the timing of two things running at once.
 
 ### The fix: claim the ID before doing the work
 
-Don't ask whether you've processed the message. *Claim* it — in one statement that the database is obliged to arbitrate, because a uniqueness constraint on `message_id` means only one of the two inserts can possibly succeed. If yours didn't insert a row, someone else owns this message and you go home.
+Don't *ask* whether the message has been processed. *Claim* it, in one statement the database has to referee. Put a uniqueness constraint on `message_id`, and only one of two simultaneous inserts can succeed:
 
-```sql
-on message(id, action):
-    # one atomic claim; the DB picks a winner
-    rows = execute("""
+```python
+def on_message(id, action):
+    # one atomic claim; the database picks a winner
+    rows = db.execute("""
         INSERT INTO processed (message_id)
-        VALUES (:id)
+        VALUES (%s)
         ON CONFLICT (message_id) DO NOTHING
-    """, id)
+    """, [id]).rowcount
 
-    if rows == 0:        # lost the race
-        return ok        # the winner is handling it
+    if rows == 0:      # lost the race
+        return         # the winner is handling it
 
-    do(action)           # only the winner gets here
+    do(action)         # only the winner gets here
 ```
 
-The check and the write are now the same operation, so there is no gap to lose. This is the general shape of the trick, not a Postgres detail: any store with a uniqueness constraint or a conditional write will do — a unique index, DynamoDB's `attribute_not_exists`, Redis `SET NX`. What you need is one operation that both tests and takes.
+Why this works: the check and the write are now one operation, so there's no gap between them for another consumer to slip into.
 
-### What this still doesn't solve
+<Race a="Consumer 1" b="Consumer 2" result="Result: one charge of $50" tone="good" steps={[
+  { a: "INSERT #7847 into processed: 1 row added. I own it" },
+  { b: "INSERT #7847 into processed: conflict, 0 rows added" },
+  { b: "Lost the race. Acks and stops", tone: "good" },
+  { a: "Charges $50", tone: "good" }
+]} />
 
-The winner can crash between claiming and finishing. Now the ID is marked and the work never happened, and every redelivery bounces off a claim row belonging to a process that no longer exists — a permanently lost message that looks, from the outside, exactly like a successfully processed one.
+This isn't a Postgres detail. Any store with a uniqueness constraint or a conditional write will do: a unique index, DynamoDB's `attribute_not_exists`, Redis `SET NX`. What you need is one operation that both tests and takes.
 
-That's why the claim row shouldn't be a bare marker. Give it a **status** (`claimed` / `done`) and a **lease** — a claim timestamp plus an expiry — so a claim that has gone stale can be taken over rather than blocking the message forever. Then "already claimed" and "claimed by a corpse" stop being the same state.
+### What this still doesn't solve: the crash after the claim
 
-The genuinely robust version doesn't need a lease at all, because it puts the work and the claim in the *same transaction*: insert the claim row and write the business change together, commit once. Either both land or neither does, and a crash rolls the claim back along with everything else. Do this whenever the side effect lives in the same database as the claim — and notice how often it does.
+The winner can crash between claiming and finishing. Now the ID is marked and the work never happened. Every redelivery bounces off a claim that belongs to a process that no longer exists, and the message is lost for good, while looking from outside exactly like one that was processed.
+
+So the claim row shouldn't be a bare marker. Give it a **status** (`claimed` or `done`) and a **lease**: a claim time plus an expiry, so a claim that has gone stale can be taken over instead of blocking the message forever. Then "already claimed" and "claimed by a process that died" stop being the same state.
+
+The truly robust version needs no lease at all, because it puts the claim and the work in the *same transaction*: insert the claim row and write the business change together, and commit once. Either both land or neither does, and a crash rolls back the claim along with everything else. Do this whenever the side effect lives in the same database as the claim, and notice how often it does.
 
 <Note type="warn" label="When the work isn't in your database">
 
-Charging a card is the case that breaks the pattern: you cannot enrol someone else's payment API in your transaction. The answer is to push idempotency across the boundary — send an **idempotency key** (your message ID, or something derived from it) with the charge request, and the provider dedupes on their side, returning the original result instead of charging again.
+Charging a card breaks the pattern: you can't put someone else's payment API inside your transaction. So push idempotency across the boundary. Send an **idempotency key** (your message ID, or something derived from it) with the charge request, and the provider spots the repeat and returns the original result instead of charging again.
 
-This is exactly what Stripe's and every other payment provider's idempotency keys are for. When you can't make the operation idempotent, make the *API call* idempotent and let the system that owns the money enforce it.
+That's exactly what Stripe's, and every other payment provider's, idempotency keys are for. When you can't make the operation idempotent, make the *API call* idempotent, and let the system that owns the money enforce it.
 
 </Note>
 
 <Note label="The table you'll forget about">
 
-A `processed` table grows by one row per message forever, and nobody notices until it's the biggest table in the database and the unique index no longer fits in memory. Give it a retention policy from day one — delete rows older than your maximum redelivery window (hours or days, not years), with a partitioned table or a scheduled purge. You only need to remember an ID for as long as the queue could plausibly resend it.
+A `processed` table grows by one row per message forever, and nobody notices until it's the biggest table in the database and its unique index no longer fits in memory. Give it a retention policy from day one: delete rows older than the longest time the queue could plausibly resend a message (hours or days, not years), using a partitioned table or a scheduled purge.
 
 </Note>
 
@@ -131,19 +148,41 @@ A `processed` table grows by one row per message forever, and nobody notices unt
 
 <Collapse id="visibility" title="3. Visibility timeouts: the bug that duplicates your work">
 
-This is the most common queue bug in production, and it hides because nothing in your code is wrong.
+A job runs three times. The logs show no errors and no retries. Nothing in your code is wrong, and this is still the most common queue bug in production.
 
-When a consumer takes a message, the broker doesn't delete it — it makes it **invisible** for N seconds (SQS calls this the visibility timeout; other brokers call it an ack deadline or ack timeout). If your ack arrives within N, the message is removed. If it doesn't, the broker assumes you died and hands the same message to another consumer. It has no way to tell "crashed" from "still working."
+### How a broker decides you've died
 
-So if a job takes longer than N, the queue delivers it again *while the first consumer is still running it*. That is not a stray duplicate from a lost ack; it is genuine, guaranteed concurrent processing of the same message, and it's the scenario the race in [section 2](#idem) was drawn for.
+When a consumer takes a message, the broker doesn't delete it. It hides it from other consumers for N seconds. SQS calls this the **visibility timeout**; other brokers call it an ack deadline or ack timeout. If your ack arrives within N seconds, the message is removed. If it doesn't, the broker assumes you died and hands the message to another consumer. It has no way to tell "crashed" from "still working".
 
-Worse: if the job is slow for *everyone*, every redelivery also times out, and the message loops forever — redelivered, re-processed, never completed, burning capacity that the rest of the queue needed. A backlog that grows while your consumers are visibly busy is usually this.
+So if a job takes longer than N, the broker gives it to someone else *while the first consumer is still running it*:
 
-- **Set the timeout above your real p99 processing time**, with headroom — not above the average, which is the mistake. The tail is what times out.
+<Race a="Consumer 1" b="Consumer 2" result="Result: the same job runs twice at once, with no error anywhere" steps={[
+  { a: "Takes the export job. Timeout is 30 s; this one needs 45 s" },
+  { a: "Still working at 30 s. No ack yet", note: true },
+  { b: "Broker assumes Consumer 1 died and hands it the same job" },
+  { a: "Finishes at 45 s and acks", tone: "bad" },
+  { b: "Runs the whole job again", tone: "bad" }
+]} />
 
-- **Heartbeat long jobs.** Most brokers let a consumer extend the timeout while it works (SQS `ChangeMessageVisibility`, RabbitMQ's consumer timeout tuning, Kafka's `max.poll.interval.ms` and background heartbeats). A job of genuinely unpredictable length should extend its own lease, not be given a huge fixed one — a huge fixed timeout means a real crash goes unnoticed for just as long.
+That's not a stray duplicate from a lost ack. It's guaranteed, simultaneous processing of the same message, which is exactly the race the claim in [section 2](#idem) was built for.
 
-- **Cap redelivery.** A maximum receive count turns the infinite loop into a DLQ entry, which is a problem you can see.
+It gets worse. If the job is slow for *every* consumer, every redelivery also times out, and the message loops forever: redelivered, reprocessed, never completed, burning capacity the rest of the queue needed. A backlog that grows while your consumers are visibly busy is usually this.
+
+### Three settings that fix it
+
+- **Set the timeout above your real p99 processing time**, with headroom. Not above the average: that's the common mistake, because it's the slow tail that times out. (p99 is the time 99% of jobs finish within.)
+
+- **Extend the deadline for long jobs.** SQS lets a consumer push its own timeout back while it works with `ChangeMessageVisibility`, so a job of unpredictable length extends its lease as it goes. That beats one huge fixed timeout, which means a real crash also goes unnoticed for that long. Other brokers have a limit instead of a lease: RabbitMQ's `consumer_timeout` (30 minutes by default) and Kafka's `max.poll.interval.ms`, the longest a consumer may go between fetches before its partitions are given to another consumer. Size those limits for your slowest job.
+
+- **Cap redelivery.** A maximum receive count turns the infinite loop into an entry in a **dead-letter queue** (DLQ), a separate queue for messages that keep failing. That's a problem you can see.
+
+<Note type="key" label="What to remember">
+
+- Real queues deliver at least once. Plan for every message to arrive twice.
+- Check-then-act is a race. Claim the message ID with one atomic insert, and only the winner does the work; better still, claim and work in one transaction.
+- If a job can outlast the visibility timeout, it will run twice at once. Size the timeout from p99, extend it for long jobs, and cap redelivery.
+
+</Note>
 
 </Collapse>
 
@@ -151,13 +190,17 @@ Worse: if the job is slow for *everyone*, every redelivery also times out, and t
 
 <Quiz q="You add a processed-IDs table and the double charges stop. A month later, a handful of payments silently never happen at all. What did the fix introduce?" options={["A claim that never expires: a consumer marked the ID, crashed before charging, and every redelivery now skips it", "The processed table's unique index outgrew memory and began rejecting inserts", "The payment provider started deduplicating on its own idempotency keys"]} answer={0}>
 
-A claim with no way to expire. The consumer inserted the ID, then crashed before completing the charge, so the row now says "handled" for work that never ran — and every redelivery bounces off it and acks. You traded a loud failure for a silent one. The claim row needs a status and a lease so a stale claim can be taken over, or the claim and the work need to commit in one transaction; where the side effect is external, the provider's idempotency key is what lets you safely retry instead of guessing.
+The consumer inserted the ID, then crashed before charging, so the row now says "handled" for work that never ran. Every redelivery bounces off it and acks. You traded a loud failure for a silent one.
+
+Give the claim a status and a lease so a stale claim can be taken over, or commit the claim and the work in one transaction. When the work is an external call, send the provider an idempotency key so you can retry safely instead of guessing.
 
 </Quiz>
 
 <Quiz q="The same job runs three times. The logs show no errors and no retries. What's the first setting you check?" options={["The dead-letter queue's maximum receive count", "The consumer's retry policy", "The visibility timeout (or ack deadline) against your real p99 processing time"]} answer={2}>
 
-The visibility timeout (or ack deadline) against your actual p99 processing time. No errors is the tell: nothing failed, the broker simply decided you'd died because you hadn't acked in time and gave the message to someone else — twice. Three executions of a job that takes just over the timeout is the classic signature. Fix the timeout, then heartbeat the job so its length stops being a guess, and check the receive count on the message to confirm — it's the number nobody thinks to look at.
+No errors is the clue. Nothing failed: the broker simply assumed the consumer had died because no ack arrived in time, and gave the message to someone else, twice. Three runs of a job that takes just over the timeout is the classic signature.
+
+Raise the timeout above your p99, have long jobs extend their own deadline, and check the message's receive count to confirm. It's the number nobody thinks to look at.
 
 </Quiz>
 

@@ -9,68 +9,72 @@ series:
   guides: [load-balancing, message-queues]
 sections:
   - id: "inversion"
-    title: "The inversion"
+    title: "What changes when the server speaks first"
   - id: "options"
-    title: "Polling, long polling, SSE, WebSockets"
+    title: "Four ways to get news to the browser"
   - id: "choose"
-    title: "Choosing between them"
+    title: "Picking one by asking who talks"
 ---
 
 import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
 import DiagramRealTimeSystems1 from '../../../components/diagrams/DiagramRealTimeSystems1.astro';
 
-<ColdOpen tag="◇ Slack, 12 May 2020">
+<ColdOpen tag="◇ Discord, 2017">
 
-A routine change causes a fraction of Slack's servers to start failing. Clients disconnect. Clients do what clients do: they reconnect. All of them, immediately, to the servers that are still healthy. Each reconnection is not a cheap HTTP request — it is a WebSocket handshake plus a full state resynchronisation, hundreds of times more expensive than a normal message.
+Every user connected to Discord has a small process on a server that holds their session. When it connects, it asks which machine owns each of the user's communities; the average user is in five. Each question took about 12 microseconds, all answered by one process. Nothing, until bursts of users reconnected: that process fell behind and the whole system overloaded. A restart of one machine holding 500,000 sessions meant about 30 seconds of questions.
 
-The healthy servers, now carrying the load of the failed ones *plus* a stampede of resyncs, begin failing too. Slack was down for hours, and the postmortem's central observation is one worth tattooing somewhere: in a persistent-connection system, **the reconnect is the load test**, and it arrives at the worst possible moment, from every client at once, in perfect synchrony.
+Discord cut those 30 seconds to 750 ms, and the pile-up moved one hop down. Nearly 5,000,000 sessions hammered ten registry processes, timed out, retried after a backoff and piled up again, until servers ran out of memory and the outage cascaded. Normal traffic never looks like that. In a system that holds connections, **the reconnect is the load test**: every client at once, at the worst possible moment. ([Discord](https://discord.com/blog/how-discord-scaled-elixir-to-5-000-000-concurrent-users))
 
 </ColdOpen>
 
-<Collapse id="inversion" title="1. The inversion">
+<Collapse id="inversion" title="1. What changes when the server speaks first">
 
-Everything in this series so far has assumed the same shape: a client asks, a server answers, the server forgets. That statelessness is what makes the earlier guides work. It is why you can put ten identical servers behind a load balancer and route each request to whichever is least busy. It is why an instance can be terminated mid-deploy and nobody notices. It is why capacity is a function of requests per second and nothing else.
+You want a live unread count in the corner of your app. Today the browser asks, the server answers, and the server forgets the browser exists. Now the server has to tell the browser "you have a new message" at a moment the browser didn't choose. To do that, it needs a line that stays open.
 
-Real-time systems invert it. The server must send data the client never asked for, at a moment the client did not choose. To do that it must hold an open connection, and the moment it does, three assumptions break at once.
+Everything in this series so far assumed the first shape: ask, answer, forget. That forgetting is what made the earlier guides work. It's why you can put ten identical servers behind a load balancer and send each request to whichever is least busy. It's why a server can be killed mid-deploy and nobody notices. It's why capacity is just requests per second.
+
+Holding a connection open gives that up. A server that remembers who is connected to it is called **stateful**, and the moment yours becomes stateful, three things break at once.
 
 <CardGrid>
   <Card pill="Servers become stateful" tone="bad">
-    Connection X lives on server 7. Not "any server" — server 7 specifically. Deploys, scaling and failures now move connections, not just requests.
+    Connection X lives on server 7. Not "any server": server 7 specifically. Deploys, scaling and failures now move connections, not just requests.
   </Card>
   <Card pill="Capacity has two dimensions" tone="bad">
-    You are no longer sized by requests per second alone. You are sized by *concurrent connections*, which consume memory whether or not they are doing anything.
+    Requests per second no longer sizes you on its own. You are also sized by *concurrent connections*, which use memory whether or not they are doing anything.
   </Card>
   <Card pill="Messages need addressing" tone="bad">
     An event happens on server 3 for a user connected to server 7. Something must know where that user is and get the message there.
   </Card>
 </CardGrid>
 
-None of that is a reason to avoid real-time. It is a reason to be honest that you are building a distinctly different kind of system, with a different capacity model and a different set of failure modes, and to notice when a feature request quietly drags you across that line. "Can we show a live unread count?" is a small product ask and a large architectural one.
+None of that is a reason to avoid real-time. It's a reason to be honest that you're building a different kind of system, with a different capacity model and different failures, and to notice when a feature request drags you across that line. "Can we show a live unread count?" is a small product ask and a large architectural one.
 
 </Collapse>
 
-<Collapse id="options" title="2. Polling, long polling, SSE, WebSockets">
+<Collapse id="options" title="2. Four ways to get news to the browser">
 
-There are four mechanisms in common use, and they form a ladder from "no new problems" to "all the new problems, plus full duplex".
+Say the browser wants to know the moment an order ships. There are four common ways to do it. They form a ladder: each rung delivers faster and adds more of the new problems above.
 
 <Stack>
-  <Layer idx="1">**Short polling.** The client asks every *n* seconds. Dead simple, works everywhere, caches and load-balances like anything else. Latency averages *n*/2 and most requests return nothing.</Layer>
-  <Layer idx="2">**Long polling.** The client asks and the server *holds the request open* until there is something to say (or a timeout, typically 30 s). Near-instant delivery over plain HTTP, at the cost of a held connection per client anyway — most of the cost of WebSockets with more overhead per message.</Layer>
-  <Layer idx="3">**Server-Sent Events.** One long-lived HTTP response that the server streams into, forever. Server-to-client only. Text only. Automatic reconnection and event IDs are built into the browser's `EventSource`, which is a bigger deal than it sounds.</Layer>
-  <Layer idx="4">**WebSockets.** An HTTP request upgrades into a persistent bidirectional binary-capable channel. Maximum power, and you now own reconnection, heartbeats, message framing, and backpressure yourself.</Layer>
+  <Layer idx="1">**Short polling.** The browser asks "anything new?" every *n* seconds. Dead simple, works everywhere, and caches and load-balances like any other request. On average news waits *n*/2 seconds, and most requests come back empty.</Layer>
+  <Layer idx="2">**Long polling.** The browser asks, and the server *holds the request open* until it has something to say, or until a timeout (typically 30 s), after which the browser asks again. News arrives almost instantly over plain HTTP. But you're holding a connection per client anyway, so you pay most of the cost of WebSockets plus extra overhead on every message.</Layer>
+  <Layer idx="3">**Server-Sent Events (SSE).** One HTTP response that never ends: the server keeps writing events into it. Server to client only, and text only. The browser's built-in `EventSource` reconnects by itself and tells the server the last event it saw, which is a bigger deal than it sounds.</Layer>
+  <Layer idx="4">**WebSockets.** An ordinary HTTP request asks to *upgrade*, and the connection turns into a two-way channel that can carry text or binary in both directions. Maximum power, and you now own reconnection, heartbeats, message framing and slow clients yourself.</Layer>
 </Stack>
 
-The efficiency gap is stark once you put numbers on it. Consider 10,000 users on a page that updates rarely.
+### What polling really costs: 10,000 users
+
+Put numbers on it. 10,000 users sit on a page that changes about once a minute per user.
 
 <Note type="key" label="Short polling vs push, 10,000 users">
 
-Polling every 5 s: **2,000 requests/second**, each carrying full HTTP headers and cookies (~800 bytes) plus a response. Roughly **1.6 MB/s of pure overhead**, and if updates arrive once a minute per user, **over 99% of those requests return nothing**. Average notification latency: 2.5 s.
+Polling every 5 s: **2,000 requests a second**, each carrying full HTTP headers and cookies (~800 bytes) plus a response. That's roughly **1.6 MB/s of pure overhead**. Each user asks 12 times a minute and has news once, so **11 requests in 12 come back empty**. Average wait for news: 2.5 s.
 
-SSE or WebSocket: 10,000 idle connections, a heartbeat every 30 s, and one small frame (2–6 bytes of framing) at the instant something happens. Latency: **milliseconds**. Bandwidth when idle: nearly zero.
+SSE or WebSocket: 10,000 idle connections, a heartbeat every 30 s, and one small message, with a few bytes of framing, at the instant something happens. Wait: **milliseconds**. Bandwidth when idle: nearly zero.
 
 </Note>
 
-That comparison is why the ladder exists. But note the direction of the trade — polling's waste is bandwidth and latency, which are cheap and measurable; push's cost is *state*, which is expensive and shows up as operational complexity rather than a line on a graph.
+That's why the ladder exists. But look at what each side pays with. Polling wastes bandwidth and adds delay, which are cheap and easy to measure. Push costs *state*: memory held per user, and connections you must route, drain and recover. That cost shows up as operational pain rather than as a line on a graph.
 
 <Figure>
   <DiagramRealTimeSystems1 />
@@ -78,37 +82,47 @@ That comparison is why the ladder exists. But note the direction of the trade �
 
 </Collapse>
 
-<Collapse id="choose" title="3. Choosing between them">
+<Collapse id="choose" title="3. Picking one by asking who talks">
 
-The decision is usually made by fashion, and it should be made by direction and frequency.
+You're adding a notification bell. The team says "it's real-time, so WebSockets". Stop and ask a narrower question: **does the browser need to send a stream too, or just receive one?**
+
+For a notification bell, a live dashboard, a build log, a price ticker or a streaming LLM response, the browser only receives. Its occasional actions, like "mark as read", can be ordinary HTTP POSTs. That's exactly what SSE is for, and it's the most under-used option on the ladder.
+
+Why SSE fits so well: it's plain HTTP, so it passes through proxies and your existing infrastructure unchanged. And it gives you reconnect-and-resume for free. Every event can carry an `id:`, and when the connection drops, the browser reconnects and sends the last one it saw in a `Last-Event-ID` header, so the server can send what was missed.
+
+<Note type="warn" label="The SSE gotcha worth knowing up front">
+
+Over HTTP/1.1, browsers allow only **six connections per origin**, and each SSE stream holds one open forever. Open the app in six tabs and they use all six; a seventh tab hangs, and so does every ordinary request to that origin.
+
+Over HTTP/2, many streams share one connection and the limit effectively disappears. If you use SSE, use HTTP/2 end to end, and check that your load balancer isn't quietly falling back to HTTP/1.1.
+
+</Note>
+
+Choose WebSockets when the browser genuinely streams too: chat with typing indicators, collaborative editing with live cursors, multiplayer games, live drawing. Choose polling when updates are rare and a few seconds of staleness costs nothing. A five-second poll on a page one person has open is not a design failure; it's a good use of a boring tool.
+
+Here's the whole ladder side by side:
 
 <Table numeric>
 
 | | Short poll | Long poll | SSE | WebSocket |
 | --- | ---------- | --------- | --- | --------- |
-| Direction | Client pull | Client pull | Server → client | Bidirectional |
+| Direction | Client pull | Client pull | Server → client | Both ways |
 | Protocol | HTTP | HTTP | HTTP | Upgraded from HTTP |
 | Auto-reconnect | N/A | Manual | **Built in** | You write it |
 | Binary payloads | Yes | Yes | No (text/base64) | Yes |
 | Proxy/CDN friendliness | Excellent | Fair | Good | Needs config |
-| Server state | None | Held request | Held response | Full connection |
+| What the server holds | Nothing | A waiting request | An open response | A full connection |
 | Best for | Rare, tolerant updates | Legacy fallback | Feeds, notifications, progress | Chat, games, collaboration |
 
 </Table>
 
-The under-used option is SSE, and the reason is a mistake in framing: teams ask "do we need real-time?" and reach for WebSockets, when the honest question is "does the *client* need to send a stream too?" For a notification bell, a live dashboard, a build-progress log, a price ticker, or a streaming LLM response, the answer is no — the client's occasional actions can be ordinary HTTP POSTs.
+<Note type="key" label="What to remember">
 
-SSE gives you the push with a protocol that traverses proxies unmodified, works through your existing HTTP infrastructure, and hands you reconnection-with-resume for free via `Last-Event-ID`.
-
-<Note type="warn" label="The SSE gotcha worth knowing up front">
-
-Over HTTP/1.1, browsers cap connections at **six per origin**, and an SSE stream holds one open indefinitely. Open the app in six tabs and the seventh hangs — including ordinary requests.
-
-Over HTTP/2 the streams are multiplexed on one connection and the limit effectively disappears. If you use SSE, use HTTP/2 end to end, and check that your load balancer is not quietly downgrading.
+- Push means the server must remember who is connected, and where. That one change breaks stateless scaling, deploys and capacity planning.
+- Pick by direction: if only the server streams, use SSE; if both sides stream, use WebSockets; if updates are rare, polling is fine.
+- Plan for the reconnect. It's the busiest moment your system will have, and it comes from every client at once.
 
 </Note>
-
-Choose WebSockets when the client genuinely streams: chat with typing indicators, collaborative editing with cursor positions, multiplayer games, live drawing. Choose polling when updates are rare and a few seconds of staleness costs nothing — a five-second poll on a page one person has open is not a design failure, it is a perfectly good use of a boring tool.
 
 <Lab
   title="Build a Real-Time SSE Stream with Heartbeats & Gap Recovery"

@@ -8,21 +8,25 @@ sections:
   - id: "gateway"
     title: "What a gateway does — and what it shouldn't"
   - id: "algorithms"
-    title: "Five ways to count"
+    title: "Five ways to count requests"
   - id: "distributed"
-    title: "Rate limiting when there are twenty of you"
+    title: "One limit, twenty gateways"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { Collapse, Figure, Lab, Note, Quiz, Race, Reading, Table } from '../../../components';
 import DiagramApiGateways2 from '../../../components/diagrams/DiagramApiGateways2.astro';
 
 <Collapse id="gateway" title="1. What a gateway does — and what it shouldn't">
 
-An API gateway is the single front door: one place that terminates TLS, authenticates the caller, enforces limits, routes to the right service, and emits a consistent access log. The argument for it is that these concerns are identical for every service, and implementing them forty times produces forty subtly different implementations, thirty-nine of which have a bug.
+You have forty services. Each one decrypts HTTPS, checks the caller's token, limits abusive clients and writes an access log. That's forty implementations of the same four jobs, and thirty-nine of them will have a subtly different bug.
+
+### One front door for the jobs every service shares
+
+An **API gateway** is a single front door in front of all your services. It decrypts HTTPS (**TLS termination**), works out who the caller is (**authentication**), enforces rate limits, sends each request to the right service (**routing**), and writes one consistent access log. Here's one request passing through it:
 
 ```trace
 **POST /v1/orders**  client → gateway → service   **total 84 ms**
@@ -36,53 +40,95 @@ An API gateway is the single front door: one place that terminates TLS, authenti
   **8.** emit access log + metrics         0.2 ms
 ```
 
-Steps 2–5 and 7–8 total under two milliseconds. That number is the gateway's entire budget, and it is worth guarding jealously, because the gateway sits in front of *everything* — a gateway that adds 20 ms adds it to every request in the company.
+Steps 2–5 and 7–8 add up to under two milliseconds. That's the gateway's whole budget, and it's worth guarding jealously. The gateway sits in front of *everything*, so a gateway that adds 20 ms adds it to every request in the company.
 
-What a gateway should refuse to do is business logic. The gravitational pull is real: it already sees every request, so it's tempting to put "just one" transformation there, then a fan-out to two services, then a conditional based on account type.
+### Why business logic creeps in, and where it leads
 
-Do that consistently for two years and you have rebuilt the enterprise service bus — a single deployable that every team must coordinate on, that nobody fully understands, and whose blast radius is the entire product. Orchestration belongs in a service that owns it. The gateway does cross-cutting concerns, and the test for whether something is cross-cutting is whether it would be identical for a service you haven't written yet.
+What a gateway should refuse is business logic. The pull is real: it already sees every request, so it's tempting to add "just one" transformation, then a fan-out to two services, then a rule based on account type.
+
+Keep doing that for two years and you've rebuilt the **enterprise service bus**: one central component that all traffic and logic flows through, that every team must coordinate changes to, that nobody fully understands, and whose failure takes down the whole product. Orchestration belongs in a service that owns it.
+
+The test for whether something belongs in the gateway: would it be identical for a service you haven't written yet? Authentication, yes. "Premium accounts get free shipping", no.
 
 <Note label="Backend-for-frontend">
 
-When a specific client genuinely needs aggregation — the mobile app wants one call that returns four things — the pattern that survives is a **BFF**: a thin service owned by the client team, sitting behind the gateway, that does exactly that aggregation for exactly that client. It keeps client-specific logic out of the shared gateway and out of the domain services, and it can be deleted when the client is.
+Sometimes a client genuinely needs aggregation: the mobile app wants one call that returns four things. The pattern that survives is a **BFF**, a thin service owned by the client team, sitting behind the gateway, that does exactly that aggregation for exactly that client. It keeps client-specific logic out of the shared gateway and out of the domain services, and it can be deleted when the client is.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="algorithms" title="2. Five ways to count">
+<Collapse id="algorithms" title="2. Five ways to count requests">
 
-Rate limiting is one question — "has this caller had too much?" — with five standard answers that differ in memory, burst behaviour, and how badly they fail at the edges.
+Rate limiting asks one question: "has this caller had too much?" There are five standard ways to answer it. They differ in memory, in how they treat bursts, and in how badly they fail at the edges.
 
-**Fixed window.** Count requests per calendar minute; reset at the boundary. One counter per key, trivially cheap. It has a well-known defect:
+### Fixed window: one counter per minute, and a hole at midnight
 
-<Note type="key" label="The boundary burst">
+Count each caller's requests per calendar minute and reset the count at the top of the minute. One counter per caller, trivially cheap. This is a **fixed window**, and it has a well-known hole:
 
-Limit: 100 requests per minute. A client sends 100 at **11:59:59.9** and 100 more at **12:00:00.1**. Both windows are within limit. The server just absorbed **200 requests in 0.2 seconds** — double the rate you thought you'd guaranteed, delivered as a spike, at a boundary that every client's cron job is aligned to.
+```trace
+  limit: 100 requests per minute, fixed window
+  11:59:59.9  client sends 100   11:59 window  100/100  ++ok++
+  12:00:00.0  new window: counter resets to 0
+  12:00:00.1  client sends 100   12:00 window  100/100  ++ok++
 
-</Note>
+**verdict:** ~~200 requests in 0.2 s~~, double the limit
+```
 
-**Sliding window log.** Store a timestamp for every request; on each new one, discard entries older than the window and count what's left. Exactly correct, no boundary artefact. The cost is memory proportional to the limit times the number of keys: at 100 requests per key and 8 bytes per timestamp, ten million active keys is roughly **8 GB** — for a limiter.
+Both windows stayed within the limit, and the server absorbed **200 requests in 0.2 seconds**: double the rate you thought you'd guaranteed, delivered as a spike. And it happens exactly at the boundary every client's cron job is aligned to.
 
-**Sliding window counter.** The pragmatic compromise. Keep the current window's count and the previous window's, and estimate by weighting the previous one by how much of it still overlaps. Fifteen seconds into a 60-second window, with 80 requests in the previous window and 30 so far in this one: `80 × 0.75 + 30 = 90`.
+### Sliding log: exact, and memory-hungry
 
-Two integers per key — roughly **160 MB** for the same ten million keys — and the boundary burst is gone. It's an approximation that assumes the previous window's traffic was evenly spread, which is wrong and almost never matters.
+Store a timestamp for every request. On each new one, throw away timestamps older than a minute and count what's left. This **sliding log** is exactly correct, with no boundary hole.
 
-**Token bucket.** A bucket of capacity C refills at R tokens per second; each request takes one; empty bucket means rejection. Store two numbers — token count and last-refill timestamp — and compute the refill lazily on read, so there's no background job.
+The cost is memory: one timestamp per request per caller. At 100 requests per caller and 8 bytes per timestamp, ten million active callers is roughly **8 GB**, just for a limiter.
 
-Its defining property is that it *permits controlled bursts*: with C = 100 and R = 10/s, a client idle for a minute can fire 100 requests immediately and then settle to 10/s. That's usually what you want, because real clients are bursty and a limiter that punishes bursts punishes normal behaviour.
+### Sliding window counter: two numbers and a weighted guess
 
-**Leaky bucket.** Requests queue and drain at a fixed rate. Output is perfectly smooth — which is its purpose, when the thing you're protecting cannot tolerate spikes at all — at the cost of added latency and a queue that can itself become a problem. This is load-levelling, the same shape as a queue in front of a slow consumer; [Message Queues & Async](/guides/message-queues/) covers when smoothing beats rejecting.
+Keep only two counts per caller: this minute's and last minute's. Then estimate how many requests fall in the last 60 seconds by assuming last minute's requests were spread evenly. This is the **sliding window counter**, the pragmatic compromise.
+
+Worked example: you're 15 seconds into the current minute, so the last 60 seconds still include 45 seconds, or 75%, of the previous minute. The previous minute had 80 requests; this one has 30 so far.
+
+$$
+80 \times 0.75 + 30 = 90
+$$
+
+With a limit of 100, the next request is allowed. That's two integers per caller, roughly **160 MB** for the same ten million callers, and the boundary burst is gone. The "evenly spread" assumption is wrong, and it almost never matters.
+
+### Token bucket: save up for a burst
+
+Picture a bucket that holds up to C tokens and refills at R tokens per second. Each request takes one token; an empty bucket means rejection. This is a **token bucket**.
+
+You only store two numbers: the token count and when you last refilled. There's no background job topping buckets up. When a request arrives, you work out how many tokens have dripped in since last time, add them, then spend one. Here are five requests against a small bucket, capacity 3, refilling 1 token per second:
+
+```trace
+  capacity 3, refill 1 token/s, bucket starts full
+  t=0.0 s  request 1   3 → 2 tokens        ++allowed++
+  t=0.0 s  request 2   2 → 1               ++allowed++
+  t=0.0 s  request 3   1 → 0               ++allowed++
+  t=0.0 s  request 4   0 left              ~~rejected: 429~~
+  t=1.0 s  request 5   +1 dripped in → 0   ++allowed++
+```
+
+Its defining property is that it *allows controlled bursts*. With C = 100 and R = 10 per second, a client idle for a minute can fire 100 requests at once, then settle to 10 per second. That's usually what you want: real clients are bursty, and a limiter that punishes bursts punishes normal behaviour.
+
+### Leaky bucket: a queue that drains at a fixed pace
+
+Requests join a queue that drains at a fixed rate, like water leaking from a hole in a bucket. Output is perfectly smooth, which is the point when the thing you're protecting can't tolerate spikes at all. The cost is added latency, and a queue that can itself become a problem.
+
+This is a **leaky bucket**: load-levelling, the same shape as a queue in front of a slow consumer. [Message Queues & Async](/guides/message-queues/) covers when smoothing beats rejecting.
+
+### The five side by side
 
 <Table>
 
-| Algorithm | State per key | Bursts | Boundary bug | Use when |
-| --------- | ------------- | ------ | ------------ | -------- |
-| Fixed window | 1 integer | Uncontrolled at edges | Yes, 2× | Rough quotas, low stakes |
-| Sliding log | N timestamps | Exact | No | Small key space, strict correctness |
-| Sliding counter | 2 integers | Smooth | No | The sane default at scale |
-| Token bucket | 2 numbers | Deliberate, bounded | No | Public APIs with bursty clients |
-| Leaky bucket | Queue | None by design | No | Protecting something spike-intolerant |
+| Algorithm | In plain words | State per caller | Bursts | Boundary bug | Use when |
+| --------- | -------------- | ---------------- | ------ | ------------ | -------- |
+| Fixed window | Count per calendar minute | 1 integer | Uncontrolled at edges | Yes, 2× | Rough quotas, low stakes |
+| Sliding log | Remember every request time | N timestamps | Exact | No | Few callers, strict correctness |
+| Sliding counter | Two minutes' counts, weighted | 2 integers | Smooth | No | The sane default at scale |
+| Token bucket | Tokens drip in; each request spends one | 2 numbers | Deliberate, bounded | No | Public APIs with bursty clients |
+| Leaky bucket | Queue drained at a fixed rate | Queue | None by design | No | Protecting something spike-intolerant |
 
 </Table>
 
@@ -128,23 +174,54 @@ Build this mini-project to implement custom token-bucket limits via shared cache
 
 </Collapse>
 
-<Collapse id="distributed" title="3. Rate limiting when there are twenty of you">
+<Collapse id="distributed" title="3. One limit, twenty gateways">
 
-Everything above assumes one counter. You have twenty gateway instances behind a load balancer, and the counter is now shared state — which makes this a distributed systems problem wearing an infrastructure problem's clothes.
+Everything above assumes one counter. In production you have twenty gateway instances behind a load balancer, and a customer's requests land on all of them. The counter is now shared state, which makes this a distributed-systems problem dressed as an infrastructure one.
 
-**Option one: divide the limit.** Twenty instances, limit 1000/min, so each allows 50. No coordination, no latency. It's also wrong in both directions: a client whose connections land unevenly gets throttled at well under 1000, and during a deploy the instance count changes and every effective limit silently moves with it. Fine for crude abuse prevention, unacceptable for a documented quota a customer is paying for.
+### Option one: split the limit twenty ways
 
-**Option two: a shared counter.** Redis, one atomic increment-and-check per request, executed as a script so the read and write cannot interleave. Accurate and simple, and the cost is a network round trip on every single request. At 50,000 requests per second with a 1 ms round trip, Little's Law says you're holding about 50 requests in flight waiting on the limiter continuously — plus you have created a hard dependency in front of your entire API.
+The limit is 1,000 per minute, so each of the twenty instances allows 50. No coordination, no added latency.
+
+It's also wrong in both directions. A client whose connections land unevenly gets throttled well under 1,000. And during a deploy the number of instances changes, so every effective limit silently moves with it. Fine for crude abuse prevention; unacceptable for a documented quota a customer pays for.
+
+### Option two: one shared counter, updated atomically
+
+Keep the counter in Redis and have every instance check it on every request. The obvious code reads the count, checks it, then writes it back. Two instances handling the same customer at the same moment break it:
+
+<Race a="Gateway instance A" b="Gateway instance B" result="Result: 1,001 requests allowed against a limit of 1,000" steps={[
+  { a: "Reads the customer's count: 999" },
+  { b: "Reads the customer's count: 999" },
+  { a: "999 is under 1,000: allows it, writes 1,000", tone: "good" },
+  { b: "999 is under 1,000: allows it, writes 1,000", tone: "bad" }
+]} />
+
+The fix is to make check-and-increment one step that nothing can interleave with. Redis runs a script from start to finish before handling any other command, so you do the read, the check and the write inside one script. That's exactly what the Lua script in the lab does.
+
+That makes the shared counter accurate and simple. The cost is a network round trip on every request. At 50,000 requests per second with a 1 ms round trip, you have about 50 requests sitting in flight waiting on the limiter at any moment. (That's **Little's Law**: requests in flight = arrival rate × time each one waits.) And you've put a hard dependency in front of your entire API.
 
 <Note type="warn" label="The limiter is now a single point of failure — decide in advance">
 
-Redis goes down. Do you **fail open** (serve everything unlimited, and hope the thing you were protecting survives) or **fail closed** (reject everything, and turn a limiter outage into a total outage)? Fail open is the usual answer for protection-oriented limits and the wrong one for limits enforcing paid quotas or preventing abuse. Whichever you choose, choose it deliberately and alert on it, because a limiter that has been silently failing open for three weeks is indistinguishable from one that is working right up until the day it isn't.
+Redis goes down. Do you **fail open** (let everything through unlimited) or **fail closed** (reject everything, turning a limiter outage into a total outage)? It depends on what the limit is for.
+
+A limit enforcing a paid quota can usually fail open: briefly letting someone exceed their plan costs far less than rejecting paying customers. A limit protecting a fragile downstream, or stopping abuse, shouldn't simply fail open, because that drops the protection exactly when you've already lost a component. Fall back to a conservative local limit instead.
+
+Whichever you choose, choose it deliberately and alert on it. A limiter that has been silently failing open for three weeks looks exactly like one that's working, right up until the day it matters.
 
 </Note>
 
-**Option three: local buckets with async reconciliation.** Each instance keeps a local token bucket and periodically syncs its consumption to a shared store, adjusting its local allowance based on what the fleet has spent. Approximate, briefly over-permissive after a burst, and requires no round trip on the hot path.
+### Option three: local buckets that sync in the background
 
-This is broadly the shape large providers converge on, because the alternative — perfect accuracy — costs a synchronous coordination step per request and is rarely worth it. If the limit genuinely must be exact, you are asking for consensus, and [Coordination & Consensus](/guides/coordination-consensus/) explains what that costs.
+Each instance keeps its own token bucket and, every so often, reports what it has spent to a shared store. It gets back the fleet's total and adjusts its own allowance. No request ever waits on a network call.
+
+It's approximate, and briefly too generous after a burst. This is broadly the shape large providers converge on, because perfect accuracy costs a synchronous coordination step on every request and is rarely worth it. If the limit genuinely must be exact, you're asking for consensus, and [Coordination & Consensus](/guides/coordination-consensus/) explains what that costs.
+
+<Note type="key" label="What to remember">
+
+- A gateway handles the jobs every service shares, in under a couple of milliseconds; business logic in it grows into a bottleneck everyone depends on.
+- Fixed windows let through double the limit at a boundary; token buckets and sliding-window counters don't.
+- A shared counter must check and increment in one atomic step, costs a round trip, and needs a decided fail-open or fail-closed behaviour.
+
+</Note>
 
 </Collapse>
 
@@ -152,29 +229,29 @@ This is broadly the shape large providers converge on, because the alternative �
 
 <Quiz q="Your limit is 100 requests per minute, fixed window. A client legitimately gets 200 through in under a second. How?" options={["The limiter counts per instance, and the client reached two instances", "The counter increment isn't atomic, so concurrent requests overwrote each other", "They straddled a window boundary: 100 just before the reset and 100 just after"]} answer={2}>
 
-They straddled a window boundary — 100 requests at 11:59:59 and 100 more at 12:00:00, each within its own window, both counters satisfied. The effective peak rate of a fixed-window limiter is twice its nominal rate over any interval spanning a reset, which matters because boundaries are exactly where bursts cluster: every cron job in the world starts on a round minute.
+They straddled a window boundary: 100 requests at 11:59:59 and 100 more at 12:00:00, each inside its own window, so both counters were satisfied. Over any stretch that spans a reset, a fixed window lets through up to twice its limit. That matters because bursts cluster at boundaries: cron jobs everywhere start on the round minute.
 
-A sliding-window counter fixes it by weighting the previous window's count by how much of it still overlaps the current instant, at a cost of one extra integer per key, and a token bucket avoids it entirely by making the allowance continuous rather than resetting. If your fixed-window limiter appears to be holding but the thing behind it keeps getting spiky load, this is the first place to look.
+A sliding-window counter fixes it by weighting last minute's count by how much of it still overlaps the last 60 seconds, at the cost of one extra integer per caller. A token bucket avoids it entirely because its allowance refills continuously instead of resetting. If your fixed-window limiter seems to hold but the service behind it keeps getting spikes, look here first.
 
 </Quiz>
 
 <Quiz q="Your rate limiter's Redis goes down. Fail open or fail closed?" options={["Always fail open, so a limiter outage never becomes an API outage", "It depends on what the limit is for, so decide per limit and alert when you enter the fallback", "Always fail closed, because an unprotected API is worse than an unavailable one"]} answer={1}>
 
-It depends entirely on what the limit is *for*, which is why this must be decided per limit rather than globally. A limit protecting a fragile downstream from overload should probably fail closed or degrade to a conservative local limit, because failing open removes the protection precisely when you have already lost a component and are least able to absorb a surge.
+It depends on what the limit is *for*, so decide per limit, not globally. A limit protecting a fragile downstream from overload should fail closed or drop to a conservative local limit. Failing open removes the protection exactly when you've already lost a component and can least absorb a surge.
 
-A limit enforcing a paid quota should usually fail open, because turning a limiter outage into a billing-enforcement outage that rejects paying customers is a much worse commercial outcome than briefly letting someone exceed their plan.
+A limit enforcing a paid quota should usually fail open. Rejecting paying customers because the limiter is down is a much worse outcome than briefly letting someone exceed their plan.
 
-The middle path most large systems take is to fall back to a per-instance local bucket sized at the fleet limit divided by the instance count — approximate, unfair at the margins, but bounded — and to alert loudly on entering that state, because the genuinely dangerous case is a limiter that has been silently failing open for weeks.
+The middle path most large systems take: fall back to a local bucket on each instance, sized at the fleet limit divided by the number of instances. It's approximate and unfair at the margins, but bounded. Alert loudly on entering that state, because the dangerous case is a limiter that has been silently failing open for weeks.
 
 </Quiz>
 
 <Quiz q="Twenty gateway instances, a documented limit of 1,000 requests/minute per customer. How do you enforce it without adding a Redis round trip to every request?" options={["Local token buckets that sync their consumption to a shared store off the hot path, accepting a bounded error", "Give each instance a fixed 50 per minute and never coordinate", "Use sticky sessions so each customer always lands on the same instance"]} answer={0}>
 
-You accept approximation and push the coordination off the hot path. Each instance keeps a local token bucket and reports its consumption to a shared store every few hundred milliseconds, receiving back the fleet's total spend and adjusting its local allowance accordingly — so an instance seeing heavy traffic from one customer learns within a fraction of a second that the fleet-wide budget is nearly gone and tightens up, without ever blocking a request on a network call.
+Accept approximation and move the coordination off the request path. Each instance keeps a local token bucket and reports its spending to a shared store every few hundred milliseconds, getting back the fleet's total. An instance seeing heavy traffic from one customer learns within a fraction of a second that the fleet-wide budget is nearly gone, and tightens up, without ever making a request wait on a network call.
 
-The error is bounded by what the fleet can consume in one sync interval, which you can make as small as your tolerance requires, and it degrades gracefully because an instance that loses contact with the shared store simply falls back to its local share.
+The error is limited to what the fleet can spend in one sync interval, which you can shrink as far as you need. If an instance loses contact with the shared store, it falls back to its local share.
 
-The alternative worth considering first is whether the limit needs to be exact at all: if it exists to protect infrastructure, approximate is fine and much cheaper, and it's only when the number is a contractual commitment that anyone is going to audit that precision starts earning its cost.
+First, though, ask whether the limit needs to be exact at all. If it exists to protect infrastructure, approximate is fine and much cheaper. Precision only earns its cost when the number is a contractual commitment someone will audit.
 
 </Quiz>
 

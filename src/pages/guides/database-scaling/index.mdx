@@ -16,7 +16,7 @@ sections:
   - id: "why"
     title: "Why the database breaks first"
   - id: "diagnose"
-    title: "Diagnose: read, write or contention?"
+    title: "Find out what kind of slow it is"
 ---
 
 import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
@@ -24,61 +24,58 @@ import DiagramDatabaseScaling3 from '../../../components/diagrams/DiagramDatabas
 
 <ColdOpen tag="◇ 09:14 · the query that was fine last quarter">
 
-Nobody changed the code. A single `SELECT` against the orders table has shipped untouched for eighteen months — at 100,000 rows it returned in 3 ms and nobody ever looked at it again. The table is now 40 million rows, the index that would have saved it was never created, and this morning that query takes six seconds, scanning the whole table and holding a database connection for every one of them.
+Nobody changed the code. One `SELECT` on the orders table has shipped untouched for eighteen months. At 100,000 rows it answered in 3 ms, so nobody ever looked at it again. The table now holds 40 million rows, the index that would have kept it fast was never created, and this morning the query takes six seconds: it reads the whole table, and holds a database connection for every one of those seconds.
 
-At 30 requests a second, six seconds each, you need 180 connections in flight against a pool of 100. The pool empties. And now the login page is timing out, and the health check is timing out, and the settings endpoint that has never in its life touched the orders table is timing out — because they are all queued behind a connection that isn't coming back. The CPU graph looks almost calm; the box is just waiting on disk. It is not a capacity problem. It is one missing index, and it took the whole product down.
+The app shares a pool of 100 connections. At 30 requests a second, each holding one for six seconds, it needs 180. The pool runs dry. Now the login page times out, the health check times out, and the settings page, which has never touched the orders table, times out too, because they are all waiting for a connection that isn't coming back. The CPU graph looks almost calm: the server isn't working hard, it's waiting on disk. It is not a capacity problem. It is one missing index, and it took the whole product down.
 
 </ColdOpen>
 
 <Collapse id="why" title="1. Why the database breaks first">
 
-You can add app servers behind a [load balancer](/guides/load-balancing/) almost endlessly — they're stateless and interchangeable. The database is different: it holds *state*, and there's usually one authoritative copy that every write must go through. That makes it the natural bottleneck, and it's why the cold open above is the most common outage shape in a growing product.
+### Why more app servers didn't help
 
-Three pressures build up, and each needs a different fix:
+Your app is slow at peak, so you add two more app servers behind the [load balancer](/guides/load-balancing/). Nothing gets faster.
 
-- **Read pressure** — too many queries reading data. Usually the *easier* problem: you can serve reads from caches and copies.
-- **Write pressure** — too many inserts and updates, or simply too much data to fit and index on one machine. The *harder* problem, because every write contends for the one source of truth.
-- **Contention** — not too much work, but too many requests fighting over the *same rows*. It looks like slowness and it's often also a correctness bug: two requests that both "won" the last seat.
+App servers are easy to add because they're interchangeable: they keep nothing between requests, so any server can handle any request. The database is different. It holds the data itself, the **state**, and there's usually one authoritative copy that every write must go through. More app servers just means more requests queuing at the same database. That's why it's the natural bottleneck, and why the cold open above is the most common outage in a growing product.
 
-This guide climbs a ladder in four parts. Each part answers one question, and each costs more than the one before, so you stop at the first part that solves your problem:
+### Three different kinds of "too much"
 
-1. **[Make one box fast](/guides/database-scaling/fast/)** — is every query doing the least work it can?
-2. **[Keep it correct under load](/guides/database-scaling/correct/)** — do concurrent requests and deploys leave the data right?
-3. **[Take load off it](/guides/database-scaling/offload/)** — can reads be answered without touching the primary?
-4. **[Split it](/guides/database-scaling/split/)** — for when one machine can't hold the data or absorb the writes.
+When a database struggles, it's one of three things, and each needs a different fix:
+
+- **Too many reads.** Lots of queries fetching data. Usually the *easier* problem, because the same answer can be served from a cache or a copy of the database.
+- **Too many writes.** Lots of inserts and updates, or simply more data than one machine can store and index. The *harder* problem, because every write has to reach the one authoritative copy.
+- **Too many requests fighting over the same rows.** Not much work in total, but many requests want the same rows at once and have to wait their turn. This is called **contention**. It looks like slowness, and it's often a correctness bug as well: two requests that both "won" the last seat.
+
+### The ladder: climb only as far as you need
+
+This guide is a ladder in four parts. Each part answers one question, and each costs more than the one before, so stop at the first one that solves your problem:
+
+1. **[Make one box fast](/guides/database-scaling/fast/)**: is every query doing the least work it can?
+2. **[Keep it correct under load](/guides/database-scaling/correct/)**: do simultaneous requests and deploys leave the data right?
+3. **[Take load off it](/guides/database-scaling/offload/)**: can reads be answered without touching the main database?
+4. **[Split it](/guides/database-scaling/split/)**: for when one machine can't hold the data or keep up with the writes.
 
 The [recap](/guides/database-scaling/recap/) puts the whole ladder on one page, with the numbers worth remembering.
 
-Part 2 isn't a rung — it applies at every rung — but it comes early because it's where production databases actually lose data or go dark.
+Part 2 isn't really a rung, because it applies at every rung. It comes early because it's where production databases actually lose data or go dark.
 
 <DiagramDatabaseScaling3 />
 
 <Note type="key" label="The golden rule of scaling">
 
-Every rung up this ladder adds complexity and new failure modes. So climb it **only as far as your load actually forces you to** — and no further. Most applications never need sharding. Diagnose first; the diagnosis decides which rung you need.
+Every rung up this ladder adds complexity and new ways to fail. So climb **only as far as your load actually forces you to**, and no further. Most applications never need sharding. Diagnose first; the diagnosis decides which rung you need.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="diagnose" title="2. Diagnose first: read-bound, write-bound, or contention?">
+<Collapse id="diagnose" title="2. Find out what kind of slow it is">
 
-"The database is slow" is not a diagnosis, and the three pressures send you to completely different rungs. The wrong answer is expensive in a specific way: if you're write-bound and you add read replicas, you haven't just failed to help — you've added machines that each replay *every single write*, plus a replication stream to monitor and a new failure mode. You made it worse and paid for the privilege.
+"The database is slow," says the alert. One teammate wants read replicas, another a bigger server, a third has been waiting years to shard. Only one of them is right, and the wrong ones can make things worse.
 
-Here's the triage at a glance, then how to collect each signal.
+Suppose the real problem is too many writes, and you add read replicas: read-only copies of the database that Part 3 covers. Every replica has to replay *every single write* the main database does. You've added machines that repeat the exact work that was already too much, plus a copy stream to monitor and a new way to fail. Slower, and you paid for the privilege.
 
-<Table>
-
-| If you see… | It means | Go to |
-| :--- | :--- | :--- |
-| `SELECT` p99 climbing, `INSERT` p99 flat | Read-bound | Indexes → cache → read replicas |
-| Rows examined per row returned above 100 | A query is scanning, not seeking | Add an index or rewrite the query. Do not buy hardware |
-| Buffer cache hit ratio falling below 99% | Working set outgrew RAM | Scale up (more RAM) |
-| Replication lag climbing under write bursts | Write-volume bound | Batching → scale up → partition → shard |
-| Lock wait time climbing | Contention on hot rows | Shorten transactions, fix the access pattern ([Part 2](/guides/database-scaling/correct/#transactions)) |
-| Database calm, application slow | The bottleneck is in front of the database | Pool sizing, N+1 queries, missing timeouts |
-
-</Table>
+So measure before you choose. The database already keeps counters that tell the three pressures apart.
 
 ### Collecting the signals
 
@@ -97,7 +94,7 @@ Every signal comes from counters the database already keeps. Here is where to fi
 
 </Table>
 
-**The read/write mix.** These counters run from the last restart, so take two samples an hour apart and use the change, Δ:
+**The read/write mix.** How many rows are read for every row written. These counters count up from the last restart, so take two samples an hour apart and use the change between them, written Δ:
 
 $$
 \text{read : write} \;=\; \frac{\Delta\,\text{rows read}}{\Delta\,\text{rows inserted} + \Delta\,\text{rows updated} + \Delta\,\text{rows deleted}}
@@ -105,14 +102,14 @@ $$
 
 A read-heavy web app sits in the hundreds or thousands to one; the trace below shows 1,000 : 1.
 
-**Which p99 moved.** This one settles arguments. Split latency by statement type and look at what degraded *when the trouble started*, not what's slowest overall — on a healthy system writes are often slower than reads. Order `pg_stat_statements` by `total_exec_time`, not `mean_exec_time`: the query that costs you most is usually a fast one run absurdly often.
+**Which p99 moved.** p99 is the time that 99% of queries finish within: the slow tail your unluckiest users feel. This signal settles arguments. Split it by statement type and look at what got worse *when the trouble started*, not at what's slowest overall, because on a healthy system writes are often slower than reads. Order `pg_stat_statements` by `total_exec_time`, not `mean_exec_time`: the query that costs you most is usually a fast one run absurdly often.
 
-**Replication lag vs. lock waits.** Near-perfect discriminators:
+**Replication lag vs. lock waits.** Replication lag is how far a read-only copy has fallen behind the main database. A lock wait is a request standing still because another request is holding the row it needs. These two tell the problems apart almost perfectly:
 
-- *Lag rising* — the primary writes log faster than the replicas can apply it. A write-volume problem by definition.
-- *Lock waits rising* — requests are fighting over the same rows. Usually fixed by shortening transactions, not by buying hardware.
+- *Lag rising*: the main database is producing changes faster than its copies can apply them. That's a write-volume problem by definition.
+- *Lock waits rising*: requests are fighting over the same rows. Usually fixed by making transactions shorter, not by buying hardware.
 
-**Buffer cache hit ratio.**
+**Buffer cache hit ratio.** The database keeps recently used pieces of each table in memory, its buffer cache. The hit ratio is the share of reads answered from that memory instead of from disk:
 
 $$
 \begin{aligned}
@@ -121,7 +118,7 @@ $$
 \end{aligned}
 $$
 
-Above about 99% is healthy for OLTP. When it falls, reads that were memory hits have become disk reads, and more RAM fixes it at once. Postgres counts an OS page-cache hit as a miss, so watch the trend rather than the value.
+Above about 99% is healthy for a typical web-app workload (OLTP: many small reads and writes). When it falls, the data your queries touch most no longer fits in memory, reads that were memory hits have become disk reads, and more RAM fixes it at once. Postgres counts a read served from the operating system's own file cache as a miss, so watch the trend rather than the exact value.
 
 **Rows examined per row returned.** The single most diagnostic number in this guide:
 
@@ -135,6 +132,25 @@ $$
 $$
 
 Above 100, the database is doing a hundred times more work than the answer needs. The fix is an index or a rewritten query, not a bigger machine.
+
+### Putting the signals together
+
+Once you've read the signals, the diagnosis is a lookup:
+
+<Table>
+
+| If you see… | It means | Go to |
+| :--- | :--- | :--- |
+| `SELECT` p99 climbing, `INSERT` p99 flat | Too many reads, or reads doing too much work | Indexes → cache → read replicas |
+| Rows examined per row returned above 100 | A query is reading the whole table instead of jumping to the rows it needs | Add an index or rewrite the query. Do not buy hardware |
+| Buffer cache hit ratio falling below 99% | The data you use most no longer fits in memory | Scale up (more RAM) |
+| Replication lag climbing under write bursts | Too many writes | Batching → scale up → partition → shard |
+| Lock wait time climbing | Requests fighting over the same rows | Shorten transactions, fix the access pattern ([Part 2](/guides/database-scaling/correct/#transactions)) |
+| Database calm, application slow | The bottleneck is in front of the database | Pool sizing, N+1 queries, missing timeouts |
+
+</Table>
+
+Here is the cold open, seen through those counters:
 
 ```trace
 **$ triage — pg_stat_database delta, 09:00 → 10:00**
@@ -154,6 +170,6 @@ Above 100, the database is doing a hundred times more work than the answer needs
 **verdict: READ-BOUND** → index the query, then cache, then replicas
 ```
 
-That is the cold open's trace. [Part 1](/guides/database-scaling/fast/) fixes it in one line.
+Reads got slow, writes didn't, and each read examines thousands of rows to return one. That's a missing index, not a capacity problem. [Part 1](/guides/database-scaling/fast/) fixes it in one line.
 
 </Collapse>

@@ -6,54 +6,69 @@ chapter: "7"
 current: "7. Observability"
 sections:
   - id: "incident"
-    title: "One incident, three signals"
+    title: "One incident, solved with three signals"
   - id: "gotchas"
-    title: "The gotchas that actually bite"
+    title: "Eight ways your instruments mislead you"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { Collapse, Layer, Note, Quiz, Reading, Stack } from '../../../components';
 
-<Collapse id="incident" title="1. One incident, three signals">
+<Collapse id="incident" title="1. One incident, solved with three signals">
 
-Here is the whole toolkit used the way it's meant to be used — the [cold open](/guides/observability/) that starts this guide, worked through properly.
+Go back to the [cold open](/guides/observability/) that starts this guide: checkout is broken, every dashboard is green, and the team loses forty minutes. Here's the same incident again, with the whole toolkit used the way it's meant to be used. Each step uses the signal that's cheap for that job.
 
-**The page.** Not "CPU high." The symptom alert fires: checkout success rate has fallen below the SLO threshold and the one-hour burn rate is 20×. Something a customer would notice is happening now.
+<Stack>
+  <Layer idx="1" title="The page" speed="seconds">Not "CPU high". The symptom alert fires: checkout success rate has fallen below the SLO threshold, and the one-hour burn rate is 20×. Something a customer would notice is happening now.</Layer>
+  <Layer idx="2" title="Metrics: draw a box around it" speed="~90 seconds">Request rate normal. Error rate 0.02%, unchanged, so requests aren't failing. p50 latency flat at 20 ms, but p99 up from 240 ms to 2.4 seconds. Slice the p99 by region: all regions. By instance: all instances. By endpoint: only checkout.</Layer>
+  <Layer idx="3" title="Traces: find where" speed="minutes">Pull the slow traces; tail sampling kept them all. Every one has the same shape: `pricing.quote` holding 2.3 seconds, and `fx.rates` inside it burning 2.27 of those across three attempts, two of which timed out.</Layer>
+  <Layer idx="4" title="Logs: find why" speed="minutes">Filter the currency service's structured logs by trace ID. Every timed-out call has `upstream: "fx-provider-eu"` and a connect time of exactly the 750 ms timeout. Group by `deploy_version`: it began at 09:02, when the service picked up a config change that moved its provider endpoint to an address that now resolves to a different continent.</Layer>
+</Stack>
 
-**Metrics, to bound the problem.** Request rate: normal. Error rate: 0.02%, unchanged — so requests are not failing. Latency: p50 flat at 20 ms, p99 up from 240 ms to 2.4 seconds. That combination is the signature of a *tail* problem, not a broken system. Slice the p99 by region: all regions. By instance: all instances. By endpoint: only checkout. Four queries have eliminated most of the hypothesis space — it isn't a bad host, it isn't a bad region, it's something specific to one path.
+### What each step ruled out
 
-**Traces, to locate it.** Pull the slow traces (tail sampling kept them all, which is the entire justification for tail sampling). Every one shows the same shape as the trace in [Part 2](/guides/observability/logs-traces/#traces): `pricing.quote` holding 2.3 seconds, `fx.rates` inside it burning 2.27 of those across three attempts, two of which timed out. You now know where. You do not yet know why.
+Step 2 is worth slowing down on. A flat p50 with a p99 up tenfold means most requests are fine and a minority are very slow: a problem in the **tail** of the distribution, not a broken system. Four slices then ruled out a bad host and a bad region and left one path, checkout. No code was read and nothing was redeployed.
 
-**Logs, to explain it.** Filter the currency service's structured logs by the trace ID. Every timed-out call has `upstream: "fx-provider-eu"` and a connect duration at exactly the 750 ms timeout. Group by `deploy_version`: this began at 09:02, which is when the currency service picked up a config change that moved its provider endpoint from a regional address to one that now resolves to a different continent. The physics did the rest.
+Step 3 answered *where* (the [trace in Part 2](/guides/observability/logs-traces/#traces) is this incident), but not *why*. Step 4 supplied the why: a new endpoint on another continent made every connection slower than the timeout, and physics did the rest.
 
 <Note type="key" label="The shape to internalise">
 
-Metrics *bounded* the problem in about ninety seconds. Traces *located* it. Logs *explained* it. Each signal did the job it is cheap at, and no signal was asked to do a job it is bad at. The forty minutes lost in the cold open were spent asking metrics a question only traces could answer.
+Metrics *bounded* the problem in about ninety seconds. Traces *located* it. Logs *explained* it. Each signal did the job it's cheap at, and none was asked to do a job it's bad at. The forty minutes in the cold open were spent asking metrics a question only traces could answer.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="gotchas" title="2. The gotchas that actually bite">
+<Collapse id="gotchas" title="2. Eight ways your instruments mislead you">
 
-**Missing data is not zero.** When a service dies, it stops reporting. A graph of its error rate goes flat, not up. An alert on "errors > threshold" will never fire, because there are no errors — there is nothing at all. Alert on absence explicitly, and give your alerting pipeline a heartbeat: a rule that fires if it hasn't heard from itself recently. A monitoring system that goes down silently is worse than none, because you're still trusting it.
+Each of these looks like the system telling you something. Each is actually the instruments telling you something about themselves.
 
-**Your scrape interval is your resolution limit.** A 15-second scrape cannot see a 3-second spike. Queue depth, connection pool exhaustion and GC pauses all operate below that resolution. If a gauge is flat while users are timing out, suspect the sampling rate before you suspect the users.
+**Missing data looks like zero.** A service dies and stops reporting. Its error-rate graph goes flat, not up, so an alert on "errors above a threshold" never fires: there are no errors, there's nothing at all. Alert on absence explicitly, and give your alerting a **heartbeat**, a rule that fires if it hasn't heard from itself recently. A monitoring system that goes down silently is worse than none, because you still trust it.
 
-**Fast failures make latency graphs improve.** If a bug turns 30% of traffic into instant 500s, your p99 gets better. Always split latency by outcome, or your headline graph will actively mislead you during the exact incident it exists for.
+**Your scrape interval is your resolution limit.** A gauge read every 15 seconds can't see a 3-second spike. Queue depth, connection-pool exhaustion and garbage-collection pauses all happen faster than that. If a gauge is flat while users time out, suspect the reading interval before you suspect the users.
 
-**Dashboards with auto-scaled y-axes.** Every graph looks dramatic when the axis fits the data. A 0.3% wobble rendered full-height reads as a catastrophe; a real doubling on a fixed axis reads correctly. Pin the axis to something meaningful, and put the SLO threshold on the graph as a line so the eye has a reference.
+**Fast failures make latency graphs improve.** If a bug turns 30% of traffic into instant 500 errors, your p99 gets *better*, because instant errors are the fastest requests you have. Always split latency by outcome, or your main graph will mislead you during the exact incident it exists for.
 
-**Clock skew makes traces impossible.** Spans carry timestamps from the hosts that produced them. A host 400 ms out of sync produces a child span that appears to start before its parent, and a waterfall that no amount of staring will make sensible. Run NTP and monitor the offset — it's a two-line metric that will one day save you a day.
+**Auto-scaled y-axes make everything dramatic.** When the axis stretches to fit the data, a 0.3% wobble fills the panel and reads as a catastrophe. On a fixed axis, a real doubling reads correctly. Pin the axis to something meaningful, and draw the SLO threshold as a line so the eye has a reference.
 
-**Averaged percentiles, one more time.** If a dashboard panel says `avg(p99)`, it is displaying a number that corresponds to no property of your system. Aggregate the histogram buckets, then compute the percentile once.
+**Clock skew scrambles traces.** Each span carries a timestamp from the machine that produced it. If one machine's clock is 400 ms off, its child span appears to start before its parent, and the waterfall stops making sense. Keep clocks synced with **NTP** (the standard clock-sync protocol) and graph each machine's offset; it's a two-line metric that will one day save you a day.
 
-**Logs contain what you put in them, including the things you shouldn't.** Email addresses, tokens, full request bodies with card details. Logs are usually the least access-controlled datastore in the company and the most widely replicated. Redact at the emitting library, not in a downstream pipeline, because the pipeline will be bypassed by someone debugging at some point.
+**Averaged percentiles, one more time.** A panel showing `avg(p99)` displays a number that matches no property of your system. Add the histogram buckets together, then compute the percentile once.
 
-**Instrumenting only the paths you own.** A request that never reached your service produces no telemetry in your service. TLS handshake failures, DNS problems, gateway 502s and client-side errors are all invisible from the inside. If your SLI is computed from application logs, it structurally cannot count the requests that never arrived — and those are exactly the ones customers complain about.
+**Logs hold whatever you put in them, including what you shouldn't.** Email addresses, tokens, full request bodies with card details. Logs are usually the least access-controlled data store in the company and the most widely copied. Redact in the logging library where the line is written, not in a pipeline downstream, because someone debugging will bypass the pipeline eventually.
+
+**You only see the paths you own.** A request that never reached your service produces no telemetry in it. Failed TLS handshakes, DNS problems, gateway 502 errors and client-side errors are all invisible from the inside. An SLI computed from your application logs can't count the requests that never arrived, and those are exactly the ones customers complain about.
+
+<Note type="key" label="What to remember">
+
+- Use metrics to narrow the problem down, traces to find where, logs to explain why.
+- Flat can mean "fine" or "no data"; alert on missing data explicitly.
+- Split latency by outcome, and measure as close to the user as you can.
+
+</Note>
 
 </Collapse>
 
@@ -61,9 +76,17 @@ Metrics *bounded* the problem in about ninety seconds. Traces *located* it. Logs
 
 <Quiz q="During an incident your p99 latency graph improved. What's the most likely explanation?" options={["The incident shed load, so the remaining requests had spare capacity", "Autoscaling added instances faster than traffic grew", "Something started failing fast, and the quick errors pulled the latency distribution down"]} answer={2}>
 
-Something started failing fast. A dependency that returns a connection-refused in two milliseconds is far quicker than one that does real work, so a bug converting a third of your traffic into immediate 500s will pull the whole latency distribution down and make the graph look better than it did yesterday.
+Something started failing fast. A dependency that refuses a connection in two milliseconds is far quicker than one doing real work. A bug that turns a third of your traffic into immediate 500 errors pulls the whole distribution down, and the graph looks better than yesterday.
 
-The same effect shows up when a circuit breaker opens — that's the breaker working correctly, but it means latency alone can no longer tell you anything about health. The fix is to split every latency metric by outcome and to make the primary panel show successful requests only, with error rate directly beside it. A latency graph that mixes successes and failures is measuring two different populations and reporting their blend as though it were one number.
+The same happens when a circuit breaker opens: the breaker is working correctly, but latency alone can no longer tell you about health. Split every latency metric by outcome, make the main panel show successful requests only, and put the error rate right beside it. A graph that mixes successes and failures blends two different populations into one misleading number.
+
+</Quiz>
+
+<Quiz q="Your SLI is computed from application logs and shows 99.99% success. Customers report frequent failures. What could the SLI be missing?" options={["Requests that failed before reaching the application: TLS, DNS, gateway errors", "Requests that were sampled out of the logs", "Requests slower than the p99"]} answer={0}>
+
+An application can only log requests that reached it. A failed TLS handshake, a DNS problem or a 502 from the gateway never gets that far, so it never appears in the denominator or the failures. The SLI measures the service's view of itself, not the user's experience.
+
+Compute the SLI as close to the user as you can: at the load balancer, or from the client itself. That's the same reason an SLO should be measured from the user's side.
 
 </Quiz>
 

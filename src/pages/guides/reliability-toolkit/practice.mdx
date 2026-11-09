@@ -6,24 +6,26 @@ chapter: "5"
 current: "5. Reliability Toolkit"
 sections:
   - id: "which-wall"
-    title: "Which wall stops which flood"
+    title: "Match the failure to the tool"
   - id: "arithmetic"
-    title: "Do the arithmetic"
+    title: "Why one slow call sinks everything"
   - id: "gotchas"
-    title: "The gotchas that actually bite"
+    title: "The gotchas that show up in postmortems"
   - id: "chaos"
-    title: "Testing with chaos"
+    title: "Prove it works: break things on purpose"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Race, Reading, Recap, Stack, Table } from '../../../components';
 
-<Collapse id="which-wall" title="1. Which wall stops which flood">
+<Collapse id="which-wall" title="1. Match the failure to the tool: which wall stops which flood">
 
-Everything so far is a toolbox, and a toolbox is where reliability advice usually stops. But nobody is ever handed a ticket that says "cascading failure, please apply patterns." You get a graph that's the wrong shape and four minutes to decide. The question that matters is narrower: **which flood am I looking at, and which wall stops that one?** Reach for the wrong tool and you'll spend the outage carefully tuning something that was never the problem.
+It's 3 a.m., latency is climbing and errors are spiking. Nobody hands you a ticket that says "cascading failure, please apply patterns". You get a graph that's the wrong shape and four minutes to decide. Parts 1 and 2 gave you a toolbox; the question now is narrower: **which kind of failure am I looking at, and which tool stops that one?** Reach for the wrong tool and you'll spend the outage carefully tuning something that was never the problem.
+
+Each row below is one kind of failure (a "flood"), the tool that stops it (the "wall"), and the tool people reach for by mistake.
 
 <Table>
 
@@ -48,13 +50,19 @@ Same-looking dashboards, opposite floods, different walls. The tell is where the
 
 </Collapse>
 
-<Collapse id="arithmetic" title="2. Do the arithmetic">
+<Collapse id="arithmetic" title="2. Why one slow call sinks everything: the arithmetic">
 
 Cascading failure gets described in metaphors — dominoes, floods, avalanches — which makes it feel like weather. It isn't. It's a multiplication you can do on a napkin, and the reason a cascade is so fast is that the multiplier is large.
 
 ### Little's Law, and why a slow dependency kills every endpoint
 
-One formula does most of the work here: `concurrency = throughput × latency`. If you serve 400 requests a second and each takes 50 ms, then at any instant about 20 requests are in flight. That's it. That's the law. Now watch what happens when only the latency term moves.
+One formula does most of the work here. It's called **Little's Law**:
+
+$$
+\text{concurrency} = \text{throughput} \times \text{latency}
+$$
+
+In plain words: the number of requests in flight at any moment equals how many arrive per second times how long each one takes. If you serve 400 requests a second and each takes 50 ms, about 20 are in flight at any instant, so you need about 20 threads or connections. Now watch what happens when only the latency moves.
 
 ```trace
 **concurrency = throughput × latency**
@@ -130,27 +138,37 @@ The five walls are the part that fits on a slide. What follows is the part that 
 
 ### Retry budgets: backoff controls timing, not volume
 
-Exponential backoff and jitter decide *when* retries happen. Nothing in either decides *how many*. During a broad outage, every client is failing, so every client is retrying, and politely staggered retries are still a multiplied traffic load arriving at a service that is already on the floor. Backoff spreads the stampede over a few seconds; it does not make it smaller.
+A dependency goes fully down for a minute. Every one of your clients is now failing, so every one is retrying, with perfect backoff and jitter. Exponential backoff and jitter decide *when* retries happen. Nothing in either decides *how many*. During a broad outage, every client is failing, so every client is retrying, and politely staggered retries are still a multiplied traffic load arriving at a service that is already on the floor. Backoff spreads the stampede over a few seconds; it does not make it smaller.
 
-The volume control is a **retry budget**: a token bucket, refilled by *successful* requests, that permits retries only up to a small fraction of live traffic — on the order of 10%. The property this gives you is the one you want: when a few calls fail, retries are free and they work. When everything fails, there are no successes refilling the bucket, the budget empties, and retries simply stop. The system loses its ability to amplify its own outage at exactly the moment that ability would be most destructive.
+The volume control is a **retry budget**. Think of it as a jar of tokens: every *successful* request drops a fraction of a token in, and every retry takes one out, so retries can only ever be a small fraction of live traffic, on the order of 10%. (This is called a **token bucket**.) The property this gives you is the one you want: when a few calls fail, retries are free and they work. When everything fails, there are no successes refilling the bucket, the budget empties, and retries simply stop. The system loses its ability to amplify its own outage at exactly the moment that ability would be most destructive.
 
-Pair it with the other rule: **retry at exactly one layer.** Three retries in the client SDK, three in the API gateway, and three in the service is not nine attempts — it's 3 × 3 × 3 = **27 requests** hitting the bottom of the stack for one user action, generated by three teams who each individually did the responsible thing.
+Pair it with the other rule: **retry at exactly one layer.** Three attempts in the client SDK, three in the API gateway, and three in the service is not nine attempts: each gateway attempt makes three service attempts, each of which makes three calls below, so it's 3 × 3 × 3 = **27 requests** hitting the bottom of the stack for one user action, generated by three teams who each individually did the responsible thing.
 
 Pick the layer that knows enough to judge whether a retry is safe, retry there, and make every other layer fail fast. The [queues guide](/guides/message-queues/) has the other half of this: retries are only safe on operations that are idempotent.
 
 ### Deadline propagation: a timeout set per hop is a lie
 
-Every service in the chain sets its own timeout, independently, based on its own sensible reasoning. The caller waits 1 second. The service it calls waits 3. So one second in, the caller has given up, returned an error to the user, and moved on — while the callee is still working, still holding a connection, still hammering the database, producing an answer that will be written to a socket nobody is reading. Under load, a meaningful share of your capacity goes to computing responses that are already garbage.
+Every service in the chain sets its own timeout, independently, based on its own sensible reasoning. The caller waits 1 second. The service it calls waits 3:
+
+<Race a="Checkout (waits 1 s)" b="Inventory (waits 3 s)" result="Result: work done, connections held and database load spent on an answer nobody wanted" steps={[
+  { a: "Calls inventory" },
+  { b: "Starts work, queries a slow database" },
+  { a: "1 s: gives up, returns an error to the user, moves on", tone: "bad" },
+  { b: "Still working, still holding a connection, still hitting the database", tone: "bad" },
+  { b: "Writes its answer to a socket nobody is reading", tone: "bad" }
+]} />
+
+Under load, a meaningful share of your capacity goes to computing responses that are already garbage.
 
 The fix is to pass the **remaining deadline** down with the request — a header, a context object, whatever your stack calls it — and have each hop check it before starting work and refuse anything it can't plausibly finish in time.
 
-```sql
-POST /checkout           deadline = now + 1000ms
-  └─ POST /inventory     remaining: 940ms   → ok, proceed
-└─ SELECT ...     remaining: 780ms   → ok, proceed
-  └─ POST /recommend     remaining: 120ms   → p99 is 300ms
-→ refuse now, return fallback
-(don't start work nobody will wait for)
+```trace
+**POST /checkout**     deadline = now + 1000 ms
+  POST /inventory     940 ms left  → ++ok, proceed++
+    SELECT …          780 ms left  → ++ok, proceed++
+  POST /recommend     120 ms left, p99 is 300 ms
+                      → ~~refuse now, return fallback~~
+  (don't start work nobody will wait for)
 ```
 
 This is what makes timeouts *compose*. Without it you have a pile of unrelated numbers that happen to be in the same request path; with it you have one budget, spent down the stack, with every hop able to see how much is left.
@@ -161,7 +179,14 @@ This is the most important idea missing from most reliability writing, and it's 
 
 The reason is that the outage manufactured its own new load. The queued [retries](/guides/message-queues/) from every client that failed during the incident are still arriving. The [caches went cold](/guides/understanding-caching/) while the service was unavailable, so every request that does get through is now a full cache miss and costs ten times what it used to. Connection pools are churning.
 
-That combination — retry backlog plus cold cache — is, by itself, more load than the system can serve, which produces more failures, which produces more retries. The trigger is long gone; the feedback loop it created is self-sustaining.
+That combination is, by itself, more load than the system can serve. So the loop runs on its own:
+
+1. Retry backlog plus cold caches add up to more load than the service can handle.
+2. So requests fail or time out.
+3. So clients queue more retries, and caches stay cold because little gets through to fill them.
+4. Back to step 1.
+
+The trigger is long gone; the feedback loop it created keeps itself going.
 
 <Note type="war" label="The counter-intuitive part">
 
@@ -240,7 +265,7 @@ Which is the honest argument for the next section. [Chaos engineering](#chaos) i
 
 <Note type="wild" label="◈ In the wild · Knight Capital rollback">
 
-In 2012, trading firm Knight Capital deployed new logic to 8 server instances, but one server didn't receive the update due to a manual deploy mismatch. The old code remained active, leading to automated stock purchases that lost the firm $440M in 45 minutes. This incident highlighted the necessity of automated rollbacks, deployment validation, and peer outlier detection.
+In 2012, trading firm Knight Capital deployed new logic to 8 server instances, but one server didn't receive the update due to a manual deploy mismatch. The old code remained active, leading to automated stock purchases that lost the firm more than $460 million in about 45 minutes, according to the SEC. This incident highlighted the necessity of automated rollbacks, deployment validation, and peer outlier detection.
 
 </Note>
 
@@ -257,6 +282,14 @@ After a painful 2008 database outage and the move to AWS that followed, Netflix 
 </Note>
 
 Netflix pioneered this with **Chaos Monkey**, a tool that randomly kills live servers to force engineers to build systems that don't care when a server dies. If a random instance vanishing is a non-event, then a real one dying at 3 AM is also a non-event — and everyone sleeps. Chaos engineering is just the discipline of finding your weaknesses before they find you.
+
+<Note type="key" label="What to remember">
+
+- Name the failure before picking the tool: a breaker does nothing about overload, and shedding does nothing about a slow dependency.
+- Concurrency = throughput × latency, so a timeout is a concurrency budget and only a bulkhead gives a hard bound. Hard dependencies multiply into your availability.
+- Retry at one layer within a budget, pass deadlines down, and rehearse recovery paths until they're routine.
+
+</Note>
 
 </Collapse>
 

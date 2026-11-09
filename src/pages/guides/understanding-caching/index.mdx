@@ -14,9 +14,9 @@ series:
     - consistency-cap
 sections:
   - id: "what"
-    title: "What a cache is"
+    title: "What a cache is, and why it's fast"
   - id: "layers"
-    title: "The layers"
+    title: "Where caches live"
 ---
 
 import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
@@ -24,73 +24,75 @@ import DiagramUnderstandingCaching1 from '../../../components/diagrams/DiagramUn
 
 <ColdOpen tag="◇ the ninety seconds after the key expired">
 
-19:42 on a Tuesday, the busiest hour of the week. One key — the homepage feed, cached for an hour, requested about 8,000 times a second — reaches the end of its TTL. Every one of those 8,000 requests looks in the cache, finds nothing, and does the obvious thing: asks the database.
+19:42 on a Tuesday, the busiest hour of the week. One cached entry, the homepage feed, is requested about 8,000 times a second and was stored for an hour. Now its hour (its TTL, time to live) runs out. Every one of those 8,000 requests looks in the cache, finds nothing, and does the obvious thing: asks the database.
 
-The query takes 40 ms when the database is idle. It is not idle; it is now running 8,000 of them at once, so it takes four seconds, then twelve. Clients time out at two seconds and retry, which adds a second wave on top of the first. Nobody deployed anything. Nobody's disk failed. A timer ran out, and by 19:44 the site is down.
+The query takes 40 ms when the database is idle. It is not idle: it's now running 8,000 of them at once, so each takes four seconds, then twelve. Clients give up at two seconds and retry, which adds a second wave on top of the first. Nobody deployed anything. No disk failed. A timer ran out, and by 19:44 the site is down.
 
 </ColdOpen>
 
-<Collapse id="what" title="1. What a cache actually is">
+<Collapse id="what" title="1. What a cache is, and why it's fast">
 
-A **cache** is a small, fast store that keeps copies of data close to where it's needed, so you don't have to redo expensive work — a database query, an API call, a heavy computation, a network round-trip. You spend a little memory and some added complexity to buy a lot of speed and a much lighter load on the systems behind it.
+Your product page runs a query that takes tens of milliseconds, and it returns the same answer to everyone who asks within the next hour. Running it again for every visitor is pure waste.
 
-The reason it matters is a gap in speed. Reading from an in-memory cache is measured in microseconds (local) to well under a millisecond (a Redis hop); the same request that falls through to a database and back can take **tens of milliseconds** — often orders of magnitude slower. When most requests are answered by the cache, average latency collapses and the origin barely notices the traffic.
+So keep a copy of the answer somewhere fast and close, and hand that out instead. That's a **cache**: a small, fast store holding copies of data near where it's needed, so you don't redo expensive work like a database query, an API call, a heavy computation or a network round trip. You spend a little memory, and take on some complexity, to buy a lot of speed and a much lighter load on the systems behind it.
+
+Why it pays off: the gap in speed is huge. Reading from an in-memory cache takes microseconds if it's inside your process, and well under a millisecond across the network to Redis. The same request that falls through to a database and back can take **tens of milliseconds**, often orders of magnitude slower. When most requests are answered from the cache, average latency collapses and the database barely notices the traffic.
 
 <Note type="key" label="The whole tension in one line">
 
-*"There are only two hard things in Computer Science: cache invalidation and naming things."* — attributed to Phil Karlton. Caching is easy to add and hard to keep *correct*. That's the real subject of this guide.
+*"There are only two hard things in Computer Science: cache invalidation and naming things."* — attributed to Phil Karlton. "Invalidation" means telling the cache its copy is now wrong. Caching is easy to add and hard to keep *correct*, and that's the real subject of this guide.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="layers" title="2. The layers: where caches live">
+<Collapse id="layers" title="2. Where caches live">
 
-Caching isn't one thing — it's a series of layers between the user and the source of truth. A request can be satisfied at any of them, and the earlier it's answered, the cheaper it is. Walk a request from the browser inward:
+A request for your homepage passes through several places on its way to the database, and any of them could have answered it from a copy. Caching isn't one thing; it's a series of layers between the user and the **source of truth** (the database or service that owns the real data). The earlier a request is answered, the cheaper it is. Walk one from the browser inward:
 
 <DiagramUnderstandingCaching1 />
-
-These layers **compound**: one page load might be served partly from the browser, partly from the CDN, and partly computed fresh. Each layer needs its own story for staying correct. Let's break down what each layer handles:
 
 <Stack>
 
 <Layer idx="1" title="Browser / client cache" speed="fastest">
-The user's own device stores assets and responses. Nothing beats not making a request at all. Governed by HTTP headers.
+The user's own device keeps files and responses it has already downloaded. Nothing beats not making a request at all. Controlled by HTTP headers your server sends.
 </Layer>
 
 <Arrow>↓ on miss</Arrow>
 
 <Layer idx="2" title="CDN / edge cache" speed="very fast">
 
-A global network (Cloudflare, Fastly, CloudFront) caches content near users. Cuts latency *and* origin load.
+A **CDN** (content delivery network: Cloudflare, Fastly, CloudFront) is a global network of servers that keep copies of your content near users. It cuts latency *and* the load on your own servers.
 
-**◈ In the wild:** Netflix Open Connect places caches directly inside ISP networks. They proactively pre-warm (push) popular shows to these edge caches during off-peak hours so they are already warm before viewers hit play.
+**◈ In the wild:** Netflix Open Connect places caches directly inside internet providers' networks, and pushes popular shows to them during off-peak hours, so they're already there before viewers press play.
 
 </Layer>
 
 <Arrow>↓ on miss</Arrow>
 
-<Layer idx="3" title="Reverse-proxy / gateway" speed="fast">
-Varnish or Nginx in front of your app, caching whole responses before they reach application code.
+<Layer idx="3" title="Reverse proxy / gateway" speed="fast">
+Varnish or Nginx sitting in front of your app, storing whole responses so repeat requests never reach your code.
 </Layer>
 
 <Arrow>↓ on miss</Arrow>
 
 <Layer idx="4" title="Application cache" speed="fast">
-Inside your service — an in-process map (Caffeine, Guava) or a shared store (Redis, Memcached). Where "caching strategies" live.
+Inside your service: an in-memory map in each process (Caffeine, Guava), or a shared store all servers use (Redis, Memcached). This is where "caching strategies" live.
 </Layer>
 
 <Arrow>↓ on miss</Arrow>
 
 <Layer idx="5" title="Database cache" speed="the origin">
-The DB's own buffer pool / query cache and materialized views. The source of truth, with its own caching inside.
+The database's own memory cache of table data (its buffer pool) and precomputed results (materialised views). The source of truth, with its own caching inside.
 </Layer>
 
 </Stack>
 
-<Note label="Local vs. distributed">
+These layers **stack up**: one page load might be served partly from the browser, partly from the CDN, and partly computed fresh. Each layer needs its own plan for staying correct.
 
-An **in-process** cache is fastest (no network hop) but every server has its own copy — they can disagree, and you multiply memory use. A **distributed** cache (Redis/Memcached) adds a network hop but gives every instance one shared, consistent view. Once you have more than one server, distributed is usually the answer.
+<Note label="One copy per server, or one shared copy?">
+
+You run three app servers, each with its own in-memory cache. A user changes their name; server 1 clears its copy, servers 2 and 3 keep showing the old one. That's the catch with an **in-process** cache: it's the fastest (no network hop), but every server has its own copy, they can disagree, and you pay for the memory three times. A **distributed** cache (Redis, Memcached) adds a network hop but gives every server one shared view. Once you have more than one server, distributed is usually the answer.
 
 </Note>
 

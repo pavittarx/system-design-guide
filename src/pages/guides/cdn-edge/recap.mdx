@@ -9,43 +9,43 @@ sections:
     title: "Recap in 60 seconds"
 ---
 
-import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { Collapse, Footer, Recap } from '../../../components';
 
 <Collapse id="recap" title="Recap in 60 seconds">
 
 <Recap>
 
-**Distance is a hard floor.** Light in fibre travels ~200,000 km/s. London to New York is ~60 ms of physics per round trip; four round trips is ~280 ms you cannot optimise away in code. The only fix is to be closer.
+**Distance has a hard floor.** Light in fibre travels about 200,000 km/s, so London to New York costs about 60 ms per round trip, and opening an HTTPS connection and getting the first byte takes three (four on TLS 1.2). No code change gets that back. Only being closer does.
 
-**A PoP is a cache plus a TLS terminator plus a router.** It saves bytes on hits and handshakes on everything — which is why a CDN speeds up uncacheable content too.
+**A PoP is a nearby cache that also handles your handshakes.** On a hit it saves the whole trip. On everything else it still saves the handshake round trips, which is why a CDN speeds up pages it can't cache.
 
-**Anycast finds the PoP.** One IP announced from everywhere; BGP picks the nearest. DNS steering is the older alternative and sees the resolver, not the user, unless EDNS Client Subnet is in play.
+**Two ways to reach the nearest PoP.** Anycast announces one address from everywhere and lets internet routing pick. DNS steering hands out different addresses, but it sees the user's resolver, not the user, unless EDNS Client Subnet passes the user's subnet along.
 
-**Origin load per PoP is 60 ÷ TTL per minute.** Short TTLs are cheap; they are only expensive if users wait for the revalidation.
+**A short TTL caps origin load.** Each PoP fetches an object at most 60 ÷ TTL times a minute, however much traffic arrives. Short TTLs only hurt when users wait for the refresh.
 
-**The cache key is the whole game.** Every dimension you add multiplies storage and divides hit rate. `Vary: Cookie` is a per-user cache, which is no cache.
+**The cache key decides your hit rate.** Everything you add to it splits the cache. `Vary: Cookie` means one copy per user, which is no cache at all.
 
-**Shield your origin.** Without one, 100 PoPs missing together means 100 origin fetches for identical bytes. With one, it means 1.
+**Shield your origin.** Without one, 100 PoPs missing together send 100 identical fetches to your origin. With one, it's 1.
 
-**Fingerprint, don't purge.** A content hash in the filename makes every deploy a new key. When you must purge, prefer soft purge and surrogate keys.
+**Change the file name instead of purging.** A content hash in the filename makes every deploy a new key. When you must purge, prefer soft purges and purging by tag.
 
-**Serve stale deliberately.** `stale-while-revalidate` takes origin latency off the user's critical path; `stale-if-error` turns an origin outage into mild staleness.
+**Serve old copies on purpose.** `stale-while-revalidate` means no user waits for a refresh; `stale-if-error` turns an origin outage into slightly old pages.
 
-**Edge compute is a request filter, not a backend.** If it needs your database, it belongs next to your database.
+**Edge code is a filter, not a backend.** If it needs your database, run it next to your database.
 
-**CDNs fail at the control plane.** Both canonical outages were config pushed globally in seconds. Keep your origin survivable and your DNS TTLs short.
+**CDNs fail through configuration.** Both famous outages were a config change pushed everywhere in seconds. Keep your origin able to survive without the CDN, and your DNS TTLs short.
 
 </Recap>
 
 </Collapse>
 
 <Footer>
-  Fastly, "Summary of June 8 outage" (2021) ·
-  Cloudflare, "Details of the Cloudflare outage on July 2, 2019" ·
-  RFC 9111 (HTTP Caching) ·
-  RFC 5861 (`stale-while-revalidate`, `stale-if-error`) ·
-  RFC 8446 (TLS 1.3) ·
-  MDN Web Docs, `Vary` ·
+  [Fastly, "Summary of June 8 outage" (2021)](https://www.fastly.com/blog/summary-of-june-8-outage) ·
+  [Cloudflare, "Details of the Cloudflare outage on July 2, 2019"](https://blog.cloudflare.com/details-of-the-cloudflare-outage-on-july-2-2019/) ·
+  [RFC 9111 (HTTP Caching)](https://www.rfc-editor.org/rfc/rfc9111.html) ·
+  [RFC 5861 (`stale-while-revalidate`, `stale-if-error`)](https://www.rfc-editor.org/rfc/rfc5861.html) ·
+  [RFC 8446 (TLS 1.3)](https://www.rfc-editor.org/rfc/rfc8446.html) ·
+  [MDN Web Docs, `Vary`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Vary) ·
   Cloudflare Learning Center, "What is a CDN?" ·
-  Fastly Developer Hub, "Purging" and "Surrogate keys".
+  Fastly Developer Hub, ["Purging"](https://www.fastly.com/documentation/guides/concepts/edge-state/cache/purging/) and ["Surrogate keys"](https://www.fastly.com/documentation/reference/http/http-headers/Surrogate-Key/).
 </Footer>

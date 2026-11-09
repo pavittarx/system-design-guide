@@ -6,9 +6,9 @@ chapter: "6"
 current: "6. Consistency & CAP"
 sections:
   - id: "spectrum"
-    title: "The consistency spectrum"
+    title: "A ladder of promises"
   - id: "quorum"
-    title: "Quorums: tuning the dial"
+    title: "Quorums: how many copies to ask"
   - id: "trace"
     title: "A quorum under partition"
   - id: "check"
@@ -17,101 +17,119 @@ sections:
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Statement, Table } from '../../../components';
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Race, Reading, Recap, Stack, Statement, Table } from '../../../components';
 
-<Collapse id="spectrum" title="1. The consistency spectrum">
+<Collapse id="spectrum" title="1. A ladder of promises, from &quot;one copy&quot; to &quot;eventually&quot;">
 
-"Strong vs. eventual" is a ladder, not a switch. Each rung below drops one promise and buys back coordination — which is to say, latency. Read it downward and watch what you're giving up.
+### Three bugs your users can see
+
+Your app keeps several copies of its data, and reads are spread across them. Depending on which copy answers, users can see three different kinds of weirdness:
+
+- **Time runs backwards.** A user refreshes and sees 12 comments, refreshes again and sees 10, because the second refresh hit a copy that's further behind.
+- **An answer before its question.** Someone sees Bob's reply "Found him!" under a post that hasn't appeared yet: "Has anyone seen my cat?"
+- **Two people disagree.** You and a colleague look at the same order at the same moment and see different statuses.
+
+Here's the first one, step by step. One user, two refreshes, two copies of the data:
+
+<Race a="Copy A (up to date)" b="Copy B (5 s behind)" result="Result: the page went back in time, and the user thinks two comments were deleted" steps={[
+  { a: "First refresh lands here: 12 comments" },
+  { b: "Second refresh lands here: 10 comments", tone: "bad" }
+]} />
+
+Each of these bugs is ruled out by a different promise, and each promise costs a different amount of waiting. So "strong versus eventual" isn't a switch; it's a ladder. Each rung down drops one promise and saves some coordination, which means saves some latency.
 
 <Stack>
   <Layer idx="1" title="Linearizable" speed="money · locks · leaders">
-    One global order that respects real time. If your write returned before my read began, I see it. This is CAP's C.
+    Behaves like one copy. Once a write has finished, every read that starts after it sees it. If your write returned before my read began, I see it. This is CAP's C.
   </Layer>
-  <Arrow>↓ drop the real-time tie ↓</Arrow>
+  <Arrow>↓ drop the link to real time ↓</Arrow>
   <Layer idx="2" title="Sequential" speed="rarely sold on its own">
-    Everyone agrees on one order of operations — but that order needn't match wall-clock reality. Stale, consistently.
+    Everyone sees all operations in the same order, but that order needn't match the wall clock. You might be behind, but everyone is behind in the same way.
   </Layer>
-  <Arrow>↓ drop the global order ↓</Arrow>
+  <Arrow>↓ drop the single shared order ↓</Arrow>
   <Layer idx="3" title="Causal" speed="threads · comments · chat">
-    If A caused B, nobody sees B without A. Unrelated writes can land in any order. The reply never precedes the post.
+    If A caused B, nobody sees B without A: the reply never shows up before the post. Unrelated writes can appear in any order.
   </Layer>
-  <Arrow>↓ drop cross-user guarantees ↓</Arrow>
+  <Arrow>↓ drop guarantees between users ↓</Arrow>
   <Layer idx="4" title="Read-your-writes & monotonic reads" speed="the sane-UX floor">
-    You see your own changes, and time never runs backwards for you. Says nothing about anyone else's view.
+    You always see your own changes, and time never runs backwards for you. Says nothing about what anyone else sees.
   </Layer>
-  <Arrow>↓ drop per-session guarantees ↓</Arrow>
+  <Arrow>↓ drop guarantees within a session ↓</Arrow>
   <Layer idx="5" title="Eventual" speed="likes · feeds · view counts">
-    If writes stop, copies converge. No promise about when, and no promise that a read won't go backwards on the way.
+    If writes stop, the copies end up the same. No promise about when, and no promise a read won't go backwards on the way.
   </Layer>
 </Stack>
 
-Two things about this ladder catch people out. First, the session guarantees on rung 4 are *cheap* — they're mostly routing decisions, not consensus — which makes them the best value on the whole ladder. Second, "eventual" contains no bound at all: a replica that's been disconnected for six hours is still perfectly eventually consistent while it serves six-hour-old data.
+Mapped back to the bugs: "time runs backwards" is fixed by rung 4 (**monotonic reads**: each read is at least as new as your last one). "Answer before question" is fixed by rung 3 (**causal consistency**). "Two people disagree" needs rung 1.
 
-<Note type="key" label="The pragmatic move">
+Two things about this ladder catch people out. First, the rung 4 guarantees are *cheap*: they're mostly a matter of routing a user's requests sensibly, not of making machines agree, so they're the best value on the whole ladder. Second, "eventual" contains no time limit at all. A copy that has been cut off for six hours and serves six-hour-old data is still, technically, eventually consistent.
 
-You rarely need strong consistency *everywhere* — that's just paying maximum latency for data that doesn't need it. Pick per-feature: strong for money, inventory, and auth; read-your-writes for a user's own posts; plain eventual for like counts, feeds, and view tallies. The same tune you played with [cache TTLs](/guides/understanding-caching/) and [read replicas](/guides/database-scaling/).
+### Pick a rung per feature, not per system
 
-</Note>
+You rarely need the top rung *everywhere*; that's paying the maximum latency for data that doesn't need it. Choose per feature: linearizable for money, inventory and logins; read-your-writes for a user's own posts; plain eventual for like counts, feeds and view tallies. It's the same decision you made with [cache TTLs](/guides/understanding-caching/) and [read replicas](/guides/database-scaling/).
 
 <Note type="wild" label="◈ In the wild · Amazon S3">
 
-For roughly its first fourteen years, S3 was only eventually consistent for overwrites and listings: you could write an object and briefly read back a stale version, or upload one and not yet see it in a bucket listing. Countless data pipelines were shaped around that footgun. In December 2020, [AWS made S3 strongly read-after-write consistent](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/) for every operation, at no extra cost or added latency. A whole rung of this spectrum quietly disappeared.
+For roughly its first fourteen years, S3 was only eventually consistent for overwrites and listings: write an object and you could briefly read back the old version, or upload one and not see it in a listing. Countless pipelines were built around that. In December 2020, [AWS made S3 strongly read-after-write consistent](https://aws.amazon.com/blogs/aws/amazon-s3-update-strong-read-after-write-consistency/) at no extra cost or latency.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="quorum" title="2. Quorums: turning consistency into a dial">
+<Collapse id="quorum" title="2. Quorums: choosing how many copies to ask">
 
-Here's the elegant trick AP databases use to *tune* where they sit. Say each piece of data is replicated to **N** nodes. You get to choose how many must respond:
+### Why "write to one, read from one" goes wrong
 
-- **W** = how many replicas must confirm a *write* before it counts.
+Say each piece of data is kept on 3 machines (call them A, B and C). To make writes fast, you tell the user "saved" as soon as one machine has the write. To make reads fast, you ask just one machine. A write lands on A; the next read happens to ask C, which hasn't heard about it yet. The read is wrong, and nothing reported an error.
 
-- **R** = how many replicas you read from and compare.
+The fix is to make the set of machines you write to and the set you read from **overlap**. Write to 2 of the 3 and read from 2 of the 3: whichever two you pick each time, there are only three machines, so the two pairs must share at least one. That shared machine has the write.
 
-### Quorum Math Matrix
+Systems that work this way give you three numbers to choose:
 
-<Table>
+- **N** is how many machines hold a copy of each piece of data.
+- **W** is how many must confirm a *write* before the user is told it's saved.
+- **R** is how many you ask on a *read*, keeping the newest answer.
 
-| Quorum Condition | Condition Formula | Consistency & Latency Guarantee | Recommended Use Case |
-| :--- | :--- | :--- | :--- |
-| **Quorum Overlap** | R + W > N | **Strong Consistency** (Guaranteed overlap) | Financial ledgers, primary inventory |
-| **Write Heavy** | W = N, R = 1 | Fast reads, slow expensive writes | High-read caches, static configs |
-| **Read Heavy** | W = 1, R = N | Fast writes, slow expensive reads | High-throughput logging, telemetry ingest |
-| **Eventual / Loose** | R + W ≤ N | **Weak / Eventual Consistency** (No overlap guarantee) | Activity feeds, view counters, like counts |
+The overlap rule, written out:
 
-</Table>
+$$
+R + W > N
+$$
 
-The beautiful part: if **R + W > N**, your read set is guaranteed to *overlap* the latest write on at least one node — so a read can return the latest *acknowledged* value on demand (which is a weaker promise than linearizability, and weaker still under failure — the next section walks a real one through a partition to show exactly where the edges are). Want speed instead? Lower R and W and accept staleness. One formula, a whole spectrum, chosen per query. Cassandra and DynamoDB expose exactly this.
+In plain words: if the copies you read from plus the copies you wrote to add up to more than the total, the two groups must share at least one machine. That set of "enough machines" is called a **quorum**.
 
-```bash
+Why this works: there aren't enough machines for the read set and the write set to avoid each other. With N = 3, W = 2, R = 2, you'd need 4 different machines to keep them apart, and you only have 3.
+
+```text
 N = 3 replicas
-W = 2, R = 2  →  R + W = 4 > 3  →  strong-ish, balanced
+W = 2, R = 2  →  R + W = 4 > 3  →  overlap, balanced
 W = 1, R = 1  →  R + W = 2 < 3  →  fast, possibly stale
 ```
 
+### Turning the dial
+
+Because you choose R and W, you can move along the ladder per query: overlap when it matters, small numbers when speed matters more. Cassandra exposes this directly, as a consistency level you pick per read and per write. DynamoDB offers a simpler two-way choice per read: eventually consistent (the default, and half the price) or strongly consistent. The idea of tunable N, R and W comes from Amazon's [Dynamo paper](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf).
+
+<Table>
+
+| Setting | Values | In plain words | Good for |
+| :--- | :--- | :--- | :--- |
+| **Overlapping quorums** | R + W > N | Every read asks at least one machine that has the latest *acknowledged* write. Not the same as linearizable, as section 3 shows | Data where stale reads hurt |
+| **Read-optimised** | W = N, R = 1 | Every write must reach every copy, so any single copy is current. Fast reads, slow and expensive writes | High-read caches, static configs |
+| **Write-optimised** | W = 1, R = N | Writes return after one copy; reads must ask all of them. Fast writes, slow and expensive reads | Logging, telemetry ingest |
+| **Loose** | R + W ≤ N | The read and write sets may not overlap, so reads can be stale | Activity feeds, view counters, like counts |
+
+</Table>
+
+The two middle rows also satisfy R + W > N; they just put all the waiting on one side.
+
 </Collapse>
 
-<Collapse id="trace" title="3. A quorum under partition, step by step">
+<Collapse id="trace" title="3. What a quorum promises when the network splits">
 
-Formulas are easy to nod along to and hard to actually believe. So here is `N=3, W=2, R=2` — the most common configuration in the world — walked through a real failure, one line at a time. Three replicas hold a key `x`, and one client writes it while another reads it.
+Formulas are easy to nod along to and hard to believe. So here is N = 3, W = 2, R = 2, the most common configuration, walked through a real failure. Three machines hold a key `x`. Each value carries a **version** (v1, v2…) so a reader can tell which of two answers is newer.
 
-<Stack>
-  <Layer idx="◇" title="Client" speed="needs 2 of 3">
-    Doesn't know or care which replicas are healthy. Fires a request at all three and counts the answers.
-  </Layer>
-  <Arrow>↓ write x (W=2) · read x (R=2) ↓</Arrow>
-  <Layer idx="A" title="Replica A" speed="majority side">
-    Takes the write, answers the read. Stays reachable throughout.
-  </Layer>
-  <Layer idx="B" title="Replica B" speed="majority side">
-    Takes the write too. When the network splits, B is on A's side of the cut.
-  </Layer>
-  <Arrow>– – – the network cuts here – – –</Arrow>
-  <Layer idx="C" title="Replica C" speed="minority side">
-    Misses the write, serves stale data, and is later stranded on its own.
-  </Layer>
-</Stack>
+### The happy path, with one machine lagging
 
 ```trace
 **setup**  N=3 (A B C)   W=2   R=2   x = 0 @ v1
@@ -127,54 +145,73 @@ Formulas are easy to nod along to and hard to actually believe. So here is `N=3,
      node holding v2. It does: A.
      compare versions → ++return 1@v2++
      ++read-repair: push 1@v2 to C in the background++
-
-**t2** ~~PARTITION      { A  B }  |  { C }~~
-     majority side can still gather 2 acks
-     minority side can gather exactly 1
-
-**t2** read via A,B  → ++1@v2, served normally++
-     Most traffic never notices this outage at all.
-
-**t3** write x=2 arrives at C. 1 ack. W=2 unmet.
-     **CP** → ~~refuse it: "not enough replicas"~~
-          the caller gets an error; data stays sane
-     **AP** → accept it locally, sort it out later
-          ~~A,B: 1@v2    C: 2@v2'   diverged~~
-
-**t4** partition heals
-     **CP** → ++nothing to merge. x = 1.++
-     **AP** → two versions, neither descended from
-          the other. ++Something must now decide.++
-          If that something is last-write-wins,
-          ~~one of the two writes is discarded,~~
-          ~~with no error and no log line.~~
 ```
+
+C missed the write and nobody was told. The read still came out right because the overlap guaranteed one of the two machines it asked (A) had the new version, and the version number said which answer to trust. Then the reader quietly fixed C. That's called **read-repair**.
+
+### Then the network splits
+
+Now the link between A and B on one side and C on the other goes down. The side with A and B can still gather 2 confirmations, so reads and writes there carry on normally; most traffic never notices. C, alone, can only ever gather 1. Then a write for `x` arrives at C:
+
+<Race a="Majority side {A, B}" b="Minority side {C}" result="Result (AP): two versions, neither built on the other. Something must now decide" steps={[
+  { a: "x = 1 @ v2. Reads and writes carry on", tone: "good" },
+  { b: "Write x = 2 arrives. Only 1 confirmation possible; W = 2 is unmet" },
+  { b: "CP choice: refuse with \"not enough replicas\". Data stays sane", tone: "good" },
+  { b: "AP choice: accept it locally. C now holds 2 @ v2'", tone: "bad" },
+  { a: "Network heals. A and B say 1, C says 2", note: true }
+]} />
+
+If C refused, there's nothing to merge when the network heals: x is 1. If C accepted, there are two versions and neither descends from the other. If the rule that settles it is "last write wins", **one of the two writes is thrown away, with no error and no log line**. [Part 2](/guides/consistency-cap/conflicts/) is about that rule.
 
 ### What R + W > N actually buys you
 
-It buys you **intersection**, and only intersection. Any set of R nodes and any set of W nodes drawn from N must share at least one member, so the nodes you read from include at least one that acknowledged the most recent *successfully acknowledged* write. That's a genuine, useful property. It is also the entire property.
+It buys you **overlap**, and only overlap. The machines you read from include at least one that has the most recent *successfully acknowledged* write. That's real and useful. It is also everything it promises. Three things it doesn't:
 
-Notice what that sentence doesn't say. It says a current copy is *present in the responses*, not that you can *identify* it — you still need versioning and a resolution rule to pick the winner out of the set, and if that rule is wrong the intersection guarantee doesn't save you.
+**It doesn't tell you which answer is current.** The new value is *among* the responses, but you still need versions and a rule for picking the winner. If that rule is wrong, the overlap doesn't save you.
 
-It says nothing about writes that *failed*: a write that reached one node out of three returns an error to the client but is not rolled back, so it can surface in a later read, or not, depending on which nodes answer.
+**It says nothing about writes that failed.** A write that reaches only one machine fails, but nothing undoes it on that machine:
 
-And it gives you nothing across operations — with reads landing on different node sets, two successive reads can go new-then-old until read-repair or anti-entropy catches up, which is a monotonicity violation, not a linearizability one, and users notice it.
+<Race a="Writer" b="Reader" result="Result: the reader got a value whose write was reported as failed" steps={[
+  { a: "Writes x = 5. Only A confirms; B and C time out" },
+  { a: "Told: write failed (1 of 2 confirmations)", tone: "bad" },
+  { b: "Reads from A and B. A has x = 5 with a newer version" },
+  { b: "Returns x = 5", tone: "bad" }
+]} />
+
+Whether that value surfaces depends on which machines answer the next read.
+
+**It gives nothing across two reads.** Your first read may ask A and B, and your second B and C. Until read-repair or a background sync (called **anti-entropy**) catches C up, two reads in a row can go new-then-old: the "time runs backwards" bug from section 1, and users notice it.
 
 <Note type="warn" label="Precision matters here">
 
-**R + W > N is not linearizability.** Getting there needs more machinery: read-repair and anti-entropy so divergence actually converges rather than lingering; a conflict-resolution rule that doesn't silently drop data; and, for anything involving read-modify-write — increment a counter, check-and-set, reserve the last seat — a real consensus protocol, because no amount of quorum arithmetic gives you agreement on an *order*.
+**R + W > N is not linearizability.** Getting there needs more machinery: read-repair and anti-entropy so copies actually converge instead of staying different; a conflict rule that doesn't silently drop data; and, for any **read-modify-write** (read a value, change it, write it back: increment a counter, reserve the last seat), a real **consensus protocol** such as Raft or Paxos, which makes machines agree on one order of operations. No amount of quorum arithmetic gives you an agreed *order*.
 
-Even for a plain read/write register, the classic construction only becomes linearizable when the reader writes the value it found back out to a quorum before returning it. Quorums are a dial for staleness. They are not a substitute for consensus, and a system that markets "tunable consistency" is selling you the dial, not the consensus.
+Even for a plain read and write of one value, the classic construction only becomes linearizable when the reader writes the value it found back to a quorum before returning it. Quorums are a dial for staleness, not a substitute for consensus. A system that markets "tunable consistency" is selling you the dial, not the consensus.
 
 </Note>
 
-### Sloppy quorums and hinted handoff
+### Sloppy quorums: when the overlap is switched off
 
-Now the part that quietly undoes the arithmetic. When the usual replicas for a key are unreachable, some Dynamo-style systems don't fail the write — they accept it on whichever N nodes they *can* reach, tagged with a hint saying "this really belongs to C," and hand it off once C returns. This is a **sloppy quorum** with **hinted handoff**, and it is excellent for durability and availability: your write is on disk somewhere, on the right number of machines, and it will get home.
+Now the part that quietly undoes the arithmetic. The usual three machines for a key are A, B and C. A network blip means the writer can only reach C. Some Dynamo-style systems don't fail the write. They store it on C and on a stand-in machine D, with a note saying "this really belongs to A", and pass it on when A is back. This is a **sloppy quorum** with **hinted handoff**.
 
-But during the handoff window, the write is sitting on nodes that are not in the key's replica set. A reader doing a strict R-of-N read against the proper replicas can intersect all it likes and still miss it. **The R + W > N intersection argument is simply not in force** at exactly the moment you were counting on it — the failure that made you want the guarantee is the failure that suspends it.
+That's excellent for durability: your write is on disk, on the right number of machines, and it will get home. But meanwhile:
 
-Worth knowing which of your systems does this by default, because most of them advertise the formula and bury the exception.
+<Race a="Writer (can reach C and D)" b="Reader (can reach A and B)" result="Result: a perfectly valid R = 2 read missed an acknowledged W = 2 write" steps={[
+  { a: "Writes x = 7 to C and stand-in D. 2 confirmations: \"saved\"", tone: "good" },
+  { b: "Reads x from A and B, two of the key's real replicas" },
+  { b: "Neither has x = 7. Returns the old value", tone: "bad" },
+  { a: "Later, D hands the write back to A", note: true }
+]} />
+
+During the handoff, the write sits on machines outside the key's normal set, so **the overlap argument simply isn't in force**, at exactly the moment you were relying on it. The failure that made you want the guarantee is the failure that suspends it. It's worth knowing which of your systems does this by default, because most of them advertise the formula and bury the exception.
+
+<Note type="key" label="What to remember">
+
+- Consistency is a ladder. Pick a rung per feature; read-your-writes and monotonic reads are cheap and fix what users notice most.
+- R + W > N means every read asks at least one machine with the latest acknowledged write. That's all: no agreed order, no protection from failed writes, no help across two reads.
+- Sloppy quorums keep writes flowing during failures by turning the overlap guarantee off. Know which of your systems do it.
+
+</Note>
 
 </Collapse>
 
@@ -182,9 +219,9 @@ Worth knowing which of your systems does this by default, because most of them a
 
 <Quiz q="You run N=3, R=2, W=2 and you still lost an update. How can that happen?" options={["It can't: R + W > N guarantees that no acknowledged write is ever lost", "W=2 was too low; only W=3 prevents lost updates", "Last-write-wins with clock skew, or a sloppy quorum the strict read didn't intersect, among others"]} answer={2}>
 
-Easiest two: (1) last-write-wins plus clock skew — two writes conflicted, the resolution rule compared wall-clock timestamps from unsynchronised machines, and it kept the one that actually happened first. (2) A sloppy quorum — the write was accepted on substitute nodes during a blip, so the strict R-of-N read didn't intersect it during the handoff window.
+The two easiest: (1) Last-write-wins with clocks that disagree. Two writes conflicted, the rule compared timestamps from machines whose clocks weren't in sync, and it kept the one that really happened first. (2) A sloppy quorum. The write was stored on stand-in machines during a blip, so a normal read from the key's real replicas didn't overlap it until the handoff finished.
 
-Two more, for credit: read-modify-write on a value read from a quorum has no atomicity, so two clients can both read 5 and both write 6; and a write that got only one ack and returned an error isn't rolled back, so it can win a later merge.
+Two more, for credit: a read-modify-write on a quorum read isn't atomic, so two clients can both read 5 and both write 6; and a write that got only one confirmation and reported an error isn't undone, so it can win a later merge.
 
 </Quiz>
 

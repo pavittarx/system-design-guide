@@ -6,43 +6,66 @@ chapter: "5"
 current: "5. Reliability Toolkit"
 sections:
   - id: "timeouts"
-    title: "Timeouts: the first defense"
+    title: "Stop waiting forever"
   - id: "retries"
-    title: "Retries & the retry storm"
+    title: "Retry without making it worse"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Race, Reading, Recap, Stack, Table } from '../../../components';
 import DiagramReliabilityToolkit1 from '../../../components/diagrams/DiagramReliabilityToolkit1.astro';
 
-<Collapse id="timeouts" title="1. Timeouts: the first and cheapest defense">
+<Collapse id="timeouts" title="1. Stop waiting forever: timeouts">
 
-Go back to the cold open. The root sin was *waiting forever* for a slow service. A call with no timeout is a promise to hang indefinitely — and hung threads are the fuel of every cascade.
+Go back to the cold open. The original mistake was *waiting forever* for a slow service. Here are two product pages calling the same stalled recommendations service, one with a time limit and one without:
 
-A timeout says: "if you haven't answered in 2 seconds, I'm giving up and moving on." It converts an unbounded hang into a fast, catchable failure you can handle. It's one line of code and it's the highest-value *cheap* habit in this whole guide. The catch is picking the number: too short and you kill healthy-but-busy calls; too long and you're back to hanging. Base it on real latency percentiles (p99), not vibes.
+<Race a="Page with no timeout" b="Page with a 2 s timeout" steps={[
+  { a: "Calls recommendations. No answer yet" },
+  { b: "Calls recommendations. No answer yet" },
+  { b: "2 s: gives up, renders the page without recommendations", tone: "good" },
+  { a: "30 s: still waiting. Its thread is stuck, and so are the hundreds behind it", tone: "bad" }
+]} result="Result: one page shipped without a sidebar; the other is part of a pile-up" />
+
+A call with no time limit is a promise to hang for as long as the other side does, and hung threads are the fuel of every cascade. A **timeout** says: "if you haven't answered in 2 seconds, I'm giving up and moving on." It turns an unbounded hang into a fast failure your code can catch and handle.
+
+It's one line of code, and it's the highest-value cheap habit in this guide. The hard part is the number. Too short and you kill calls that were healthy, just busy. Too long and you're back to hanging. Base it on measured latency, the **p99** (the time that 99 in 100 calls finish within), not on a guess.
 
 </Collapse>
 
-<Collapse id="retries" title="2. Retries — and the storm they can summon">
+<Collapse id="retries" title="2. Retry without making it worse">
 
-Transient failures (a blip, a brief network drop) often succeed on a second try, so retrying is smart. Retrying *naively* is how you turn a small problem into an outage.
+A brief network drop often succeeds on a second try, so retrying is smart. Retrying *naively* is how you turn a small problem into an outage.
 
 <Note type="war" label="War story · the retry storm">
 
-A service slows down. Every client immediately retries. Those retries *double* the load on the already-struggling service, so it slows further, so more calls fail, so more retries fire… a self-reinforcing avalanche that keeps the service down long after the original blip is gone. Naive retries don't help a struggling system recover — they hold its head underwater.
+A service slows down. Every client immediately retries. Those retries *double* the load on the already-struggling service, so it slows further, so more calls fail, so more retries fire. The loop keeps the service down long after the original blip is gone. Naive retries don't help a struggling system recover; they hold its head underwater.
 
 </Note>
 
-The fix is **exponential backoff with jitter**: wait 1s, then 2s, then 4s before each retry (back off), and add a random wobble (jitter) so a thousand clients don't all retry in lockstep and re-synchronize the stampede. Also cap the number of retries, and don't retry things that aren't retryable (a `400 Bad Request` will be just as wrong the second time). Notice this only works because of **idempotency** from the [queues guide](/guides/message-queues/) — retrying a non-idempotent action is how you double-charge someone.
+Three rules make retries safe:
 
-Backoff and jitter fix retry *timing*. They do nothing about retry *volume*, which is the half that actually kills you — see [retry budgets](/guides/reliability-toolkit/practice/#gotchas) in Part 3.
+1. **Wait longer each time.** Wait 1 s, then 2 s, then 4 s before each retry. This is **exponential backoff**: it gives a struggling service room to recover instead of hitting it again immediately.
+2. **Add randomness to the wait.** If 1,000 clients all failed at the same instant, plain backoff makes all 1,000 retry at the same instant too, one second later. Adding a random wobble to each wait, called **jitter**, spreads them out so they don't arrive as one wave.
+3. **Cap the attempts, and only retry what can succeed.** A `400 Bad Request` will be just as wrong the second time.
+
+Retrying is only safe because of **idempotency** from the [queues guide](/guides/message-queues/): an operation that has the same effect however many times it runs. Retrying something that isn't idempotent is how you charge someone twice.
+
+Backoff and jitter fix *when* retries happen. They do nothing about *how many*, which is the half that actually causes outages. That's what [retry budgets](/guides/reliability-toolkit/practice/#gotchas) in Part 3 are for.
 
 <Figure>
   <DiagramReliabilityToolkit1 />
 </Figure>
+
+<Note type="key" label="What to remember">
+
+- Every network call needs a timeout, set from measured p99 latency. No timeout means one slow service can hang all of yours.
+- Retry with exponential backoff plus jitter, a small cap, and only on errors that can succeed next time.
+- Only retry idempotent operations, and remember that backoff spreads retries out but doesn't reduce them.
+
+</Note>
 
 </Collapse>
 
@@ -50,7 +73,7 @@ Backoff and jitter fix retry *timing*. They do nothing about retry *volume*, whi
 
 <Quiz q="You add retries and the outage gets worse. Why?" options={["Retries multiply load on a dependency that was already failing to keep up, and backoff only spreads that volume over time", "The retries had no jitter, so they arrived in lockstep; adding jitter alone would have fixed it", "The timeout was too long, so each retry held its thread for longer"]} answer={0}>
 
-Because retries are a load multiplier, and you applied one to a system whose problem was load. If the dependency is saturated rather than blipping, every retry is extra work aimed at the thing that's already failing to keep up. Two specific traps: retries configured at several layers multiply rather than add — three at the client, gateway and service is 27 attempts at the bottom — and backoff with jitter only spreads that volume over time, it doesn't reduce it.
+Because retries are a load multiplier, and you applied one to a system whose problem was load. If the dependency is saturated rather than blipping, every retry is extra work aimed at the thing that's already failing to keep up. Two specific traps: retries configured at several layers multiply rather than add — three attempts each at the client, gateway and service is 3 × 3 × 3 = 27 attempts at the bottom — and backoff with jitter only spreads that volume over time, it doesn't reduce it.
 
 The missing piece is a retry budget that caps retries at a small fraction of live traffic and empties itself when there are no successes to refill it, so retries switch themselves off during exactly the broad outage where they'd do the most damage.
 

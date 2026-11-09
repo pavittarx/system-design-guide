@@ -6,90 +6,116 @@ chapter: "2"
 current: "2. Scaling Databases"
 sections:
   - id: "avoid"
-    title: "Avoiding the query entirely"
+    title: "Don't run the query at all"
   - id: "replicas"
-    title: "Read replicas and replication"
+    title: "Copies that answer reads"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Pill, Quiz, Reading, Race, Recap, Stack, Table } from '../../../components';
 import DiagramDatabaseScaling1 from '../../../components/diagrams/DiagramDatabaseScaling1.astro';
 
-<Collapse id="avoid" title="1. Avoiding the query entirely">
+<Collapse id="avoid" title="1. Don't run the query at all">
 
-The cheapest query is the one you never run. These reduce database load without splitting the database:
+Your queries are indexed and lean, and the database is still busy. Look at what it's busy with: often the same expensive question, asked thousands of times, getting the same answer every time. The cheapest query is the one you never run. Each of these cuts database load without splitting the database:
 
-- **Caching** — put Redis or Memcached in front so hot reads never reach the database. The highest-leverage move before replicas; see the [Caching guide](/guides/understanding-caching/).
-- **Denormalisation** — store data pre-joined or pre-computed so a read is one lookup, trading write complexity and some redundancy for read speed.
-- **Materialised views** — precompute an expensive aggregate and refresh it periodically, instead of recomputing per request.
-- **CQRS (read models)** — separate the write model from purpose-built read models kept fresh by events, so reads and writes scale independently. The event stream that feeds them is a [message queue](/guides/message-queues/).
-- **Write buffering** — a queue between the request and the database absorbs bursts so writes arrive batched and steady. It converts a peak-throughput problem into a latency-budget problem, which is much easier.
+- **Keep recent answers in memory.** Put Redis or Memcached in front, so popular reads never reach the database. This is **caching**, and it's the biggest win before replicas; see the [Caching guide](/guides/understanding-caching/).
+- **Store data already joined.** Copy the customer's name onto each order row, so showing an order is one lookup instead of a join. This is **denormalisation**: reads get faster, and writes get more complicated, because the same fact now lives in two places.
+- **Compute the expensive summary ahead of time.** Store the result of a heavy aggregate and refresh it every few minutes, instead of recalculating it per request. This is a **materialised view**.
+- **Build separate tables shaped for reading.** Writes go to the normal tables; change events keep purpose-built read tables up to date, so reads and writes scale independently. This is **CQRS**, and the event stream that feeds it is a [message queue](/guides/message-queues/).
+- **Smooth out write bursts.** Put a queue between the request and the database, so a burst of writes arrives batched and steady. This is **write buffering**. Why it helps: the database no longer has to survive the peak, it only has to keep up with the average, and the queue turns the excess into a short delay.
 
-If the cache hit rate is already high and the remaining reads still saturate the box, it's time for copies.
+If the cache already answers most reads and what's left still saturates the server, it's time for copies.
 
 </Collapse>
 
-<Collapse id="replicas" title="2. Read replicas and replication">
+<Collapse id="replicas" title="2. Copies that answer reads">
+
+Reads still saturate the database. The next move is more databases that can answer them.
+
+Keep one server that accepts all writes: the **primary** (or leader). Add copies that receive a stream of every change it makes and answer read-only queries: **replicas** (or followers). Point reporting, search and read-heavy traffic at the replicas, and the primary breathes easier.
 
 <DiagramDatabaseScaling1 />
 
-The first distributed move, and the answer to *read* pressure. You keep one **primary** (leader) that takes all writes, and add **replicas** (followers) that receive a stream of those changes and serve read-only queries. Point reporting, search and read-heavy traffic at the replicas; the primary breathes easier.
-
 <Stack>
   <Layer idx="W" title="Primary (leader)" speed="source of truth">
-    All writes go here. It's still the single write bottleneck — replicas don't help write load.
+    All writes go here. It's still the single bottleneck for writes: replicas don't take any write load off it.
   </Layer>
   <Arrow>↓ streams changes to ↓</Arrow>
   <Layer idx="R" title="Replica(s) (followers)" speed="serve reads">
-    Read-only copies. Add more to scale reads. Can be promoted to primary on failure.
+    Read-only copies. Add more to handle more reads. One can be promoted to primary if the primary fails.
   </Layer>
 </Stack>
 
-How the primary waits for replicas defines the trade-off:
+### Should the primary wait for the copy?
 
-- **Asynchronous** (the common default) — the primary commits and replies immediately, then ships changes. Fast, but replicas trail behind, and a failover can lose the last few writes.
-- **Synchronous** — the primary waits for a replica to confirm before acknowledging. Little or no data loss on failover, but every write is slower.
+When a write arrives, the primary can confirm it to your app straight away, or wait until a replica has it too. That choice is the whole trade-off:
+
+- **Asynchronous** (the usual default): the primary saves the change, replies at once, then ships the change to replicas. Writes are fast, but replicas trail behind, and if the primary dies, the last few writes it hadn't shipped yet can be lost.
+- **Synchronous**: the primary waits for a replica to confirm before replying. A failover loses little or nothing, but every write is slower.
 
 <Note type="wild" label="◈ In the wild · Uber, 2016">
 
-Uber moved its core storage from Postgres to MySQL, and replication was a large part of why. In their write-up, an update in Postgres writes a new row version and updates *every* index on the table — "write amplification" — and because Postgres replicates those physical changes, the amplification travels down the replication stream too, multiplying cross-data-centre bandwidth. Whether or not you'd make the same call today, it's the clearest real account of how a storage engine's internals decide what replication costs. [(Uber Engineering)](https://www.uber.com/blog/postgres-to-mysql-migration/)
+Uber moved its core storage from Postgres to MySQL, largely because of replication. Their write-up explains that a Postgres update writes a new row version and updates *every* index on the table. Postgres replicates those physical changes, so this "write amplification" travels down the replication stream too, multiplying cross-data-centre bandwidth. The clearest real account of storage internals deciding what replication costs. [(Uber Engineering)](https://www.uber.com/blog/postgres-to-mysql-migration/)
 
 </Note>
 
-### Lag is not a constant
+### Why the comment vanished: replication lag
 
-With async replication a replica is *behind* the primary, so a user who writes a comment and reloads from a replica may not see it — a read-your-own-writes bug.
+Priya posts a comment and the page reloads. The write went to the primary; the reload's read went to a replica.
 
-The mental model that causes these bugs is "replicas are about 50 ms behind." They aren't. Lag is near zero, and near zero — and then it's eleven seconds. It spikes when a backfill or bulk delete floods the log, when a long query on the replica blocks replay, during failover, and whenever write volume outruns the replica's apply process, which is often more single-threaded than the primary. **Lag is worst exactly when load is highest**, so these bugs are invisible in staging and appear for a few users at peak.
+<Race a="Primary" b="Replica" result="Result: Priya's own comment is missing when the page reloads" steps={[
+  { a: "Saves Priya's comment and replies \"posted\"", tone: "good" },
+  { b: "Still applying changes from a few seconds ago", note: true },
+  { b: "Priya's reload arrives. Serves the page without her comment", tone: "bad" },
+  { a: "Has already sent the comment; it's queued behind older changes", note: true },
+  { b: "Applies the comment, one reload too late" }
+]} />
 
-Three fixes, cheapest first:
+With asynchronous replication, a replica is always somewhat *behind* the primary. The gap is called **replication lag**, and this bug is a **read-your-own-writes** failure: you changed something and then couldn't see your own change.
 
-1. **Sticky primary window** — after a user writes, route *their* reads to the primary for a few seconds. Covers most cases.
-2. **Version token** — capture the write's log position at commit (a Postgres LSN from `pg_current_wal_lsn()`, a MySQL GTID), carry it in the session, and have the read path wait for the replica to reach it or fall back to the primary.
-3. **Pin critical paths** — account settings and checkout confirmation always read from the primary.
+The belief that causes these bugs is "replicas are about 50 ms behind". They aren't. Lag is near zero, and near zero, and then it's eleven seconds. It spikes when a backfill or bulk delete floods the change stream, when a long query on the replica blocks it from applying changes, during failover, and whenever writes outrun the replica's apply process, which is often more single-threaded than the primary. **Lag is worst exactly when load is highest**, so these bugs never show up in staging and appear for a few users at peak.
 
-Monitor lag in *bytes* of log distance as well as seconds: "seconds behind" reports a cheerful zero on an idle system.
+### Three fixes, cheapest first
 
-This is the same eventual-consistency trade-off as [cache staleness](/guides/understanding-caching/), one layer down — the dial the [Consistency & CAP guide](/guides/consistency-cap/) turns.
+1. **Send a user's reads to the primary for a few seconds after they write.** This is a **sticky primary window**. Why it works: the only person who notices the lag right away is the one who just wrote, and they're the one reading from the primary. Covers most cases.
+2. **Remember how far the write got, and wait for the replica to catch up.** At commit, capture the write's position in the change log (a Postgres LSN from `pg_current_wal_lsn()`, a MySQL GTID) and carry it in the session. This is a **version token**. The read path waits until the replica has applied that position, or falls back to the primary.
+3. **Always read critical pages from the primary.** Account settings and checkout confirmation are worth the extra load.
 
-Replicas scale reads and give you a failover target, but they do **nothing** for write throughput or total data size. When those are the problem, you have to split the data itself — [Part 4](/guides/database-scaling/split/).
+Monitor lag as a *distance in the change log* (bytes behind), not only as seconds. Time-based lag is measured from recent transactions, so it can mislead: in Postgres, `replay_lag` shows the delay of the most recent changes, and on a quiet, caught-up system it goes blank (NULL) rather than reading zero.
+
+This is the same trade-off as [cache staleness](/guides/understanding-caching/), one layer down: you accept slightly old answers in exchange for speed, which is called **eventual consistency**. The [Consistency & CAP guide](/guides/consistency-cap/) turns that dial properly.
+
+<Note type="key" label="What to remember">
+
+- The cheapest load is the query you never run: cache, precompute, or store data the way it's read.
+- Replicas add read capacity and a failover target. They do **nothing** for write volume or total data size.
+- Replication lag isn't a constant; it spikes at peak. Send a user's reads to the primary right after they write.
+
+</Note>
+
+When writes or total data size are the problem, you have to split the data itself: [Part 4](/guides/database-scaling/split/).
 
 </Collapse>
 
 <Collapse id="check" title="Check your understanding">
 
-<Quiz q="Reads are slow. You add three read replicas. Nothing improves. What's the most likely mistake?" options={["Replication lag is too high for the replicas to help", "The diagnosis: the slow query scans the table, and a replica runs the same plan", "Three replicas are too few for the read volume"]} answer={1}>
+<Quiz q="Reads are slow. You add three read replicas. Nothing improves. What's the most likely mistake?" options={["Replication lag is too high for the replicas to help", "The diagnosis: the slow query reads the whole table, and a replica runs the same query the same way", "Three replicas are too few for the read volume"]} answer={1}>
 
-Almost certainly the diagnosis. A replica runs the same schema and query plan as the primary, so a query doing a sequential scan over 40 million rows now does it badly on four machines. Replicas add read *capacity*; they do nothing about work per query. Check rows examined per row returned first. The other common answer is routing: nothing sends traffic to the replicas, or the reads sit inside transactions, which most routers pin to the primary.
+Almost certainly the diagnosis. A replica has the same tables, indexes and query plans as the primary, so a query that reads all 40 million rows now does it on four machines instead of one. Replicas add read *capacity*; they don't reduce the work each query does. Check rows examined per row returned first.
+
+The other common answer is routing: nothing actually sends traffic to the replicas, or the reads sit inside transactions, which most routers send to the primary.
 
 </Quiz>
 
-<Quiz q="A read-your-writes bug affects about 2% of users, only at peak, and never reproduces in staging. Where do you look?" options={["A race condition in the frontend", "Cache TTLs that are too long", "Replication lag, which spikes under peak write load and stays near zero in staging"]} answer={2}>
+<Quiz q="About 2% of users sometimes can't see a change they just made, only at peak, and it never reproduces in staging. Where do you look?" options={["A race condition in the frontend", "Cache TTLs that are too long", "Replication lag, which spikes under peak write load and stays near zero in staging"]} answer={2}>
 
-Replication lag. It hides because it isn't constant — near zero until it spikes under heavy writes, backfills, or long replica queries, none of which staging has. Fix it structurally: a sticky primary window after each user's write, or a version token the read path waits for.
+Replication lag. It hides because it isn't constant: near zero until it spikes under heavy writes, backfills or long replica queries, none of which staging has. The user's read went to a replica that hadn't applied their write yet.
+
+Fix it structurally: send each user's reads to the primary for a few seconds after they write, or carry a version token that the read path waits for.
 
 </Quiz>
 
@@ -97,7 +123,7 @@ Replication lag. It hides because it isn't constant — near zero until it spike
 
 <Reading>
 
-- [Why Uber switched from Postgres to MySQL](https://www.uber.com/blog/postgres-to-mysql-migration/) — Uber. How storage internals shape replication cost.
-- [Designing Data-Intensive Applications](https://dataintensive.net/), ch. 5 — replication lag and read-your-writes, with every fix compared.
+- [Why Uber switched from Postgres to MySQL](https://www.uber.com/blog/postgres-to-mysql-migration/) — Uber. How storage internals shape what replication costs.
+- [Designing Data-Intensive Applications](https://dataintensive.net/), ch. 5 — Martin Kleppmann. Replication lag and read-your-own-writes, with every fix compared.
 
 </Reading>

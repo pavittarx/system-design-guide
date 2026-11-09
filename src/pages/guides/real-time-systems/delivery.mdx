@@ -6,89 +6,116 @@ chapter: "11"
 current: "11. Real-Time Systems"
 sections:
   - id: "presence"
-    title: "Presence, typing and the cheap-signal trap"
+    title: "Why the green dot costs more than the chat"
   - id: "ordering"
-    title: "Ordering, gaps and catch-up"
+    title: "Finding and filling the hole a dropped connection leaves"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Race, Reading, Recap, Stack, Table } from '../../../components';
 
-<Collapse id="presence" title="1. Presence, typing and the cheap-signal trap">
+<Collapse id="presence" title="1. Why the green dot costs more than the chat">
 
-Presence — the green dot — looks like the smallest feature on the page and is reliably one of the most expensive things in a real-time system, for a reason that generalises: **the cost of a signal is its rate times its audience, and presence is high on both.**
+You ship online indicators: a green dot next to everyone who's connected. A week later your dashboards show more messages about green dots than actual chat messages. That's normal, and the reason applies far beyond presence.
 
-Consider a 1,000-member channel where 200 people are online. Each of those 200 has a status that can change. If every change is broadcast to every member, one person opening their laptop generates 1,000 messages. Now imagine a busy morning where people connect and disconnect constantly — a mobile client on a train changes state every few minutes — and presence traffic dwarfs the actual conversation by an order of magnitude.
+Take a 1,000-member channel with 200 people online. Each of them has a status that can change. If every change is sent to every member, one person opening their laptop produces 1,000 messages. On a busy morning people connect and disconnect constantly (a phone on a train changes state every few minutes), and status traffic outweighs the conversation by ten times.
+
+The rule underneath: **the cost of a signal is how often it changes times how many people receive it.** Online status, often called **presence**, is high on both.
+
+### Four ways to make presence affordable
 
 <Note type="key" label="Four techniques that make presence affordable">
 
-**1 · Only tell people who are looking.** Presence updates go to users currently viewing that channel, not all members. Usually a 10–100× reduction on its own.
+**1 · Only tell people who are looking.** Send status changes only to users currently viewing that channel, not to every member. Usually a 10–100× reduction on its own.
 
-**2 · Batch on an interval.** Collect changes and flush every 1–5 seconds as one message. Presence has no correctness requirement, so a two-second delay is invisible, and a burst of fifty changes becomes one frame.
+**2 · Batch on an interval.** Collect changes and send them every 1–5 seconds as one message. Nothing breaks if a green dot is two seconds late, and a burst of fifty changes becomes one message.
 
-**3 · Debounce flapping.** Do not mark someone offline the instant a connection drops — wait 30–60 seconds. Mobile clients disconnect constantly, and a green dot that flickers is worse than one that is slightly stale.
+**3 · Wait before marking someone offline.** Don't mark someone offline the instant their connection drops; wait 30–60 seconds. Phones disconnect constantly, and a dot that flickers is worse than one that's slightly stale. Ignoring rapid on-off changes like this is called **debouncing**.
 
-**4 · Pull on demand.** For a large member list, do not push presence at all. Send the current state when the user opens the list, and refresh it while it is open.
+**4 · Pull on demand.** For a large member list, don't push status at all. Send the current state when the user opens the list, and refresh it while it's open.
 
 </Note>
 
-Typing indicators are the same problem in miniature and are best handled with a simple protocol: the client sends "typing" at most once every few seconds while the user types, the server broadcasts it with no persistence whatsoever, and the indicator expires on the receiving client after a few seconds without renewal. No "stopped typing" message is needed, which conveniently means a lost message cannot leave someone permanently typing.
+### Typing indicators: let them expire
 
-The general lesson is worth extracting because it applies to read receipts, cursor positions, live reactions and anything else in this family: **ephemeral signals must never touch durable storage, must be batched, and must be scoped to the audience actually looking.** Persisting a typing indicator to a database is a mistake with a remarkably high ceiling on how much damage it can do.
+"Priya is typing…" is the same problem in miniature, and a simple protocol handles it. The sender's app sends "typing" at most once every few seconds while the user types. The server passes it on and stores nothing. The receiver's app hides the indicator after a few seconds unless it hears "typing" again.
+
+Why this works: there's no "stopped typing" message at all, so there's no message to lose. If the network drops a "typing" ping, the indicator just disappears on its own. Nobody can be stuck "typing" forever.
+
+The same applies to read receipts, cursor positions, live reactions and anything else that's only true for a moment. These are **ephemeral signals**, and they follow three rules: never write them to durable storage, batch them, and send them only to the people actually looking. Writing every typing indicator to a database is a mistake with a remarkably high ceiling on the damage it can do.
 
 </Collapse>
 
-<Collapse id="ordering" title="2. Ordering, gaps and catch-up">
+<Collapse id="ordering" title="2. Finding and filling the hole a dropped connection leaves">
 
-A connection that drops for eleven seconds creates a hole in the user's view of the world, and the client cannot see the hole — it only knows what it received. Making that recoverable requires the same primitive in every design: a **monotonic sequence number per stream**.
+Priya's phone loses signal for eleven seconds. Three messages are sent to her channel during that time. When she reconnects, her app shows the message before the gap and the message after it, side by side, as if nothing happened in between.
 
-Every message carries a sequence. The client tracks the highest it has seen. On reconnect it says "I have up to 4,812", and the server replays everything after that from a log. SSE has this built in — the server sets `id:` on each event and the browser sends `Last-Event-ID` automatically on reconnect. With WebSockets you build it yourself, and it is the first thing you should build.
+Her app can't see the hole. It only knows what it received. To make a dropped connection recoverable, every design uses the same tool: a **sequence number per stream**, a counter that goes up by one with every message in a conversation and never goes backwards.
 
-```trace
-client seq 4812   ++connected++
-  ├─ 4813 delivered            ++ok++
-  ├─ ~~connection drops — 4814, 4815, 4816 missed~~
-  ├─ reconnect, client sends **last_seq=4813**
-  ├─ server replays 4814, 4815, 4816 from the channel log
-  └─ 4817 delivered live       ++ok — no gap, no duplicate++
-```
+### How sequence numbers fill the gap
 
-Two decisions follow. First, **how far back can you replay?** The log is finite. If the client has been away longer than the retention window, you cannot replay — you must tell it so, and the client must resynchronise from scratch by fetching current state. Handle this explicitly with a "too far behind, resync" response, because the alternative is a client that silently believes it is up to date and is not.
+Every message carries its number. The app remembers the highest it has seen. On reconnect it says "I have up to 4,813", and the server sends everything after that from its stored log of the channel.
 
-Second, **ordering guarantee within a stream.** Sequence numbers give you per-stream order, which is what users perceive: messages in one conversation appear in the order they were sent. Global ordering across all streams is far more expensive and nobody notices its absence. Scope your ordering guarantee to the conversation, the channel, or the document — the same partition-and-order reasoning as [Message Queues & Async](/guides/message-queues/).
+<Race a="Priya's app" b="Server" result="Result: no gap, no duplicate" tone="good" steps={[
+  { b: "Sends message 4813" },
+  { a: "Receives 4813, remembers it as the latest", tone: "good" },
+  { a: "Connection drops", tone: "bad" },
+  { b: "Messages 4814, 4815, 4816 are sent to the channel. Priya misses them", note: true },
+  { a: "Reconnects and says: last_seq = 4813" },
+  { b: "Replays 4814, 4815, 4816 from the channel log", tone: "good" },
+  { b: "Sends 4817 live, as normal", tone: "good" }
+]} />
+
+SSE has this built in: the server puts an `id:` on each event, and the browser sends it back in a `Last-Event-ID` header when it reconnects. With WebSockets you build it yourself, and it should be the first thing you build.
+
+### Two decisions that follow
+
+**How far back can you replay?** The log has a limit. If Priya was away longer than you keep messages, you can't replay; you must tell her app so, and it must reload the current state from scratch. Handle this with an explicit "too far behind, resync" response. Without it, her app silently believes it's up to date when it isn't.
+
+**What order do you promise?** Sequence numbers give you order within one stream, and that's what people notice: messages in one conversation appear in the order they were sent. Order across all conversations at once is far more expensive, and nobody notices its absence. Promise order per conversation, channel or document, the same partition-then-order reasoning as [Message Queues & Async](/guides/message-queues/).
+
+### Replays mean duplicates
+
+Replay can send a message Priya already has, for example if her app showed 4814 but crashed before it recorded 4814 as the latest. So apps must **deduplicate by message ID**: ignore any message they've already shown. This is what makes "delivered at least once" acceptable on the client, just as idempotent handlers do on the server.
 
 <Note type="wild" label="◈ In the wild · Figma">
 
-Figma leans on exactly this idea for multiplayer editing: each open document lives on a single server that owns the authoritative order of changes. Rather than full CRDTs, it uses last-writer-wins per object property, with that server as referee, so two people dragging the same rectangle converge without a merge conflict. A client that drops resyncs from the server's ordered log — the same "replay from where I left off" move. Their team wrote it up in [how Figma's multiplayer technology works](https://www.figma.com/blog/how-figmas-multiplayer-technology-works/).
+Figma's servers run one process per open document, and everyone editing it connects there; the server is the single authority. For each property of each object it keeps the latest value any client sent, so two people dragging the same rectangle end up agreeing. On reconnect, Figma skips replay entirely: the app downloads a fresh copy and reapplies its offline edits, the "resync from scratch" path, used every time. ([Figma](https://www.figma.com/blog/how-figmas-multiplayer-technology-works/))
 
 </Note>
 
-And since replay means a message can be delivered twice, clients must deduplicate by message ID. Idempotent handling on the receiving side is what makes at-least-once delivery acceptable, exactly as it is on the server side.
+<Note type="key" label="What to remember">
+
+- The cost of a signal is its rate times its audience. Send presence only to viewers, batch it, delay "offline", and never store it.
+- Give every message a sequence number per conversation. On reconnect the client says what it has, and the server sends the rest, or says "too far behind, resync".
+- Replay means duplicates, so clients deduplicate by message ID.
+
+</Note>
 
 </Collapse>
 
 <Collapse id="check" title="Check your understanding">
 
-<Quiz q="Presence traffic is 10× your message traffic. Where did it go wrong, and how do you fix it without removing the feature?" options={["Presence is persisted to the database; moving it to Redis fixes the volume", "Every status change is broadcast to every member; scope it to viewers, batch it, debounce going offline, and pull it for large lists", "Heartbeats are too frequent; raising the heartbeat interval cuts the presence messages"]} answer={1}>
+<Quiz q="Presence traffic is 10× your message traffic. Where did it go wrong, and how do you fix it without removing the feature?" options={["Presence is stored in the database; moving it to Redis fixes the volume", "Every status change goes to every member; send it only to viewers, batch it, delay going offline, and pull it for large lists", "Heartbeats are too frequent; raising the heartbeat interval cuts the presence messages"]} answer={1}>
 
-The usual cause is broadcasting every status change to every member of every channel the user belongs to. One person opening a laptop, in ten channels averaging a thousand members, is ten thousand messages — for a green dot. Mobile clients making it worse by flapping on and off the network several times a minute is the second half of the problem.
+The usual cause is sending every status change to every member of every channel the user is in. One person opening a laptop, in ten channels of a thousand members each, is ten thousand messages, for a green dot. Phones dropping on and off the network several times a minute double the problem.
 
-Four fixes, roughly in order of payoff. Scope to viewers: send presence only to users currently looking at that channel, not all members — typically 10–100× on its own. Batch: collect changes and flush every one to five seconds as a single message; presence has no correctness requirement so the delay is invisible. Debounce: wait 30–60 seconds before marking someone offline, which removes most flapping entirely. And for large member lists, stop pushing altogether — fetch presence when the user opens the list and refresh it while it is open.
+Four fixes, roughly in order of payoff. Send status only to people currently looking at that channel: typically 10–100× on its own. Batch changes and send them every one to five seconds; nobody notices the delay. Wait 30–60 seconds before marking someone offline, which removes most of the flicker. And for large member lists, stop pushing: fetch status when the list opens and refresh it while it's open.
 
-Underneath all four is one rule: ephemeral signals must never touch durable storage, must be batched, and must be scoped to the audience actually looking.
+The rule under all four: signals that are only true for a moment never go to durable storage, are batched, and go only to the people looking.
 
 </Quiz>
 
-<Quiz q={"Your users report messages \"arriving out of order\" after a brief network blip. What's actually happening?"} options={["It is a gap: messages sent during the disconnect never arrived, and the client cannot see the hole", "TCP reordered packets while retransmitting after the blip", "Two gateways delivered the same stream and the client sorted by their unsynchronised clocks"]} answer={0}>
+<Quiz q={"Your users report messages \"arriving out of order\" after a brief network blip. What's actually happening?"} options={["It's a gap: messages sent during the disconnect never arrived, and the app can't see the hole", "TCP reordered packets while retransmitting after the blip", "Two gateways delivered the same stream and the app sorted by their unsynchronised clocks"]} answer={0}>
 
-Almost certainly not reordering — TCP guarantees order within a connection. What they are seeing is a *gap*: messages sent while they were disconnected never arrived, so a later message appears immediately after an earlier one with the middle missing. The client has no way to know something is absent unless you tell it.
+Almost certainly not reordering: TCP keeps bytes in order within one connection. What users see is a *gap*. Messages sent while they were disconnected never arrived, so a later message appears right after an earlier one with the middle missing. The app can't know something is absent unless you tell it.
 
-The fix is a monotonic sequence number per stream. The client tracks the highest it has seen and sends it on reconnect; the server replays everything after it from the channel log. If the client is further behind than your retention window, respond with an explicit "too far behind — resync" so it fetches current state rather than silently believing it is complete.
+The fix is a sequence number per stream. The app sends the highest number it has on reconnect, and the server replays the rest from the channel log. If the app is further behind than the log goes back, answer "too far behind, resync" so it reloads current state instead of believing it's complete.
 
-Two details to get right: replay means duplicates are possible, so clients must deduplicate by message ID; and scope the ordering guarantee to a single stream (conversation, channel, document). Global ordering across all streams is far more expensive and nobody perceives its absence.
+Two details: replay can deliver a message twice, so apps deduplicate by message ID; and promise order only within one conversation, channel or document. Order across all of them is far more expensive and nobody notices it's missing.
 
 </Quiz>
 

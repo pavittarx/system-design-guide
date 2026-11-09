@@ -13,42 +13,55 @@ series:
     - { slug: message-queues, label: "Message Queues" }
 sections:
   - id: "truth"
-    title: "The uncomfortable truth"
+    title: "Something is always broken"
   - id: "redundancy"
-    title: "Redundancy & failover"
+    title: "Never have just one"
 ---
 
 import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
 
 <ColdOpen tag="◇ the domino that ate the datacenter">
 
-The recommendations service gets slow — not down, just slow. The product page calls it and waits. Threads pile up waiting. The web servers run out of threads, so *they* get slow. The load balancer marks them unhealthy and piles their traffic onto the survivors, which now also drown. In ninety seconds a minor hiccup in a service nobody would call critical has taken down the entire site. Nothing "broke." It *cascaded.* This guide is the set of tools that stop the dominoes.
+The recommendations service gets slow. Not down, just slow. The product page calls it and waits. Each waiting request holds a thread, and threads pile up. The web servers run out of threads, so *they* get slow. The load balancer marks them unhealthy and moves their traffic onto the survivors, which now drown too. In ninety seconds, a hiccup in a service nobody would call critical has taken down the whole site. Nothing "broke". It *cascaded*. This guide is the set of tools that stop the dominoes.
 
 </ColdOpen>
 
-<Collapse id="truth" title="1. The uncomfortable truth">
+<Collapse id="truth" title="1. Something is always broken, so plan to fail small">
 
-At scale, something is always broken. A disk somewhere is dying, a network link is flapping, a deploy is misbehaving, a dependency is having a bad day. You cannot engineer failure away — with enough machines, the rare becomes the constant. So the goal shifts from "don't fail" to **"fail small, fail contained, and keep serving what you still can."** This is *resilience*, and it's a set of specific, learnable moves.
+Run one server and a disk failure is a rare event. Run thousands and it's a normal Tuesday: somewhere a disk is dying, a network link is flapping, a deploy is misbehaving, a dependency is having a bad day. With enough machines, the rare becomes the constant, and you can't engineer that away.
+
+So the goal changes from "don't fail" to **"fail small, keep the failure contained, and keep serving what you still can."** This is called **resilience**, and it's a set of specific, learnable moves. The rest of this guide is those moves.
 
 <Note type="key" label="Two numbers worth knowing">
 
-**Availability** is often quoted in nines. "Three nines" (99.9%) is ~8.76 hours of downtime a year (about 8h 46m); "four nines" (99.99%) is ~52 minutes; "five nines" is ~5 minutes. Each extra nine costs roughly an order of magnitude more effort — which is why "how many nines do we actually need?" is a business question, not just an engineering one.
+**Availability** is the share of time a system works, often quoted in "nines". "Three nines" (99.9%) allows ~8.76 hours of downtime a year (about 8h 46m); "four nines" (99.99%) allows ~52 minutes; "five nines" about 5 minutes. Each extra nine costs roughly an order of magnitude more effort, which is why "how many nines do we actually need?" is a business question, not just an engineering one.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="redundancy" title="2. Redundancy & failover">
+<Collapse id="redundancy" title="2. Never have just one, and prove the spare works">
 
-The foundation: never have exactly one of anything critical. Two servers, replicated databases, multiple availability zones. When one dies, another takes over — **failover**. The [load balancing guide](/guides/load-balancing/) covered the mechanism and the [database scaling guide](/guides/database-scaling/) covered the replica side of it; the principle here is broader: *a single point of failure is a scheduled outage you haven't been told the date of yet.*
+Your only database server's disk dies at 2 a.m. Everything that needs the database is down until someone restores it. The fix is the foundation of everything else: never have exactly one of anything critical. Two servers, a replicated database, several availability zones. When one dies, another takes over. This is called **failover**.
 
-The subtlety is that failover itself must be tested. A backup that has never been failed-over to is not a backup — it's a hope. Plenty of outages are made worse by a standby that turned out to be misconfigured, out of date, or, memorably, also on fire.
+The [load balancing guide](/guides/load-balancing/) covered the mechanism and the [database scaling guide](/guides/database-scaling/) covered the replica side. The principle here is broader: *a single point of failure is a scheduled outage whose date you haven't been told yet.*
+
+The catch is that failover itself must be tested. A spare you have never actually switched to isn't a backup, it's a hope. Plenty of outages are made worse by a standby that turned out to be misconfigured, out of date, or, memorably, also on fire.
 
 <Note type="wild" label="◈ In the wild · AWS S3 2017 Outage">
 
-On February 28, 2017, an engineer running a debugging tool typed a command that deleted far more S3 indexing servers than intended in the us-east-1 region. S3 went down for hours, which broke thousands of downstream sites and other AWS services that hard-depended on it. It highlighted the blast-radius ceiling: when services compose as hard dependencies, their availability drops to the product of all inputs.
+On 28 February 2017, while debugging a slow S3 billing system, an engineer ran a routine command with one input mistyped. It removed far more servers than intended, including ones S3's index subsystem needed in us-east-1. S3 was down for hours, breaking thousands of sites and AWS services that hard-depended on it.
+
+</Note>
+
+That last phrase is the lesson. When services depend on each other with no fallback, their availabilities multiply: if you need ten services that each work 99.9% of the time, you work at most about 99.0% of the time. [Part 3](/guides/reliability-toolkit/practice/#arithmetic) does that arithmetic.
+
+<Note type="key" label="What to remember">
+
+- At scale something is always failing. Aim to fail small and contained, not to never fail.
+- Have at least two of anything critical, and actually fail over to the spare regularly; an untested spare is a hope.
+- Every hard dependency multiplies into your own availability. The toolkit in this guide is about breaking that chain.
 
 </Note>
 
 </Collapse>
-
