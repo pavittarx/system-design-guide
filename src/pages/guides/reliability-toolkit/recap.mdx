@@ -15,27 +15,27 @@ import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, 
 
 <Recap>
 
-- **Redundancy** — answers "one machine died." Useless until you've actually failed over to the spare.
+- **Redundancy** answers "a machine died". Have two of everything critical, and it's useless until you've actually switched over to the spare.
 
-- **Timeout** — answers "it's slow." Bounds the wait, and by doing so bounds the concurrency: `throughput × timeout`.
+- **Timeout** answers "it's slow". It caps how long you wait, and so caps how many requests can pile up waiting: at most `throughput × timeout`.
 
-- **Retry with backoff + jitter** — answers "it blipped." Fixes retry timing only.
+- **Retry with backoff and jitter** answers "it blipped". It spreads retries out in time; it doesn't reduce how many there are.
 
-- **Retry budget** — answers "everything blipped at once." Fixes retry volume, which is the half that causes outages.
+- **Retry budget** answers "everything blipped at once". It caps retries at a small share of live traffic, which is the half that causes outages.
 
-- **Circuit breaker** — answers "it's down." Stops paying for calls you know will fail, and gives the sick service room. Says nothing about overload.
+- **Circuit breaker** answers "it's down". It stops paying for calls you know will fail and gives the sick service room. It does nothing about overload.
 
-- **Bulkhead** — answers "one thing is eating everything." The only tool that gives you a hard bound rather than a smaller number.
+- **Bulkhead** answers "one thing is eating everything". It's the only tool that gives a hard limit, not just a smaller number.
 
-- **Load shedding** — answers "there's more work than machine." Says nothing about a slow dependency.
+- **Load shedding** answers "there's more work than machine". It rejects the excess fast. It does nothing about a slow dependency.
 
-- **Graceful degradation** — answers "this part is optional." Decide the least-bad fallback before the incident, per feature.
+- **Graceful degradation** answers "this part is optional". Decide each feature's least-bad fallback before the incident.
 
-- **Deadline propagation** — makes the timeouts above compose instead of contradicting each other.
+- **Deadline propagation** passes the time left down the call chain, so every hop's timeout fits inside the caller's instead of contradicting it.
 
-- **Chaos engineering** — the only evidence that any of the above works.
+- **Chaos engineering** breaks things on purpose. It's the only evidence that any of the above works.
 
-- **Metastable failure** — the outage that survives its own cause. Shed load to escape; you cannot wait it out.
+- **Metastable failure** is the outage that outlives its cause: retries and cold caches keep it going. Remove load to escape; waiting doesn't work.
 
 </Recap>
 
@@ -45,7 +45,7 @@ And the numbers worth carrying in your head:
 
 | Number | What it means |
 | ------ | ------------- |
-| 99% | 3.65 days of downtime a year — about 7.3 hours a month. "Two nines" sounds respectable and is roughly a working day per quarter. |
+| 99% | 3.65 days of downtime a year — about 7.3 hours a month. "Two nines" sounds respectable and is nearly a full day per quarter. |
 | 99.9% | 8.76 hours a year — about 43.8 minutes a month. The default target most teams claim without checking. |
 | 99.95% | 4.38 hours a year — about 21.9 minutes a month. A common contractual middle ground. |
 | 99.99% | 52.6 minutes a year — about 4.4 minutes a month. Less than one bad deploy's worth. Requires automated recovery; humans are too slow to be in the loop. |

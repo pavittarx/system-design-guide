@@ -8,9 +8,9 @@ sections:
   - id: "keys"
     title: "What are you limiting, exactly?"
   - id: "429"
-    title: "429, Retry-After, and the well-behaved client"
+    title: "Rejecting a request without making things worse"
   - id: "auth"
-    title: "Auth at the edge"
+    title: "Who is this, and may they do that?"
   - id: "gotchas"
     title: "The gotchas that actually bite"
   - id: "check"
@@ -19,59 +19,112 @@ sections:
     title: "Related reading"
 ---
 
-import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { Collapse, Note, Quiz, Race, Reading } from '../../../components';
 
 <Collapse id="keys" title="1. What are you limiting, exactly?">
 
-The algorithm is the easy part. The key — the thing you count *per* — determines whether the limiter protects you or just annoys your customers.
+You set a limit of 100 requests a minute per IP address. On Monday morning, a whole office of legitimate users starts getting rejected, while the attacker you were worried about sails through. The algorithm was fine. You counted the wrong thing.
 
-**Per API key or account** is the right default for authenticated traffic: it maps to a customer, a plan, and a bill, and it's forgeable only by stealing a credential.
+The thing you count *per*, called the limiter's **key**, decides whether the limiter protects you or just annoys your customers.
 
-**Per IP** is what you're left with for unauthenticated traffic, and it's a blunt instrument — a corporate NAT or a mobile carrier gateway can put thousands of legitimate users behind one address, so any per-IP limit strict enough to stop an attacker will lock out an entire office. Meanwhile a determined attacker rotates through a residential proxy pool and never trips it. Per-IP limits are a speed bump, not a wall.
+### Per account: the right default
 
-**Per endpoint** matters because costs differ by orders of magnitude. A limit that's generous for `GET /health` is reckless for `POST /reports/generate`. The refinement is to charge by *cost* rather than by request: a cheap read deducts one token, an expensive aggregation deducts fifty. This is the only sane way to limit a GraphQL endpoint, where "1,000 requests per hour" is meaningless because one request can be a thousand times more expensive than another — compute the query's cost from its shape and deduct that.
+For authenticated traffic, count per API key or account. It maps to a customer, a plan and a bill, and the only way to forge it is to steal a credential.
+
+### Per IP: a speed bump, not a wall
+
+For unauthenticated traffic, the IP address is often all you have, and it's blunt. A corporate network or a mobile carrier can put thousands of legitimate users behind one address (**NAT**: many devices sharing one public IP). Any per-IP limit strict enough to stop an attacker locks out the entire office.
+
+Meanwhile a determined attacker rotates through a pool of residential proxies, a different IP for each request, and never trips it.
+
+### Per endpoint, charged by cost
+
+Endpoints differ in cost by orders of magnitude. A limit that's generous for `GET /health` is reckless for `POST /reports/generate`.
+
+The refinement is to charge by *cost* instead of counting requests: a cheap read takes one token from the bucket, an expensive aggregation takes fifty. This is the only sane way to limit a GraphQL endpoint, where one request can be a thousand times more expensive than another. Work out the query's cost from its shape and deduct that.
 
 <Note label="Layer the limits">
 
-Real systems run several simultaneously: a global limit protecting the platform, a per-tenant limit enforcing the plan, a per-endpoint limit protecting expensive paths, and a per-IP limit on the unauthenticated surface. A request must pass all of them. Return a response that says *which* one it hit — otherwise a customer well within their documented quota gets a 429 and no way to understand why.
+Real systems run several at once: a global limit protecting the platform, a per-tenant limit enforcing the plan, a per-endpoint limit protecting expensive paths, and a per-IP limit on the unauthenticated surface. A request must pass all of them.
+
+Say in the response *which* one it hit. Otherwise a customer well within their documented quota gets a 429 and has no way to understand why.
 
 </Note>
 
-One more distinction that saves arguments: **rate limits** smooth traffic over seconds and are about protecting infrastructure. **Quotas** cap consumption over a month and are about billing. They look identical in implementation and behave completely differently in incidents — you can safely relax a rate limit at 3 a.m. to get a customer moving; relaxing a quota is a commercial decision.
+### Rate limits and quotas are not the same thing
+
+A **rate limit** smooths traffic over seconds and protects infrastructure. A **quota** caps consumption over a month and is about billing. They look identical in code and behave completely differently in an incident. You can safely relax a rate limit at 3 a.m. to get a customer moving; relaxing a quota is a commercial decision.
 
 </Collapse>
 
-<Collapse id="429" title="2. 429, Retry-After, and the well-behaved client">
+<Collapse id="429" title="2. Rejecting a request without making things worse">
 
-Rejecting a request is the easy half. The hard half is that the client's reaction determines whether your limiter reduced load or multiplied it.
+Rejecting a request is the easy half. The hard half is that the client's *reaction* decides whether your limiter reduced load or multiplied it.
 
-Return **429 Too Many Requests** — never 503, which means "server broken" and invites indiscriminate retries. Include **`Retry-After`** with the number of seconds until capacity exists; it converts a guess into an instruction. And expose the limit state on *successful* responses too, via `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers, so a well-written client can slow down before it hits the wall rather than after.
+### Say "slow down", and say when
+
+Return **429 Too Many Requests**. Don't return 503 Service Unavailable: it says the server is down for everyone, and generic retry logic treats that as a server failure worth retrying.
+
+Include a **`Retry-After`** header with the number of seconds until there's capacity again. It turns the client's guess into an instruction.
+
+Expose the limit state on *successful* responses too, with `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers. A well-written client can then slow down before it hits the wall, instead of after.
+
+### The retry that arrives all at once
+
+Ten thousand clients get a 429 saying `Retry-After: 60`. Here are two of them:
+
+<Race a="Client A" b="Client B" result="Result: every rejected client returns in the same second, and gets rejected again" steps={[
+  { a: "12:00:00 Gets 429, Retry-After: 60" },
+  { b: "12:00:00 Gets 429, Retry-After: 60" },
+  { a: "Waits exactly 60 s", note: true },
+  { b: "Waits exactly 60 s", note: true },
+  { a: "12:01:00 Retries", tone: "bad" },
+  { b: "12:01:00 Retries", tone: "bad" }
+]} />
+
+You didn't spread the load; you *synchronised* it, and built a metronome that rings every sixty seconds. The fix is **jitter**: a random extra delay, so the retries scatter across a window instead of landing together. Clients must add it; servers can help by varying the advertised value slightly per response.
 
 <Note type="warn" label="Retry-After without jitter is a scheduling weapon">
 
-Ten thousand clients get a 429 saying `Retry-After: 60`. Ten thousand clients retry at exactly the same second. You have not spread the load — you have *synchronised* it, and built yourself a metronome that will keep ringing every sixty seconds. Clients must add random jitter; servers should help by varying the advertised value slightly per response. This is the same failure as synchronised cache expiry in [Understanding Caching](/guides/understanding-caching/) and the same fix.
+This is the same failure as cache entries all expiring at the same moment in [Understanding Caching](/guides/understanding-caching/), and it has the same fix: add randomness so the herd arrives a few at a time.
 
 </Note>
 
-A 429 must also be *cheap*. If rejecting costs a database lookup to resolve the account and its plan, then an attacker sending a hundred thousand requests a second is still doing a hundred thousand database lookups a second, and your limiter has become the load. Resolve identity from a cached credential, check the counter, reject. Nothing else.
+### A rejection must be cheap
 
-The two ends of this are the same contract seen from opposite sides. Stripe's rate-limiter design and GitHub's REST quotas are both worth reading as worked examples of a provider making its limits legible enough that clients can behave; the corresponding client-side discipline — exponential backoff with jitter, a retry budget, and a circuit breaker for the case where backing off isn't working — is in [The Reliability Toolkit](/guides/reliability-toolkit/).
+If rejecting a request costs a database lookup to find the account and its plan, an attacker sending a hundred thousand requests a second still causes a hundred thousand lookups a second. Your limiter has become the load. Identify the caller from a cached credential, check the counter, reject. Nothing else.
+
+### Both ends of the same contract
+
+Stripe's rate-limiter design and GitHub's REST quotas are worth reading as worked examples of a provider making its limits clear enough that clients can behave. The client side of the same contract is exponential backoff with jitter, a retry budget, and a circuit breaker for when backing off isn't working; it's all in [The Reliability Toolkit](/guides/reliability-toolkit/).
 
 </Collapse>
 
-<Collapse id="auth" title="3. Auth at the edge">
+<Collapse id="auth" title="3. Who is this, and may they do that?">
 
-Two questions, routinely conflated. **Authentication** is "who is this?" — it's uniform, cacheable, and belongs at the gateway. **Authorization** is "may they do this to that?" — it depends on the resource, and it belongs in the service that owns the resource.
+Should the gateway decide whether this user may edit this document? It's tempting, because the gateway already checks every token. But the answer depends on who owns the document, who it's shared with and the org chart, and all of that lives in the document service.
 
-The reason the split matters is that gateway-side authorization requires the gateway to know your domain model. "Can this user edit this document?" depends on ownership, sharing rules, and organisational hierarchy, all of which live in the document service. A gateway that answers it has either duplicated that logic — where it will drift — or is calling back into the service anyway, which is the round trip you were trying to avoid.
+### Two questions that get confused
 
-Practically: the gateway validates the token's signature and expiry, rejects anything malformed before it touches a service, and forwards a verified identity downstream. Validating a JWT locally against a cached public key set costs microseconds and no network call, which is the entire appeal — and also the entire drawback, since a locally-validated token cannot be revoked. Short expiry (minutes, not days) plus refresh tokens is the standard mitigation; a revocation list checked at the gateway is the belt-and-braces version, at the cost of a lookup.
+"Who is this?" is called **authentication**. It's the same for every request, it can be cached, and it belongs at the gateway.
+
+"May they do this to that?" is called **authorization**. It depends on the resource, and it belongs in the service that owns the resource.
+
+A gateway that answers authorization questions has either copied the service's rules, where they'll drift out of date, or calls back into the service anyway, which is the round trip you were trying to avoid.
+
+### Checking a token without a network call
+
+The usual token is a **JWT** (JSON Web Token): a small signed document saying who the caller is and when the token expires. The gateway checks the signature against the issuer's published public keys (the **JWKS**, cached locally), rejects anything malformed or expired before it touches a service, and forwards a verified identity downstream.
+
+Validating locally costs microseconds and no network call, which is the whole appeal. It's also the whole drawback: a token checked only locally can't be revoked, because nothing asks the issuer.
+
+The standard mitigation is short expiry, minutes rather than days, plus **refresh tokens** that let the client get a new one. A revocation list checked at the gateway is the belt-and-braces version, at the cost of a lookup.
 
 <Note type="warn" label="The forwarded-identity trap">
 
-Once the gateway injects `X-User-Id`, every internal service trusts that header. If any service is reachable without going through the gateway — a debug port, an internal load balancer, a pod someone can reach from a neighbouring namespace — then anyone who can reach it can set that header and become any user.
+Once the gateway adds an `X-User-Id` header, every internal service trusts it. Now suppose any service can be reached *without* going through the gateway: a debug port, an internal load balancer, a pod reachable from a neighbouring namespace. Anyone who can reach it can set that header themselves and become any user.
 
-Either strip and re-inject those headers at the boundary *and* make it impossible to reach services directly, or authenticate service-to-service calls independently with mTLS. The same reasoning applies to `X-Forwarded-For`, which is why [Load Balancing](/guides/load-balancing/) spends time on trusting the right hop.
+Either strip and re-add those headers at the boundary *and* make it impossible to reach services directly, or authenticate service-to-service calls independently with **mTLS** (both sides present certificates). The same reasoning applies to `X-Forwarded-For`, which is why [Load Balancing](/guides/load-balancing/) spends time on trusting the right hop.
 
 </Note>
 
@@ -79,19 +132,42 @@ Either strip and re-inject those headers at the boundary *and* make it impossibl
 
 <Collapse id="gotchas" title="4. The gotchas that actually bite">
 
-**Nested timeouts that disagree.** Gateway timeout 30 s, service timeout 60 s. At 45 seconds the gateway gives up and returns 504 while the service happily continues, finishes the work, and writes to the database. The client sees a failure, retries, and the work happens twice. Timeouts must decrease as you go inward, and the remaining deadline should be propagated with the request.
+### Nested timeouts that disagree
 
-**Body buffering at the gateway.** Many gateways buffer the full request body before forwarding, so they can retry or inspect it. A hundred concurrent 200 MB uploads is 20 GB of gateway memory. Stream large bodies, or route uploads past the gateway entirely to pre-signed storage URLs.
+The gateway's timeout is 30 seconds; the order service's is 60. A request takes 45 seconds:
 
-**Rate-limiting the health check.** Health probes come from a small set of IPs at a steady rate. Put them behind a per-IP limiter and one day the limiter trips, probes fail, the load balancer marks every instance unhealthy, and the fleet removes itself from service. Exempt probes explicitly.
+<Race a="Gateway (30 s timeout)" b="Order service (60 s timeout)" result="Result: the customer saw a failure and now has two orders" steps={[
+  { a: "0 s: forwards POST /orders" },
+  { b: "Starts work", note: true },
+  { a: "30 s: gives up. Returns 504 to the client", tone: "bad" },
+  { b: "Keeps going, unaware anyone stopped waiting", note: true },
+  { b: "45 s: writes the order to the database" },
+  { a: "Client retries: forwards a new POST /orders", tone: "bad" }
+]} />
 
-**Limit headers as an oracle.** Returning different limits for valid and invalid API keys tells an attacker which keys are real. Returning 401 for "wrong password" and 404 for "no such user" enumerates your customer list. Be uniform about what you leak.
+Timeouts must get shorter as you go inward, and the remaining deadline should travel with the request so each hop knows how much time is actually left.
 
-**The unauthenticated endpoint nobody rate-limited.** Login, password reset, signup, and search are the four that get missed, and each is expensive in a different way — bcrypt burns CPU by design, password reset sends email that costs money and reputation, and search hits the most expensive index you own. Rate-limit them by IP *and* by target account, so an attacker cannot spread an attack on one account across many addresses.
+### Other gotchas
 
-**Version drift between the gateway config and the services.** Routing rules, timeouts and limits usually live in gateway config, deployed on a different cadence from the services. Ship the two together or the config eventually references an endpoint that no longer exists — and gateway config changes have the widest blast radius of anything in your system, so they deserve canaries as much as code does.
+**Body buffering at the gateway.** Many gateways read the entire request body into memory before forwarding it, so they can retry or inspect it. A hundred concurrent 200 MB uploads is 20 GB of gateway memory. Stream large bodies, or send uploads past the gateway entirely, straight to storage via pre-signed URLs.
 
-**Assuming clients read your documentation.** They read your errors. A 400 that says "invalid request" produces a support ticket; one that says `{"code":"invalid_currency","detail":"expected ISO 4217, got 'dollars'","field":"currency"}` produces a fix. Error messages are the most-read documentation you will ever write.
+**Rate-limiting the health check.** Health probes come from a few IPs at a steady rate. Put them behind a per-IP limiter and one day it trips: probes fail, the load balancer marks every instance unhealthy, and the fleet removes itself from service. Exempt probes explicitly.
+
+**Responses that leak which accounts exist.** If valid and invalid API keys get different rate limits, an attacker can tell which keys are real. If "wrong password" returns 401 and "no such user" returns 404, your login endpoint lists your customers for anyone who asks. Be uniform about what you reveal.
+
+**The unauthenticated endpoint nobody rate-limited.** Login, password reset, signup and search are the four that get missed, and each is expensive differently. bcrypt burns CPU by design, password reset sends email that costs money and reputation, and search hits your most expensive index. Limit them by IP *and* by target account, so an attacker can't spread an attack on one account across many addresses.
+
+**Gateway config and services drifting apart.** Routes, timeouts and limits usually live in gateway config, deployed on a different schedule from the services. Ship them together, or the config eventually points at an endpoint that no longer exists. Gateway config changes have the widest blast radius of anything in your system, so they deserve canary rollouts as much as code does.
+
+**Assuming clients read your documentation.** They read your errors. A 400 that says "invalid request" produces a support ticket. One that says `{"code":"invalid_currency","detail":"expected ISO 4217, got 'dollars'","field":"currency"}` produces a fix. Error messages are the most-read documentation you'll ever write.
+
+<Note type="key" label="What to remember">
+
+- Count per account where you can; per-IP limits are a speed bump, and expensive endpoints should cost more tokens.
+- Reject with a cheap 429 and `Retry-After`, and make sure clients add jitter, or the retries arrive together.
+- Authenticate at the gateway, authorize in the service that owns the data, and keep inner timeouts shorter than outer ones.
+
+</Note>
 
 </Collapse>
 
@@ -99,19 +175,19 @@ Either strip and re-inject those headers at the boundary *and* make it impossibl
 
 <Quiz q='Why is "1,000 requests per hour" a meaningless limit for a GraphQL endpoint?' options={["GraphQL sends everything as POST, so the gateway can't count individual requests", "Clients batch many operations into one request, so the count is always too low", "One request can cost a thousand times more than another, so request count says nothing about load"]} answer={2}>
 
-Because request count has no relationship to cost when the client writes the query. One request can fetch a single field by primary key, and the next can walk users to orders to line items to recommendations and fan out into thousands of database round trips — the same one unit against your counter. A limiter counting requests will happily admit a thousand of the second kind.
+When the client writes the query, request count has no relationship to cost. One request fetches a single field by ID; the next walks users to orders to line items to recommendations and fans out into thousands of database queries. Both count as one against your limit, so a request-counting limiter happily admits a thousand of the expensive kind.
 
-The workable approach is to compute a static cost for the query before executing it, by assigning weights to fields and multiplying through the pagination arguments at each level, and to deduct that cost from a token bucket; requests exceeding a per-query ceiling get rejected outright rather than deducted. Persisted queries make this dramatically easier, because you can compute and cache the cost of each registered query once instead of analysing arbitrary strings on the hot path, and they close the door on adversarial queries you never approved.
+What works: compute a cost for the query *before* running it, by giving each field a weight and multiplying through the page sizes at each level, then deduct that cost from a token bucket. Reject queries over a per-query ceiling outright. Persisted queries make this much easier: you compute each registered query's cost once instead of analysing arbitrary strings on every request, and adversarial queries you never approved can't run at all.
 
 </Quiz>
 
 <Quiz q="Gateway timeout is 30 s, the order service's own timeout is 60 s. A request takes 45 s. What does the customer experience?" options={["A success at 45 seconds, because the service timeout is the one that applies", "A 504 at 30 seconds while the service still creates the order, so a retry creates a second one", "A 504 at 30 seconds, and the gateway cancels the work in the service"]} answer={1}>
 
-The gateway returns 504 at thirty seconds and the client sees a failure — while the order service, entirely unaware, keeps working and successfully creates the order at forty-five seconds. The customer believes it failed, retries, and gets a second order.
+The gateway returns 504 at thirty seconds, so the customer sees a failure. The order service doesn't know anyone stopped waiting, keeps working, and creates the order at forty-five seconds. The customer retries and gets a second order.
 
-Timeouts must strictly decrease as you move inward so that an inner call can never outlive the outer one that is waiting for it, and the robust version of this is deadline propagation: the gateway computes an absolute deadline, passes it downstream, and each hop budgets against the time actually remaining rather than against a fixed local value.
+Timeouts must get strictly shorter as you move inward, so an inner call can never outlive the outer one waiting for it. The robust version is **deadline propagation**: the gateway sets an absolute deadline, passes it along, and each hop plans against the time actually left.
 
-Where the work is genuinely long-running, the correct shape is not a longer timeout but a different contract — accept the request, return 202 with a status URL, and let the client poll or receive a webhook. And on anything that creates or moves money, an idempotency key makes the duplicate-on-retry case harmless regardless.
+If the work is genuinely long-running, the answer isn't a longer timeout but a different contract: accept the request, return 202 Accepted with a status URL, and let the client poll or receive a webhook. On anything that creates records or moves money, an idempotency key makes the duplicate retry harmless either way.
 
 </Quiz>
 

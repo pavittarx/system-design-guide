@@ -6,62 +6,96 @@ chapter: "7"
 current: "7. Observability"
 sections:
   - id: "logs"
-    title: "Logs: structured, sampled, expensive"
+    title: "Logs: useful, then expensive"
   - id: "traces"
-    title: "Traces: spans and propagation"
+    title: "Traces: following one request across services"
   - id: "cardinality"
-    title: "Cardinality: the bill that ate the budget"
+    title: "Cardinality: the label that ate the budget"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { Collapse, Figure, Note, Quiz, Race, Reading } from '../../../components';
 import DiagramObservability1 from '../../../components/diagrams/DiagramObservability1.astro';
 import DiagramObservability2 from '../../../components/diagrams/DiagramObservability2.astro';
 
-<Collapse id="logs" title="1. Logs: structured, sampled, expensive">
+<Collapse id="logs" title="1. Logs: useful, then expensive">
 
-Logs are the signal everybody starts with and almost nobody plans for. The failure mode is not that they don't work — it's that they work fine at 100 requests per second and become a budget line item at 10,000.
+Logs are the signal everybody starts with and almost nobody plans for. They don't stop working. They work fine at 100 requests per second and turn into a budget line at 10,000.
 
-Work the numbers. Ten thousand requests per second, one log line per request, 1.2 KB per line: that is 12 MB/s, or roughly **1 TB per day**, from one service. Ingest-and-index pricing for hosted log platforms is commonly quoted in the region of a few tenths of a dollar per GB, so a terabyte a day lands somewhere in the mid five figures per month — for one service, before anyone adds debug logging to chase a bug and forgets to take it out.
+### What a log line costs at scale
+
+Work the numbers for one service: 10,000 requests per second, one log line per request, 1.2 KB per line.
+
+```trace
+  10,000 req/s × 1.2 KB              =  12 MB/s
+  12 MB/s × 86,400 s in a day        ≈  **1 TB a day**
+  1 TB × 30 days                     ≈  **30 TB a month**
+  30,000 GB × $0.30 per GB           ≈  ~~$9,000 a month~~
+```
+
+Hosted log platforms commonly quote ingest-and-index prices of a few tenths of a dollar per GB. So that's thousands of dollars a month, for one service, before anyone adds debug logging to chase a bug and forgets to take it out.
 
 <Note type="warn" label="The debug-logging ratchet">
 
-Every incident ends with someone adding more logging so that next time they'll have the data. Nobody's incident ever ends with someone removing logging. Log volume only goes one direction unless you actively push back, and the push-back has to be someone's explicit job.
+Every incident ends with someone adding more logging so that next time they'll have the data. No incident ever ends with someone removing logging. Volume only goes one way unless you push back, and pushing back has to be someone's explicit job.
 
 </Note>
 
-**Structured logging** is the single highest-leverage change available. A log line like `Failed to process order 88213 for user 4471 after 3 retries` is readable by a human and opaque to a machine — you cannot filter it, group it, or count it without writing a regex that will break the next time someone rewords the message.
+### Write logs a machine can query
 
-The same event as JSON, with `event`, `order_id`, `user_id`, `retry_count` and `duration_ms` as fields, is queryable. You can ask "show me the p95 retry count grouped by shard for the last hour" and get an answer in seconds.
+Here's a typical log line:
 
-Once logs are structured, the line between "logs" and "metrics" blurs usefully. A sufficiently rich structured event, with high-cardinality fields attached, lets you compute the metric you wish you'd defined — after the fact, during the incident. That is the core argument for event-based observability: rather than deciding in advance which aggregations matter, keep the events and aggregate on demand.
+```
+Failed to process order 88213 for user 4471 after 3 retries
+```
 
-**Sampling** is how you make that affordable, and the naive version is a trap. Sampling 1% of all logs uniformly means you keep 1% of your errors too — and errors are rare and precious. The workable pattern is *dynamic* sampling: keep 100% of errors, 100% of slow requests, 100% of anything touching a customer you care about, and 0.1% of the boring successful ones. Record the sampling rate on every retained event so you can multiply back up and still get correct totals.
+A human can read it. A machine can't filter, group or count it without a regex that breaks the next time someone rewords the message. Now the same event with each fact in its own named field:
+
+```json
+{"event": "order_failed", "order_id": 88213, "user_id": 4471,
+ "retry_count": 3, "duration_ms": 2410}
+```
+
+This is called **structured logging**, and it's the single highest-leverage change available. You can now ask "show me the p95 retry count grouped by shard for the last hour" and get an answer in seconds.
+
+Once logs are structured, the line between logs and metrics blurs usefully. If each event carries rich detail, including fields with many possible values like user ID, you can compute the metric you wish you'd defined *after the fact*, during the incident. That's the core argument for **event-based observability**: instead of deciding in advance which totals matter, keep the events and total them on demand.
+
+### Keep the interesting ones, not a random slice
+
+Keeping every event is too expensive, so you keep a fraction. This is called **sampling**, and the obvious version is a trap. Keep a random 1% of everything and you keep 1% of your errors too, and errors are rare and precious.
+
+The version that works is **dynamic sampling**: keep 100% of errors, 100% of slow requests, 100% of anything touching a customer you care about, and 0.1% of the boring successes. On every event you keep, record its sampling rate. A kept success that says `sample_rate: 1000` stands for 1,000 successes, so multiplying back up still gives correct totals.
 
 <Note label="Three fields worth putting on every line">
 
-A **trace ID** (so a log can be joined to the trace it belongs to), a **request ID** (so a customer's support ticket can be tied to actual events), and the **deploy or build version** (so "did this start with the release?" takes ten seconds to answer rather than forty minutes).
+A **trace ID**, so a log line can be joined to the trace it belongs to. A **request ID**, so a customer's support ticket can be tied to actual events. And the **deploy or build version**, so "did this start with the release?" takes ten seconds to answer instead of forty minutes.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="traces" title="2. Traces: spans and propagation">
+<Collapse id="traces" title="2. Traces: following one request across services">
 
-Metrics told you the checkout endpoint is slow. Logs told you what one request did inside one service. Neither tells you that the slowness lives three hops down, inside a call your service makes to a service that calls a service. That's what tracing is for.
+Metrics tell you checkout is slow. Logs tell you what one request did inside one service. Neither tells you the slowness lives three hops away, inside a call your service makes to a service that calls another service. That's what tracing is for.
 
-A **trace** is one request's complete journey. A **span** is one unit of work within it — a service handling the request, a database query, an outbound HTTP call. Spans nest: the parent span's duration contains its children's.
+### Spans, and the ID that ties them together
 
-What makes it work is **context propagation**: the trace ID is passed along with every outbound call, so that work happening in a different process on a different continent still knows which request it belongs to. The W3C `traceparent` header is the standard way to carry it, and OpenTelemetry is the standard way to produce it.
+A **trace** is one request's complete journey. A **span** is one piece of work within it: a service handling the request, a database query, an outbound HTTP call. Spans nest, so a parent span's duration contains its children's.
+
+The trick that makes it work is a shared ID. When a request arrives, it gets a **trace ID**, and every call it makes passes that ID along, like a ticket number stapled to the paperwork. Work happening in a different process on a different continent still knows which request it belongs to. This is called **context propagation**. The W3C `traceparent` header is the standard way to carry the ID, and OpenTelemetry is the standard way to produce it.
 
 <Note type="wild" label="◈ In the wild · Google Dapper">
 
-Tracing a request across a fleet of services this way is not a new idea — it is essentially Google's Dapper, described in a [2010 paper](https://research.google/pubs/dapper-a-large-scale-distributed-systems-tracing-infrastructure/). Dapper stamps every incoming request with a trace ID and carries it along each service call and RPC the request touches, exactly the propagation described above, and it samples aggressively so the overhead stays negligible. Zipkin, Jaeger, and the OpenTelemetry tooling most teams reach for today are all descendants of that design.
+This isn't a new idea. Google's Dapper, described in a [2010 paper](https://research.google/pubs/dapper-a-large-scale-distributed-systems-tracing-infrastructure/), stamps each incoming request with a trace ID, carries it along every call the request touches, and samples aggressively so the overhead stays negligible. Zipkin, Jaeger and today's OpenTelemetry tooling all descend from that design.
 
 </Note>
+
+### Reading a trace
+
+Here's one slow checkout, as a tracing tool would show it. Each line is a span; indentation shows who called whom.
 
 ```trace
 trace 4f9a2c…  POST /checkout  **2,410 ms**
@@ -75,19 +109,37 @@ trace 4f9a2c…  POST /checkout  **2,410 ms**
 │  └─ order.create                58 ms  ++ok++
 ```
 
-Read that trace and the diagnosis writes itself: the currency service is timing out, the pricing service is retrying it three times, and the retries are serial. Nobody's error rate went up — every one of those spans eventually succeeded — which is precisely why the metrics dashboard stayed green. The retry policy converted an availability problem into a latency problem, and latency problems hide better.
+The diagnosis writes itself: the currency service (`fx.rates`) is timing out, and the pricing service is retrying it, one attempt after another:
+
+<Race a="Pricing service" b="Currency service (fx.rates)" result="Result: the call succeeded, so no error was counted. The user waited 2.4 s" steps={[
+  { a: "Calls fx.rates (attempt 1)" },
+  { b: "No reply", note: true },
+  { a: "750 ms: gives up, tries again (attempt 2)", tone: "bad" },
+  { b: "No reply", note: true },
+  { a: "1,500 ms: gives up, tries again (attempt 3)", tone: "bad" },
+  { b: "Replies after 770 ms", tone: "good" },
+  { a: "Returns the quote at about 2.3 s" }
+]} />
+
+Nobody's error rate went up. Every span eventually succeeded, which is exactly why the metrics dashboard stayed green. The retries turned an availability problem into a latency problem, and latency problems hide better.
 
 <Note type="key" label="Traces make retry cost visible, and almost nothing else does">
 
-A downstream service with a 5% timeout rate and three retries looks perfectly healthy from both ends: the caller succeeds, the callee returns 200s. The cost lands entirely in the tail of someone else's latency distribution. See [The Reliability Toolkit](/guides/reliability-toolkit/) for why the retries are configured that way and what to do instead.
+A downstream service with a 5% timeout rate and three retries looks healthy from both ends: the caller succeeds, the callee returns 200s. The cost lands in the tail of someone else's latency. [The Reliability Toolkit](/guides/reliability-toolkit/) covers why retries get configured that way and what to do instead.
 
 </Note>
 
-**Sampling** is unavoidable — storing every span of every request at scale is prohibitive — and where you decide is the interesting question. *Head sampling* makes the keep-or-drop decision at the start of the request, before anything has happened. It's cheap and simple, and it throws away the interesting requests at exactly the same rate as the boring ones.
+### Which traces to keep
 
-*Tail sampling* buffers all the spans and decides after the request completes, so you can keep every trace that errored or exceeded a latency threshold and 0.1% of the rest. It costs memory in the collector and adds a delay before traces are queryable, and it is almost always worth it.
+Storing every span of every request is too expensive at scale, so traces are sampled too. *When* you decide matters most.
 
-The other half of the value is structural rather than diagnostic: a trace is an empirical, always-current service dependency graph. The architecture diagram in the wiki is a claim about how the system works; the trace data is a measurement. They differ more often than anyone is comfortable with.
+**Head sampling** decides at the start of the request, before anything has happened. It's cheap and simple, and it throws away the interesting requests at exactly the same rate as the boring ones, because at the start nobody knows which is which.
+
+**Tail sampling** holds all the spans until the request finishes, then decides. Now you can keep every trace that errored or went over a latency threshold, plus 0.1% of the rest. It costs memory in the **collector** (the service that receives spans) and adds a delay before traces are searchable. It's almost always worth it.
+
+### A map you didn't have to draw
+
+Traces have a second use. Together they form a measured, always-current map of which services call which. The architecture diagram in the wiki is a claim about how the system works; trace data is a measurement. They differ more often than anyone is comfortable with.
 
 <Figure>
   <DiagramObservability1 />
@@ -95,35 +147,55 @@ The other half of the value is structural rather than diagnostic: a trace is an 
 
 </Collapse>
 
-<Collapse id="cardinality" title="3. Cardinality: the bill that ate the budget">
+<Collapse id="cardinality" title="3. Cardinality: the label that ate the budget">
 
-Time-series databases store one series per unique combination of metric name and label values. Not one per metric — one per *combination*. That word does all the damage.
+Someone wants per-user latency, so they add a `user_id` label to the request metric. It looks like a one-line change. Next month the metrics bill arrives, or the metrics database falls over first.
 
-Start with something reasonable. `http_requests_total` labelled by endpoint, status, region and instance:
+### One series per combination
+
+A metrics database stores one separate line over time, called a **series**, for every unique combination of metric name and label values. Not one per metric: one per *combination*. The number of distinct combinations is called **cardinality**, and that word "combination" does all the damage.
+
+Take `http_requests_total`, labelled by endpoint, status, region and instance:
 
 <Note type="key" label="The multiplication">
 
 20 endpoints × 5 status classes × 3 regions × 100 instances = **30,000 series**. Entirely fine.
 
-Now someone adds `user_id`, because per-user latency would be useful. With 2 million users: 30,000 × 2,000,000 = **60 billion series**. Your metrics backend either falls over or bills you as though you asked for that, because you did.
+Now add `user_id`. With 2 million users: 30,000 × 2,000,000 = **60 billion series**. Your metrics backend either falls over or bills you as though you asked for that, because you did.
 
 </Note>
 
-The insidious part is that the explosive labels rarely look explosive. `user_id` is obvious in hindsight. Less obvious: a raw URL path, where `/orders/88213` and `/orders/88214` are different label values and every order in your database becomes a permanent time series. Or an error message string, where a message containing a timestamp or an ID generates a new series per occurrence.
+### The labels that don't look dangerous
 
-Or a `pod_name` label in a Kubernetes cluster that redeploys twenty times a day, quietly adding a fresh set of series each time and never retiring the old ones — *churn*, the cardinality problem's slower cousin, where nothing looks alarming at any instant but the retained series count climbs all month.
+`user_id` is obvious in hindsight. The dangerous ones look harmless:
+
+- **A raw URL path.** `/orders/88213` and `/orders/88214` are different label values, so every order in your database becomes a permanent series.
+- **An error message.** If the message contains a timestamp or an ID, each occurrence creates a new series.
+- **A `pod_name` label** in a Kubernetes cluster that redeploys twenty times a day. Each deploy adds a fresh set of series and the old ones are never retired. This slower cousin is called **churn**: nothing looks alarming at any moment, but the stored series count climbs all month.
 
 <Note type="warn" label="The rule">
 
-A metric label must be **bounded and small** — ideally under a hundred possible values, and never a value that comes from user input or a database identifier. If you want to slice by something unbounded, that is a job for logs, traces, or exemplars, not for a label. Anything you'd need a `WHERE id =` for belongs in an event, not a metric.
+A metric label must be **bounded and small**: ideally under a hundred possible values, and never a value that comes from user input or a database ID. If you'd need a `WHERE id =` to look it up, it belongs in an event, not a metric.
 
 </Note>
 
-The right answer to "I want per-customer latency" is usually not a metric at all. It's structured events with the customer ID as a field, queried on demand — the cost is storage that scales with traffic rather than a cross-product that scales with your customer table. **Exemplars** are the useful bridge: a histogram bucket carries a handful of sample trace IDs, so you can click from "the p99 bucket got fatter" straight to an actual slow trace, without ever putting a high-cardinality value in a label.
+### Where per-customer data belongs instead
+
+The right answer to "I want per-customer latency" usually isn't a metric. It's structured events with the customer ID as a field, queried on demand. Their cost grows with traffic, not with a cross-product of every label against your customer table.
+
+**Exemplars** bridge the two. A histogram bucket carries a handful of sample trace IDs, so you can click from "the p99 bucket got fatter" straight to an actual slow trace, without a high-cardinality value ever becoming a label.
 
 <Figure>
   <DiagramObservability2 />
 </Figure>
+
+<Note type="key" label="What to remember">
+
+- Log volume grows with traffic and only ever goes up; structure every line and sample dynamically, keeping all errors and slow requests.
+- A trace ID passed along every call lets you see where a request spent its time, including hidden retries.
+- Every unique combination of label values is a separate series: keep labels bounded, and put IDs in events or exemplars.
+
+</Note>
 
 </Collapse>
 
@@ -131,17 +203,17 @@ The right answer to "I want per-customer latency" is usually not a metric at all
 
 <Quiz q="You sample 1% of traces at ingress to control cost. Why do rare errors stay invisible?" options={["1% is simply too low; at 10% the rare errors would show up reliably", "Errored requests don't propagate the trace context, so their spans never join a trace", "The keep-or-drop decision is made before the request runs, so errors are dropped at the same rate as everything else"]} answer={2}>
 
-Head sampling decides before the request runs, so it cannot know the request will be interesting — it keeps 1% of everything, which means 1% of your errors too. An error occurring in one request per hundred thousand now appears roughly once per ten million, which in practice means never, and when you finally get a report you'll find you have no trace for it.
+Head sampling decides before the request runs, so it can't know the request will be interesting. It keeps 1% of everything, including 1% of your errors. An error that happens once per hundred thousand requests now shows up once per ten million, which in practice means never. When a customer finally reports it, you'll have no trace.
 
-Tail sampling fixes this by buffering all spans until the request completes and deciding afterwards: keep 100% of errors, 100% of anything over a latency threshold, and a fraction of a percent of the routine successes. The costs are real — the collector needs memory to hold in-flight traces, and traces become queryable a few seconds later than they otherwise would — but they buy you the property that the traces you kept are the ones you'd actually want, which is the entire point of keeping any.
+Tail sampling fixes this by holding all spans until the request finishes and deciding afterwards: keep every error, every request over a latency threshold, and a fraction of a percent of routine successes. The collector needs memory for in-flight traces, and traces appear a few seconds later. In return, the traces you keep are the ones you'd actually want.
 
 </Quiz>
 
 <Quiz q="Product wants per-customer latency, and you have 50,000 customers. Do you add a customer_id label?" options={["Yes, 50,000 values is small for a modern time-series database", "No; put customer_id on structured events or traces and query on demand, with a bounded label if you need alerting", "Yes, but only on the latency histogram, not on the request counter"]} answer={1}>
 
-No — that multiplies every existing series by 50,000 and will either take down your metrics backend or produce a bill that gets the whole observability programme cancelled. The correct home for an unbounded dimension is an event store: structured logs or traces with `customer_id` as a field, queried on demand, where cost scales with traffic rather than with the cross-product of every label.
+No. It multiplies every existing series by 50,000, which will either take down your metrics backend or produce a bill that gets the whole observability effort cancelled. Unbounded values belong in events: structured logs or traces with `customer_id` as a field, queried on demand, where cost grows with traffic rather than with every label multiplied together.
 
-If you need alerting rather than ad-hoc querying, the usual compromise is to promote a bounded subset — a `tier` label with three values, or an explicit allow-list of your twenty largest accounts, which keeps the cardinality fixed and known. Exemplars close the remaining gap by attaching a few trace IDs to each histogram bucket, so you can jump from an aggregate to a specific customer's slow request without any high-cardinality label existing at all.
+If you need alerting, promote a bounded version: a `tier` label with three values, or an explicit allow-list of your twenty largest accounts, so the cardinality stays fixed and known. Exemplars close the rest of the gap, letting you jump from a histogram bucket to one customer's slow request without any high-cardinality label.
 
 </Quiz>
 

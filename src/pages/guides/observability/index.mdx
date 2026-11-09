@@ -9,61 +9,95 @@ series:
   guides: [reliability-toolkit, load-balancing]
 sections:
   - id: "green"
-    title: "Green dashboards, broken system"
+    title: "How a dashboard stays green while users fail"
   - id: "signals"
     title: "Three signals, three jobs"
 ---
 
-import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { ColdOpen, Collapse, Note, Table } from '../../../components';
 
 <ColdOpen tag="◇ the outage nobody could see">
 
-Support tickets start arriving at 09:14. Checkout is broken, they say. You open the dashboard: request rate normal, error rate 0.02%, CPU flat, database healthy, every panel a calm green. You cannot reproduce it. For forty minutes you argue with the evidence, because the evidence says nothing is wrong.
+Support tickets start arriving at 09:14: checkout is broken. You open the dashboard. Request rate normal, error rate 0.02%, CPU flat, database healthy, every panel green. You can't reproduce it, and for forty minutes you argue with the evidence, because the evidence says nothing is wrong.
 
-At 09:56 someone tries a purchase on a phone over cellular data and watches it hang for eleven seconds before succeeding — a *success*, counted as a success, averaged into a mean that never moved. The system wasn't lying to you. You had simply built instrumentation that could only see the failures you'd already thought of.
+At 09:56 someone tries a purchase on a phone over cellular data. It hangs for eleven seconds, then succeeds. A *success*: counted as one, and averaged into a mean that never moved. The system wasn't lying to you. Your instruments could only see the failures someone had already thought of.
 
 </ColdOpen>
 
-<Collapse id="green" title="1. Green dashboards, broken system">
+<Collapse id="green" title="1. How a dashboard stays green while users fail">
 
-There is a specific kind of professional misery that comes from staring at a wall of healthy graphs while customers tell you the product is unusable. It is worth understanding exactly how it happens, because it is not bad luck — it's a predictable consequence of how most instrumentation gets built.
+Staring at a wall of healthy graphs while customers say the product is unusable is a special kind of misery. It isn't bad luck. It follows directly from how most teams build their instruments, so it's worth seeing exactly how it happens.
 
-Monitoring, as most teams practise it, means picking a set of things that might break and watching them. CPU. Memory. Disk. Error rate. Those are all real, and every one of them has caught a real outage. But the list is written in advance, by people reasoning about failures they can imagine. The failure that takes you down is, almost by definition, the one nobody put on the list.
+### The list was written in advance
+
+Most teams pick the things they expect to break and watch them: CPU, memory, disk, error rate. Each of those has caught a real outage. This is called **monitoring**.
+
+The weakness is the list itself. People wrote it by imagining failures, and the failure that takes you down is, almost by definition, the one nobody imagined. In the cold open, checkout didn't fail. It got slow for some users, and "slow for some users" wasn't on the list.
+
+### Averages hide small groups
+
+Every panel on that dashboard was an **aggregate**: one number summarising many requests, like an average or a total. Aggregates are cheap because they throw detail away, and the detail they throw away is not random. They hide small groups.
+
+Suppose 2% of users wait eleven seconds and then succeed. No request failed, so the error rate stays at 0.02%. If the problem only hits one customer, and that customer is your largest, it vanishes from every graph completely.
+
+### The property you actually want
+
+So the useful question isn't "do we have monitoring?" Everyone does. It's this: *when something breaks in a way we didn't predict, can we find it in the data we already collect?* Most teams learn the answer is no in the middle of an incident.
 
 <Note type="key" label="The distinction worth keeping">
 
-**Monitoring** answers questions you thought of in advance. **Observability** is the property of a system that lets you answer questions you *didn't* think of in advance, without shipping new code. The first is a set of dashboards. The second is a property of your data: enough dimensions, retained at enough granularity, that you can slice a problem in a direction you've never sliced it before and still get an answer.
+**Monitoring** answers questions you thought of in advance. It's a set of dashboards.
+
+**Observability** is being able to answer questions you *didn't* think of in advance, without shipping new code. It's a property of your data: enough detail about each request (which user, which region, which version), kept long enough, that you can slice a problem in a direction you've never tried and still get an answer.
 
 </Note>
-
-The checkout outage above is the canonical shape. Every dashboard was an aggregate. Aggregates are lossy on purpose — that's what makes them cheap. And the loss is not random: aggregation systematically hides small populations. A failure affecting 2% of users disappears into a 0.02% error rate if it manifests as slowness rather than errors. A failure affecting one customer — who happens to be your largest — disappears entirely.
-
-So the practical question is not "do we have monitoring." Everyone has monitoring. The question is: *when something breaks in a way we did not anticipate, can we find it from the data we're already collecting?* Most teams discover the answer is no at the worst possible time.
 
 </Collapse>
 
 <Collapse id="signals" title="2. Three signals, three jobs">
 
-The industry has more or less converged on three kinds of telemetry. They are not three formats for the same information — they are three different trade-offs between cost, breadth, and detail, and using the wrong one for a job is where most of the waste lives.
+You have three kinds of **telemetry** (data your system reports about itself). They aren't three formats for the same information. Each is cheap for one job and ruinous for another, and most wasted observability spend comes from using the wrong one.
+
+### Metrics: numbers that are cheap at any traffic
+
+A **metric** is a running number, like "requests served so far" or "connections in use", tagged with a few **labels** such as endpoint or region. Ten requests and ten million requests both just bump the same counter, so traffic doesn't change the cost.
+
+What does change the cost is labels. Every distinct combination of label values is stored separately, so adding the wrong label multiplies your bill. [Part 2](/guides/observability/logs-traces/#cardinality) works through why.
+
+### Logs: one record per event
+
+A **log** is a record of one thing that happened: "order 88213 failed after 3 retries". Labels cost nothing extra, because each record can carry whatever fields it likes. But ten million requests produce ten million records, so cost grows in a straight line with traffic.
+
+### Traces: one request's whole journey
+
+A **trace** follows a single request through every service it touched, with timings for each step. Its cost grows with traffic times the number of services, so nearly everyone keeps only a sample of requests. Choosing which ones to keep turns out to matter a great deal.
+
+### The three side by side
 
 <Table>
 
-| Signal | What it is | Cost shape | Answers |
-| ------ | ---------- | ---------- | ------- |
-| **Metrics** | Numbers aggregated over time, tagged with a few labels | Cost grows with *distinct label combinations*, not with traffic | "Is something wrong, and roughly where?" |
-| **Logs** | Discrete events, one record per thing that happened | Cost grows *linearly with traffic* | "What exactly happened to this one request?" |
-| **Traces** | One request's journey across every service it touched | Cost grows with traffic × services, usually sampled | "Where did the time go, and who called whom?" |
+| Signal | In plain words | Cost grows with | Answers |
+| ------ | -------------- | --------------- | ------- |
+| **Metrics** | Running numbers with a few tags | Distinct label combinations, *not* traffic | "Is something wrong, and roughly where?" |
+| **Logs** | One record per event | Traffic, in a straight line | "What exactly happened to this one request?" |
+| **Traces** | One request's path across services | Traffic × services, so usually sampled | "Where did the time go, and who called whom?" |
 
 </Table>
 
-The cost shapes are the important column and the one people skip. Metrics are cheap at any traffic volume because ten million requests and ten requests both increment the same counter — but they get expensive fast when you add labels, and we'll spend a whole section on why. Logs are the opposite: one label costs nothing, but ten million requests cost ten million records. Traces sit in between and are almost always sampled, which introduces its own class of problem.
-
 <Note label="A rule of thumb that holds up">
 
-Metrics tell you *that* something is wrong. Traces tell you *where*. Logs tell you *why*. If you find yourself trying to answer "why" from a metric, you are about to add a label you will regret.
+Metrics tell you *that* something is wrong. Traces tell you *where*. Logs tell you *why*. If you find yourself trying to answer "why" from a metric, you're about to add a label you'll regret.
 
 </Note>
 
-A fourth signal, **profiles** (continuous CPU and memory profiling in production), has become practical in the last few years and is worth knowing about — it answers "which line of code is burning the CPU" in the same way traces answer "which service is burning the latency." It's not yet table stakes the way the other three are.
+A fourth signal, **profiles**, has become practical in the last few years. Continuous CPU and memory profiling in production answers "which line of code is burning the CPU", the way traces answer "which service is burning the time". It's worth knowing about, but it isn't yet standard kit the way the other three are.
+
+<Note type="key" label="What to remember">
+
+- Monitoring watches a list written in advance; the outage that hurts is the one not on the list.
+- Averages and totals hide small groups of users, especially when the symptom is slowness rather than errors.
+- Metrics are cheap per request but expensive per label; logs are the opposite; traces sit between and are sampled.
+
+</Note>
 
 </Collapse>

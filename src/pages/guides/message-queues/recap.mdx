@@ -9,41 +9,41 @@ sections:
     title: "Recap in 60 seconds"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Collapse, Footer, Recap } from '../../../components';
 
 <Collapse id="recap" title="Recap in 60 seconds">
 
 <Recap>
 
-- **Async is a choice about waiting, not about work.** Do the essential bit inline, queue the rest, answer the user now.
+- **Async is a choice about waiting, not about work.** Do the essential part while the user waits, queue the rest, and answer them now.
 
-- **A queue is a shock absorber.** Bursty in, smooth out. Bound it, or the buffer becomes the outage.
+- **A queue is a shock absorber.** Bursty traffic in, a steady rate out. Put a limit on its length, or the buffer becomes the outage.
 
-- **Work queue = one consumer gets it. Pub/sub = everyone does.** Task distribution vs. event notification.
+- **Work queue: one consumer gets each message. Pub/sub: every subscriber does.** Sharing out tasks versus announcing events.
 
-- **At-least-once is the real default.** Exactly-once end-to-end is a story; at-least-once plus idempotency is the implementation.
+- **At-least-once is the real default.** End-to-end exactly-once is a story; at-least-once plus duplicates that do nothing is how it's actually built.
 
-- **Check-then-act is a race.** Claim the message ID with one atomic conditional insert, and only the winner does the work.
+- **"Check, then act" is a race.** Two consumers can both check before either acts. Claim the message ID with one atomic insert, and only the winner does the work.
 
-- **A claim needs a status and a lease**, or a crash mid-work turns a message into a permanent silent loss.
+- **A claim needs a status and an expiry**, or a crash mid-work leaves a message marked done that never ran.
 
-- **External side effects need the provider's idempotency key.** If you can't put the work in your transaction, push dedup to whoever owns it.
+- **For outside side effects, send the provider an idempotency key.** If the work can't go in your transaction, let whoever owns it spot the repeat.
 
-- **Visibility timeout below your p99 = guaranteed duplicate processing**, and if it's slow for everyone, infinite redelivery. Heartbeat long jobs; cap receive count.
+- **A visibility timeout below your p99 means the same job runs twice at once**, and if the job is slow for everyone, it's redelivered forever. Extend the deadline for long jobs; cap redeliveries.
 
-- **Ordering is per-partition, and a partition is a queue of one.** Concurrency and strict ordering are mutually exclusive — pick.
+- **Order holds only within a partition, and a partition is a queue of one.** Working in parallel and keeping strict order are mutually exclusive: pick.
 
-- **Never write to the DB and the broker as two steps.** Outbox table in the same transaction, or CDC off the replication log.
+- **Never write to the database and the broker as two steps.** Put the event in an outbox table in the same transaction, or read it from the database's change log.
 
-- **Send a pointer, not a payload.** Claim check keeps the queue thin and inside broker size limits.
+- **Send a pointer, not the payload.** A claim check keeps messages small and under the broker's size limit.
 
-- **Deploys are rolling, so schemas must be additive.** Tolerant readers, optional fields, never repurpose a field's meaning.
+- **Deploys are rolling, so message formats must only grow.** Ignore unknown fields, add optional ones, never change what a field means.
 
-- **Alert on lag and its slope, not depth.** Deep and draining is fine; shallow and growing is not.
+- **Alert on lag and whether it's rising, not on depth.** Deep and draining is fine; shallow and growing is not.
 
-- **An unmonitored DLQ is a landfill.** Alert on arrival rate, rehearse the replay.
+- **An unwatched DLQ is a landfill.** Alert on arrivals and rehearse putting messages back.
 
-- **N > A / C, always.** No headroom above arrival rate means a spike never drains.
+- **You need N > A / C consumers, always.** Without capacity above the arrival rate, a backlog never drains.
 
 </Recap>
 

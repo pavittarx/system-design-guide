@@ -6,23 +6,27 @@ chapter: "12"
 current: "12. Designing Checkout"
 sections:
   - id: "inseparable"
-    title: "Making the order and its event inseparable"
+    title: "Making sure the order, its event and the money agree"
   - id: "guardrails"
-    title: "Guardrails around every dependency"
+    title: "Keeping someone else's bad day out of yours"
   - id: "staleness"
-    title: "Staleness, decided field by field"
+    title: "How out of date each piece of data may be"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Race, Reading, Recap, Stack, Table } from '../../../components';
 import DiagramDesignTheCheckout2 from '../../../components/diagrams/DiagramDesignTheCheckout2.astro';
 
-<Collapse id="inseparable" title="1. Making the order and its event inseparable">
+<Collapse id="inseparable" title="1. Making sure the order, its event and the money agree">
 
-Back to the cold open. We charge the card, we save the order, and we publish an "order placed" event so the receipt gets sent and the warehouse gets told. Three side effects, at least two systems, and no transaction spanning them. Every ordering of those operations has a crash window that produces a state nobody wants.
+Back to the cold open. A checkout does three things that live in different places: it charges the card (at the payment provider), saves the order (in our database), and publishes an "order placed" event (to the queue), so the receipt goes out and the warehouse hears about it. No single transaction covers all three, so the process can die between any two of them.
+
+### Every order of operations has a crash window
+
+Try saving first, then publishing. Or publishing first, then saving:
 
 ```trace
 **save, then publish**
@@ -40,25 +44,53 @@ Back to the cold open. We charge the card, we save the order, and we publish an 
     that does not exist.
 ```
 
-You cannot fix this by reordering the two writes, and you cannot fix it with a try/catch, because the process can die between any two instructions. The fix is to stop having two writes. The **transactional outbox** puts the event in a table in the *same database transaction* as the order:
+Reordering doesn't help, and neither does a try/catch, because the process can die between any two instructions: a crash, a deploy, a machine losing power. The only fix is to stop having two separate writes.
+
+### The fix: write the event into the same transaction
+
+Put the event in a table in the *same database transaction* as the order. This is called the **transactional outbox**:
 
 ```sql
 BEGIN;
   INSERT INTO orders (...)  VALUES (...);
   INSERT INTO outbox (topic, payload)
-VALUES ('order.placed', :json);
+  VALUES ('order.placed', :json);
 COMMIT;
 -- a separate relay reads outbox,
 -- publishes, marks rows sent.
 ```
 
-Now the order and the intent to announce it commit or fail together. The relay may still publish a message twice — it can crash after publishing and before marking the row sent — so this gives at-least-once, not exactly-once, which is exactly why every consumer must be idempotent. The [Queues guide](/guides/message-queues/) has the full treatment, including the race in the naive idempotency check that quietly charges people twice.
+Why this works: a database transaction is all or nothing. Either both rows are saved or neither is, so "order saved but nobody told" can't happen. A separate background process, the **relay**, reads unsent rows from the outbox, publishes them to the queue, and marks them sent.
 
-### And the money
+The relay can still publish a message twice: it can crash after publishing but before marking the row sent, and publish it again on restart. So this gives **at-least-once** delivery, not exactly-once, which is why every consumer must be **idempotent**: handling the same message twice must have the same effect as handling it once. The [Queues guide](/guides/message-queues/) has the full treatment, including the race in the naive "have I seen this?" check that quietly charges people twice.
 
-The payment provider is outside our transaction and always will be. What makes that safe is an **idempotency key** — a unique identifier we generate for this checkout attempt and pass to the provider. If our request times out and we retry, the provider recognises the key and returns the original result instead of charging again. This is why payment APIs have that field, and it is not optional at any real volume.
+### And the money: the idempotency key
 
-Order of operations matters here. Write the order in a `pending_payment` state first, then authorise with the key, then confirm. If we die after authorising, a reconciliation job finds orders stuck in `pending_payment`, asks the provider what happened to that idempotency key, and settles them — completing the ones that succeeded and voiding the ones that didn't. Money and orders can then never disagree for longer than the reconciliation interval, which is a bound you can state out loud and hold yourself to.
+The payment provider is outside our database and always will be, so the outbox can't cover it. The danger there is a retry. Our charge request times out; did the card get charged or not? If we just retry, we might charge twice.
+
+The fix is an **idempotency key**: a unique ID we generate for this checkout attempt and send with the charge. If we retry with the same key, the provider recognises it and returns the original result instead of charging again:
+
+<Race a="Our checkout" b="Payment provider" result="Result: one charge, and checkout learns it succeeded" tone="good" steps={[
+  { a: "Sends the charge with idempotency key chk-4417291" },
+  { b: "Charges the card. The reply is lost on the way back", tone: "bad" },
+  { a: "Times out. Retries with the same key, chk-4417291" },
+  { b: "Recognises the key. Returns the original result; no second charge", tone: "good" }
+]} />
+
+Without the key, that retry is a second charge. This is why payment APIs have the field, and at any real volume it isn't optional.
+
+### Order of operations around the charge
+
+The order matters, because the process can still die right after the card is charged:
+
+<Stack>
+  <Layer idx="1" title="Write the order as pending_payment">Before touching the money, so there is always a record to check against.</Layer>
+  <Layer idx="2" title="Authorise the payment, with the key">The provider holds the money on the card.</Layer>
+  <Layer idx="3" title="Confirm the order">In one transaction: mark it confirmed and write the outbox event.</Layer>
+  <Layer idx="4" title="Sweep for stragglers" speed="every few minutes">A reconciliation job finds orders stuck in `pending_payment`, asks the provider what happened to that idempotency key, and completes the ones that were paid and voids the rest.</Layer>
+</Stack>
+
+Why this works: if we die after step 2, the order from step 1 is still there, and step 4 finds it. Money and orders can then never disagree for longer than the sweep interval, which is a bound you can state out loud and hold yourself to.
 
 <Figure>
   <DiagramDesignTheCheckout2 />
@@ -132,9 +164,17 @@ Build this capstone mini-project to implement the transactional outbox pattern w
 
 </Collapse>
 
-<Collapse id="guardrails" title="2. Guardrails around every dependency">
+<Collapse id="guardrails" title="2. Keeping someone else's bad day out of yours">
 
-Every arrow leaving our service is a way for someone else's bad day to become ours. The [Reliability guide](/guides/reliability-toolkit/) supplies the toolkit; here is where each tool actually goes, and what it costs us if we get it wrong.
+Every call our checkout makes to another system is a way for that system's bad day to become ours. If the fraud service takes 30 seconds to answer, every checkout waiting on it holds a thread for 30 seconds, and Part 1 showed where that ends. The [Reliability guide](/guides/reliability-toolkit/) supplies the tools. Here's what each one does, in plain words:
+
+- **Timeout:** stop waiting after a fixed time.
+- **Retry:** try again after a failure, but only when it's safe to.
+- **Bulkhead:** a cap on how many calls to one dependency can be in progress at once, so it can't use up every thread.
+- **Circuit breaker:** after enough failures, stop calling the dependency for a while and fail immediately instead.
+- **Fail open:** carry on without the dependency, using a fallback.
+
+And here is where each one goes in this design, and what we do when that dependency fails:
 
 <Table>
 
@@ -151,19 +191,25 @@ Every arrow leaving our service is a way for someone else's bad day to become ou
 
 <Note type="warn" label="&quot;Fail open to the database&quot; is not free">
 
-The cache is absorbing roughly 96% of 25,000 reads/s. If it dies cold, the database instantly receives about 25× its normal read load. "The app still works" is technically true for about four seconds. This is why the cache tier needs its own redundancy, why the fallback path needs request coalescing, and why load shedding exists — a design that treats the cache as optional has not thought about what happens when it goes away.
+The cache absorbs about 96% of 25,000 reads/s, so the database normally sees only the remaining 4%. If the cache dies, the database instantly gets the whole 25,000: about 25× its normal read load. "The app still works" is true for about four seconds. That's why the cache needs its own redundancy, why the fallback path needs request coalescing (one database query per key, however many requests want it), and why load shedding exists.
 
 </Note>
 
-Two settings that people consistently miss, and that this design depends on. First, **deadline propagation**: if the customer's request has 800 ms of budget and 500 ms are already spent, the payment call must know it has 300 ms left, not its own independent 3-second timeout. Otherwise we burn capacity computing answers nobody is waiting for.
+### Pass the deadline along
 
-Second, **retry budgets**: retry at exactly one layer, and cap total retries at a small fraction of live traffic. Three layers each retrying three times turns one user action into twenty-seven requests, arriving precisely when the system can least afford them.
+Two settings people consistently miss, and this design depends on both. The first is **deadline propagation**. The customer's request has an 800 ms budget. If 500 ms are already spent when we call the payment provider, that call must know it has 300 ms left, not use its own separate 3-second timeout. Otherwise we spend capacity computing answers nobody is still waiting for.
+
+### Retry at one layer only
+
+The second is a **retry budget**. Suppose three layers each try a call up to three times. One customer click becomes 3 × 3 × 3 = 27 requests to the bottom layer, arriving exactly when it's already struggling. So retry at exactly one layer, and cap total retries at a small fraction of live traffic.
 
 </Collapse>
 
-<Collapse id="staleness" title="3. Staleness, decided field by field">
+<Collapse id="staleness" title="3. How out of date each piece of data may be">
 
-This is the section that separates a design from a shopping list. "Is the system consistent?" is the wrong question — the [Consistency guide](/guides/consistency-cap/)'s central point is that consistency is a per-field decision with a per-field price. So go field by field and say what you're buying.
+The product page says "Only 3 left". Does that number have to be exactly right this millisecond? If yes, every page view must ask the primary database, and the cache from Part 1 is gone. If it can be 30 seconds old, the cache serves it. The answer is different for every field.
+
+"Is the system consistent?" is the wrong question. The [Consistency guide](/guides/consistency-cap/)'s central point is that consistency is decided field by field, and each field has its own price. So go through them and say what you're buying:
 
 <Table>
 
@@ -179,11 +225,22 @@ This is the section that separates a design from a shopping list. "Is the system
 
 </Table>
 
-### The genuinely hard one: overselling
+### The hard one: two customers, one item
 
-Two customers, one remaining item, requests arriving 8 ms apart. Both see stock, both proceed, one of them is going to be disappointed and it's your job to decide how.
+One item left. Two customers press "Buy" 8 ms apart, and the code does the obvious thing: read the stock, check it's above zero, then save the new count.
 
-**Optimistic decrement** is the simple version: make the decrement conditional in a single statement, so the database arbitrates rather than your application.
+<Race a="Customer A" b="Customer B" result="Result: two customers charged for one item" steps={[
+  { a: "Reads stock: 1 left" },
+  { b: "Reads stock: 1 left" },
+  { a: "1 is enough. Sets stock to 0, takes the payment", tone: "good" },
+  { b: "1 is enough. Sets stock to 0, takes the payment", tone: "bad" }
+]} />
+
+Each request was right about what it saw; B just saw it before A saved. One customer is going to be disappointed, and it's your job to decide how, *before* you charge them.
+
+### Fix 1: let the database decide in one statement
+
+Make the decrement conditional, in a single statement, so the database decides instead of your code:
 
 ```sql
 UPDATE inventory
@@ -195,11 +252,32 @@ UPDATE inventory
 -- before you charge the card.
 ```
 
-That is atomic and correct, and it has one flaw: it decrements before the payment succeeds. If the card is declined thirty seconds later, you've held stock hostage. **Reserve-then-confirm** fixes it — the same conditional update creates a reservation with a short expiry, the payment runs, success converts the reservation to a sale, and failure or expiry returns the stock. That's a small state machine and a sweeper job, and it is the design most real commerce systems land on.
+Why this works: while one request is changing a row, the database makes any other request that wants to change it wait. When B's turn comes, the database checks `available >= :qty` again against the current value, which is now 0, so B's update changes nothing:
+
+<Race a="Customer A" b="Customer B" result="Result: one sale, and B hears &quot;sold out&quot; before being charged" tone="good" steps={[
+  { a: "UPDATE … WHERE available >= 1. Row locked; stock goes to 0" },
+  { b: "Same UPDATE. Waits for A's lock", note: true },
+  { a: "Commits. Lock released", tone: "good" },
+  { b: "Re-checks: 0 >= 1 is false. 0 rows updated, so: sold out", tone: "good" }
+]} />
+
+This is called an **optimistic decrement**. It's atomic and correct, with one flaw: it takes the stock before the payment succeeds. If the card is declined thirty seconds later, that item was held hostage for nothing.
+
+### Fix 2: reserve, then confirm
+
+**Reserve-then-confirm** fixes that. The same conditional update creates a reservation with a short expiry. Then the payment runs. Success turns the reservation into a sale; failure or expiry gives the stock back. It's a small state machine plus a sweeper job for expired reservations, and it's the design most real commerce systems land on.
 
 <Note label="The uncomfortable industry truth">
 
-Many large retailers accept a small oversell rate on purpose. Perfectly serialised global inventory across every channel — web, app, stores, marketplaces — costs enormous latency on every read and a coordination protocol that becomes the bottleneck on your busiest day. Occasionally apologising, refunding and offering a voucher is cheaper. That is a *commercial* resolution to a *distributed systems* problem, and recognising when one is available is a genuine engineering skill. It is also, precisely, the [AP branch](/guides/consistency-cap/) being chosen deliberately: stay available, reconcile the conflict afterwards.
+Many large retailers accept a small oversell rate on purpose. Perfectly exact inventory across every channel at once (web, app, stores, marketplaces) costs latency on every read and a coordination system that becomes the bottleneck on your busiest day. Occasionally apologising, refunding and offering a voucher is cheaper. That's a *business* answer to a *distributed systems* problem, and spotting when one is available is a real engineering skill. It is also, precisely, the [AP branch](/guides/consistency-cap/) chosen on purpose: stay available, fix the conflict afterwards.
+
+</Note>
+
+<Note type="key" label="What to remember">
+
+- Two writes to two systems with nothing tying them together will eventually disagree. Put the event in the order's transaction (the outbox), and send an idempotency key with every charge.
+- Every call to another system gets a timeout, a retry policy, a cap on concurrent calls, and a decided answer for "what if it's down".
+- Decide staleness field by field. The stock you display can be 30 seconds old; the stock you decrement is checked inside a single conditional update.
 
 </Note>
 
@@ -209,25 +287,25 @@ Many large retailers accept a small oversell rate on purpose. Perfectly serialis
 
 <Quiz q="Where in this design can a customer be charged without an order existing, and what prevents it?" options={["Nowhere: the charge and the order commit in one database transaction", "Between authorising and committing; a pending_payment row first, an idempotency key on the charge, and a reconciliation sweep bound it", "In the outbox relay; making the consumers idempotent closes the gap"]} answer={1}>
 
-Between authorising the payment and committing the order transaction. The process can die in that window and the money is gone with nothing recorded.
+Between authorising the payment and committing the order. The process can die in that window, and the money is taken with nothing confirmed.
 
-Three things together close it: the order is written in `pending_payment` *before* the charge, so there's always a record to reconcile against; the charge carries an idempotency key, so retrying can't double-charge; and a reconciliation job sweeps stuck `pending_payment` orders, asks the provider what happened to that key, and either completes or voids. You can't make it impossible — the provider is outside your transaction — but you can bound how long the disagreement lasts.
+Three things together close it. The order is written as `pending_payment` *before* the charge, so there's always a record to check against. The charge carries an idempotency key, so a retry can't charge twice. And a reconciliation job sweeps orders stuck in `pending_payment`, asks the provider what happened to that key, and completes or voids each one. You can't make the window impossible, since the provider is outside your database, but you can limit how long a disagreement lasts.
 
 </Quiz>
 
 <Quiz q="Your cache dies completely at peak. Why is &quot;the app still works&quot; not a good answer?" options={["The database takes about 25× its normal read load, saturates, starves checkout through the shared pool, and retries can keep it down", "Sessions are lost, so every customer is logged out, but checkout keeps working", "Reads get a few milliseconds slower until the cache restarts and refills"]} answer={0}>
 
-The cache absorbs about 96% of 25,000 reads/s, so the database instantly sees roughly 25× its normal read load. It saturates, query latency climbs, connections back up, and because the pool is shared, checkout starts timing out too — a read-path failure has become a write-path outage.
+The cache absorbs about 96% of 25,000 reads/s, so without it the database suddenly sees about 25× its normal read load. It saturates, queries slow down, and connections back up. Because checkout shares the same connection pool, checkout starts timing out too: a problem on the read side has become an outage on the write side.
 
-Then clients retry, adding load, and the system can stay collapsed even after the cache comes back, because the retry traffic and cold cache are now self-sustaining. That's metastable failure: you can't wait it out, you have to shed load and reintroduce it gradually. "It degrades instead of erroring" is true for about four seconds.
+Then clients retry, adding more load, and the system can stay down even after the cache comes back, because the retries and the empty cache keep it overloaded. That's metastable failure: waiting doesn't fix it; you have to shed load and bring traffic back gradually. "It degrades instead of erroring" is true for about four seconds.
 
 </Quiz>
 
 <Quiz q="You add a second region. Which three decisions just got harder?" options={["Caching, load balancing and the queue, because each needs a second copy", "Session storage, TLS certificates and DNS", "Inventory coordination, which region or regions may write, and when to fail over"]} answer={2}>
 
-First, inventory: a globally serialised count now needs cross-region coordination on every checkout, and cross-region round trips are 60–150 ms set by the speed of light. Second, the database: one writable primary means one region pays a latency penalty on every write, while two writable primaries means conflict resolution for every field — and last-write-wins on an inventory count silently loses data.
+First, inventory: an exact global count now needs the regions to agree on every checkout, and a round trip between regions takes 60–150 ms, a limit set by the speed of light. Second, the database: with one writable primary, one region pays that delay on every write; with two writable primaries, every field needs a rule for conflicting writes, and "last write wins" on an inventory count silently loses sales.
 
-Third, failover: "the region is down" is a judgement call made by a timeout you configured, and getting it wrong in either direction is expensive. Most teams start with one write region and read replicas elsewhere, precisely to avoid the second problem.
+Third, failover: "the other region is down" is a judgement made by a timeout you configured, and getting it wrong in either direction is expensive. Most teams start with one region that takes writes and read replicas elsewhere, precisely to avoid the second problem.
 
 </Quiz>
 

@@ -13,26 +13,34 @@ sections:
 
 import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
 
-<Collapse id="lab" title="1. Hands-on Lab: Build a Cache Stampede Coalescer">
+<Collapse id="lab" title="1. Hands-on lab: build a cache stampede coalescer">
+
+Reading that 200 identical requests can turn into 200 identical database queries is one thing. Watching your own server do it is another. In this lab you build the naive cache, break it on purpose, then fix it with single-flight and watch the database go quiet.
 
 <Lab
   title="Build a Cache Stampede Coalescer"
   tip="Put this project on your GitHub portfolio as a demonstrated benchmark of request coalescing and load protection."
 >
 
-Build this mini-project to see the difference between a naive cache and a production-grade coalesced cache under load:
+- **The mock database.** Write a small HTTP server (Go, Node.js or Python) with an endpoint `/data`. If the key isn't in Redis, pretend to run a slow database query by sleeping **500 ms**, then return a random string. Count how many times this "query" runs.
 
-- **The Mock DB:** Write a simple HTTP server (in Go, Node.js, or Python) with an endpoint `/data`. If the key is not in Redis, simulate a slow database lookup by sleeping for **500ms**, then returning a random string.
+- **The naive cache.** On a miss, run the slow query and store the result in Redis with a **5-second TTL**. This is plain cache-aside.
 
-- **The Naive Cache:** Cache the result in Redis with a **5-second TTL**. Under a cache miss, read from the DB and write to Redis.
+- **Cause the stampede.** Use a load-testing tool such as `k6` or `ab` (Apache Benchmark) to hit the endpoint with **200 concurrent users**. All 200 requests arrive inside the 500 ms the first query takes, so none of them finds a cached value, and your counter shows the mock database queried 200 times for the same key. That's a **cache stampede**.
 
-- **Run the Stampede:** Use a load-testing tool like `k6` or `ab` (Apache Benchmark) to hit the endpoint with **200 concurrent users**. You will witness a **cache stampede**: since 200 requests arrive within the 500ms window, the mock DB is hammered 200 times for the same key.
+- **Build the coalescer (single-flight).** If a query for key `X` is already running, later requests for `X` should wait for it and share its result instead of starting their own. In Go, use `golang.org/x/sync/singleflight`; in JavaScript or Python, keep a map from key to the in-flight promise or future.
 
-- **Build the Coalescer (Single-Flight):** Implement request coalescing. Ensure that if a DB read is in progress for key `X`, subsequent identical requests wait for the active read to finish and share the result, rather than sending a new query. (Use Go's `golang.org/x/sync/singleflight` or design a promise-sharing map in JS/Python).
-
-- **Verify the Fix:** Run the 200 VU load test again. Observe that the mock DB is now hit **exactly once** on a cache miss, and p99 latency stays flat!
+- **Check the fix.** Run the 200-user test again. The mock database should now be queried **exactly once** per miss, and p99 latency should stay flat.
 
 </Lab>
+
+<Note type="key" label="What to remember">
+
+- A stampede happens because every request that misses starts its own query; the cache doesn't know they're asking the same thing.
+- Single-flight keeps one query per key in flight and shares the result, so 200 misses cost one query.
+- Measure it: count database queries, not just response times.
+
+</Note>
 
 </Collapse>
 

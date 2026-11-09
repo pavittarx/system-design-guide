@@ -6,7 +6,7 @@ chapter: "4"
 current: "4. Message Queues"
 sections:
   - id: "gotchas"
-    title: "Operational gotchas"
+    title: "What bites in year two"
   - id: "numbers"
     title: "Four numbers to watch"
   - id: "tools"
@@ -17,70 +17,81 @@ sections:
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Card, CardGrid, Collapse, Figure, Note, Quiz, Race, Reading, Table } from '../../../components';
 import DiagramMessageQueues2 from '../../../components/diagrams/DiagramMessageQueues2.astro';
 
 <Collapse id="gotchas" title="1. Operational gotchas that bite in year two">
 
 None of these show up in the tutorial. All of them show up in the incident review.
 
-### Head-of-line blocking
+### One slow message holds up everyone behind it
 
-Ordering guarantees are always *per-partition* — Kafka orders within a partition, SQS FIFO within a message group, and nobody orders across them. And a partition is, for ordering purposes, a queue of one: to keep messages in order you must finish message N before starting N+1.
+A support ticket: a handful of customers' orders have been stuck for an hour. Everyone else is fine, and the overall queue looks healthy.
 
-So one slow message, or one that keeps failing and retrying, blocks every message behind it in that partition — and if you keyed by customer ID, "that partition" is a specific set of customers having a very bad day while your overall queue depth looks fine.
+Recall from [Part 2](/guides/message-queues/ordering/#order) that ordering is only ever guaranteed *per partition*: Kafka orders within a partition, SQS FIFO within a message group, and nothing orders across them. To keep messages in order, a consumer must finish message N before starting N+1, so for ordering purposes a partition is a queue of one.
 
-The trade is unavoidable: **concurrency within a partition and strict ordering are mutually exclusive.** You pick. Usually you pick more partitions (finer keys, so a blockage is narrower), a fast path to the DLQ so a poison message stops blocking quickly, and ordering only where it genuinely matters rather than as a default.
+So one slow message, or one that keeps failing and retrying, blocks every message behind it in that partition. If you keyed by customer ID, "that partition" is a specific set of customers having a very bad day while your overall numbers look fine. This is called **head-of-line blocking**.
 
-### Alert on consumer lag, not queue depth
+The trade is unavoidable: **working on several messages of a partition at once and keeping them strictly in order are mutually exclusive.** You pick. Usually you pick more partitions (finer keys, so a blockage hits fewer customers), a fast route to the DLQ so a poison message stops blocking quickly, and ordering only where it genuinely matters rather than by default.
 
-**Depth** tells you how much is waiting. **Lag** tells you whether you're falling behind — arrivals minus completions, or in Kafka terms the distance between the producer's offset and your committed one. They're different questions and only one of them is urgent.
+### Alert on falling behind, not on a long queue
 
-A deep queue that's draining is a system doing its job after a spike; a shallow queue that's growing is a system that will be a deep queue by morning. Alert on lag and on its *derivative* — is it increasing? — and treat depth as context, not as a page.
+At 9 AM your queue holds two million messages. Is that an emergency? You can't tell from that number alone.
 
-### Claim check: don't put the payload in the message
+**Depth** is how much is waiting. **Lag** is whether you're falling behind: arrivals minus completions, or in Kafka terms the distance between the newest message and the last one your consumer has committed. Only lag answers the urgent question.
 
-A 40 MB video, a giant CSV, a base64'd PDF — none of these belong in a message. Brokers enforce size limits precisely because of this (SQS caps a message at 256 KB; Kafka's default max message size is around 1 MB), and even below the limit a fat queue is a slow queue: more bytes per message means less throughput, longer replication, worse memory behaviour on the broker.
+A deep queue that's shrinking is a system doing its job after a spike. A shallow queue that's growing will be a deep queue by morning. Alert on lag and on whether it's *rising*, and treat depth as context, not a reason to page someone.
 
-The **claim check** pattern is the fix and it's exactly what it sounds like — put the payload in object storage, send a message containing the key, let the consumer fetch it. The message describes the work; it isn't the work.
+### Send a pointer, not the payload: the claim check
 
-### Schema evolution across a rolling deploy
+Someone puts a 40 MB video in a message, and the publish fails. Brokers cap message size for exactly this reason: SQS at 1 MiB, Kafka at around 1 MB by default. Even below the cap, a fat queue is a slow queue: more bytes per message means fewer messages per second, slower replication, and worse memory behaviour on the broker.
 
-Producers and consumers are separate deployments, so they never change at the same instant. For a window — minutes, or hours if a deploy stalls — the new producer is emitting messages that the *old* consumer has to survive. And messages already sitting in the queue were written by yesterday's code, so the reverse is true too: a message in flight during a deploy is a message from the past.
+The fix is what it sounds like. Put the payload in object storage, send a message containing only its key, and let the consumer fetch it. This is called the **claim check** pattern, after the ticket you get for a coat. The message describes the work; it isn't the work.
 
-- **Additive only.** Add optional fields; don't remove or rename in the same release as you stop writing them. Removal is a second deploy, after nothing reads it.
+### Messages from the past: schema changes during a deploy
 
-- **Tolerant readers.** Ignore fields you don't recognise instead of rejecting the message. Strict parsers turn a harmless producer change into a DLQ flood.
+Producers and consumers are deployed separately, so they never change at the same instant. For a window, minutes or hours if a deploy stalls, a new producer sends messages an *old* consumer has to cope with:
 
-- **Never repurpose a field.** Changing what `status: 2` means is the change that can't be rolled back, because the messages already in flight carry the old meaning and nothing distinguishes them. New meaning, new field.
+<Race a="New producer" b="Old consumer" result="Result: every new message ends up in the DLQ until the consumer catches up" steps={[
+  { a: "Deployed. Renames the field email to contact_email" },
+  { a: "Sends an order message with contact_email" },
+  { b: "Still on yesterday's code. Looks for email: missing", tone: "bad" },
+  { b: "Rejects the message. It's retried, then dead-lettered", tone: "bad" }
+]} />
+
+The reverse happens too. Messages already sitting in the queue were written by yesterday's code, so a message in flight during a deploy is a message from the past. Three rules keep both directions safe:
+
+- **Only ever add.** Add optional fields; don't remove or rename a field in the same release that stops writing it. Removal is a later deploy, once nothing reads it.
+- **Ignore what you don't recognise.** A consumer that skips unknown fields instead of rejecting the message is called a **tolerant reader**. A strict parser turns a harmless producer change into a DLQ flood.
+- **Never change what a field means.** Changing what `status: 2` means can't be rolled back, because messages already in flight carry the old meaning and nothing tells them apart. New meaning, new field.
 
 ### The DLQ that nobody reads
 
-A dead-letter queue you don't monitor is not a safety net — it's a slower, quieter way to lose data, with the added insult that you'll discover it during a customer complaint about an order from three weeks ago.
+A dead-letter queue you don't watch isn't a safety net. It's a slower, quieter way to lose data, and you'll discover it from a customer complaining about an order from three weeks ago.
 
-A DLQ needs two things to actually be a safety net: an **alert on arrival rate** (non-zero should be interesting; a spike should page someone), and a **documented, rehearsed replay path** — how a human moves messages back to the main queue after the bug is fixed, and what happens if the replayed message is a duplicate. If the answer to that last part is "we've never tried," you don't have a DLQ, you have a landfill.
+A DLQ needs two things to actually protect you. An **alert on arrival rate**: any message arriving should be interesting, and a spike should page someone. And a **documented, rehearsed replay path**: how a human moves messages back to the main queue once the bug is fixed, and what happens if a replayed message is a duplicate. If the answer to that last part is "we've never tried", you don't have a DLQ, you have a landfill.
 
 </Collapse>
 
 <Collapse id="numbers" title="2. Four numbers that describe any queue">
 
-Every queue's health fits in four numbers. Learn what each one means when it moves and you can debug most queue incidents from the dashboard.
+It's 3 AM and the queue alert has fired. You have one dashboard. Four numbers on it tell you most of what's going on, if you know what each one means when it moves.
 
-- **Consumer lag** — *are we falling behind?* The one that matters. Rising lag means arrival rate has overtaken drain rate; nothing else on this list is urgent while this one is flat.
+- **Consumer lag: are we falling behind?** The one that matters most. Rising lag means messages are arriving faster than they're finished. Nothing else on this list is urgent while this one is flat.
 
-- **Oldest message age** — *how stale is the worst case?* This catches what lag averages away: one partition with no live consumer, or a message stuck at the head. It's also the number your users actually feel, because it's the wait time of the unluckiest request.
+- **Oldest message age: how long has the unluckiest message waited?** This catches what lag averages away: one partition with no live consumer, or a message stuck at the front. It's also the number your users feel, because it's the wait of the unluckiest request.
 
-- **Processing time p99** — *how close are we to the cliff?* This must sit comfortably below the visibility timeout. When p99 drifts up toward it, you get redelivery and concurrent duplicates before you get a single alert about latency.
+- **Processing time p99: how close are we to the cliff?** The time 99% of messages finish within. It must sit well below the visibility timeout from [Part 1](/guides/message-queues/delivery/#visibility). As it drifts towards the timeout, you get redelivery and duplicate processing before you get a single latency alert.
 
-- **DLQ arrival rate** — *what are we losing?* The rate, not the count — a count is a number nobody looks at twice, a rate has a shape and you can see it change after a deploy.
+- **DLQ arrival rate: what are we losing?** The rate, not the count. A count is a number nobody looks at twice; a rate has a shape, and you can see it change after a deploy.
 
-Starting points, not benchmarks — every one of these depends on what the queue does, and a nightly batch pipeline has no business being held to a checkout queue's numbers. Use them as the values you set on day one and then argue with:
+These are starting points, not benchmarks. Each depends on what the queue does, and a nightly batch pipeline shouldn't be held to a checkout queue's numbers. Set them on day one, then argue with them:
 
 <Table numeric>
 
 | Number | Starting point | When it moves |
 | ------ | -------------- | ------------- |
-| consumer lag | Alert at ~1 min of work backlog (user-facing); page if it rises for 3 consecutive intervals | Rising = under-provisioned or a slow dependency. Flat-but-high = you survived a spike. |
+| consumer lag | Alert at ~1 min of work backlog (user-facing); page if it rises for 3 consecutive intervals | Rising = too few consumers or a slow dependency. Flat but high = you survived a spike. |
 | oldest msg age | Page at ~5 min (user-facing), ~1 h (batch) | High while lag is low = one stuck partition, not a capacity problem. |
 | processing p99 | Keep under ~⅓ of the visibility timeout | Approaching the timeout = duplicate processing is already happening. |
 | DLQ rate | Alert on any sustained non-zero; investigate above ~0.1% of throughput | A step change right after a deploy = you shipped it. |
@@ -88,32 +99,42 @@ Starting points, not benchmarks — every one of these depends on what the queue
 
 </Table>
 
-<Note type="key" label="The arithmetic worth doing once">
+### The arithmetic worth doing once
 
-Messages arrive at rate **A**. Each consumer processes at rate **C**. With **N** consumers you need **N > A / C** just to hold steady — at exactly A/C you never fall behind and you never catch up either. Only the surplus eats a backlog: a backlog of **B** messages drains in roughly **B / (N·C − A)**.
+You have a backlog and you add consumers. How long until it clears? Messages arrive at rate **A**, each consumer processes **C** per second, and you run **N** consumers. Just to hold steady you need:
 
-Push N·C toward A and that denominator goes to zero and the drain time goes to infinity. Which is the whole lesson: *a queue provisioned with no headroom above its arrival rate never recovers from a spike.* It doesn't recover slowly — it doesn't recover. Size consumers for the backlog you want to be able to clear, not for the average day.
+$$
+N > \frac{A}{C}
+$$
 
-</Note>
+At exactly A/C you never fall behind, and you never catch up either. Only the *surplus* capacity eats into a backlog, so a backlog of **B** messages takes roughly:
+
+$$
+\text{drain time} \approx \frac{B}{N \cdot C - A}
+$$
+
+For example: 1,000 messages a second arrive, each consumer handles 100, and you run 11. The surplus is 100 a second, so a 2-million-message backlog takes 20,000 seconds, about five and a half hours.
+
+Push N·C towards A and the bottom of that fraction goes to zero, so the drain time goes to infinity. That's the whole lesson: *a queue with no headroom above its arrival rate never recovers from a spike.* Not slowly; never. Size consumers for the backlog you want to be able to clear, not for the average day.
 
 </Collapse>
 
 <Collapse id="tools" title="3. Kafka vs. RabbitMQ vs. SQS">
 
-Three tools you'll hear constantly. They're less interchangeable than they look:
+You'll hear these three constantly, and they're less interchangeable than they look. The key difference is what happens to a message after it's read.
 
 <CardGrid>
   <Card title="Apache Kafka">
-    A distributed *log*, not a traditional queue. Messages are kept (even after reading) and replayed. Insane throughput; great for event streaming, analytics pipelines, and "many consumers, same stream." Heavier to operate.
+    A distributed *log*, not a traditional queue. Messages are kept after they're read, so any consumer can replay them. Enormous throughput; great for event streaming, analytics pipelines and "many consumers, same stream". Heavier to operate.
   </Card>
   <Card title="RabbitMQ">
-    A classic, flexible message broker with rich routing. Smart about *getting this message to the right consumer*. Great for task queues and complex routing. Messages typically vanish once acked.
+    A classic, flexible broker with rich routing rules. Good at *getting this message to the right consumer*. Great for task queues and complex routing. Messages usually disappear once acked.
   </Card>
   <Card title="AWS SQS">
-    A fully-managed queue — no servers to babysit. Dead simple, scales itself, at-least-once by default (plus a FIFO mode). The boring, correct choice on AWS.
+    A fully managed queue: no servers to look after. Dead simple, scales itself, at-least-once by default (plus a FIFO mode). The boring, correct choice on AWS.
   </Card>
   <Card title="Rule of thumb">
-    Streaming/replay/high volume → **Kafka**. Complex routing of discrete tasks → **RabbitMQ**. "I just want a queue and no ops" → **SQS**.
+    Streaming, replay or high volume → **Kafka**. Complex routing of separate tasks → **RabbitMQ**. "I just want a queue and no ops" → **SQS**.
   </Card>
 </CardGrid>
 
@@ -123,7 +144,15 @@ Three tools you'll hear constantly. They're less interchangeable than they look:
 
 <Note type="wild" label="◈ In the wild · Uber Dispatch System">
 
-Uber's real-time matching system handles tens of thousands of GPS updates, ride bookings, and dispatch signals. Location events are emitted asynchronously into a partitioned queue structure. This ensures driver matching processes run decoupled in the background, preventing a spike in GPS updates from seizing the user app's critical path.
+Uber's real-time matching handles tens of thousands of GPS updates, ride bookings and dispatch signals. Location events are sent asynchronously into a partitioned queue, so driver matching runs decoupled in the background and a spike in GPS updates can't seize the rider app's critical path.
+
+</Note>
+
+<Note type="key" label="What to remember">
+
+- Ordering and parallelism within a partition are mutually exclusive. One stuck message blocks its whole partition.
+- Watch lag, oldest message age, p99 processing time and DLQ arrival rate. Depth alone tells you little.
+- Only capacity above the arrival rate drains a backlog. With no headroom, a spike never clears.
 
 </Note>
 
@@ -133,13 +162,17 @@ Uber's real-time matching system handles tens of thousands of GPS updates, ride 
 
 <Quiz q="Consumers are healthy, CPU is low, lag is basically zero — but one customer's exports have been pending for two hours. Which number would have caught it?" options={["Queue depth", "DLQ arrival rate", "Oldest message age"]} answer={2}>
 
-Oldest message age. Lag and depth are aggregates, and an aggregate over dozens of partitions will happily average away one partition that is completely stuck — a consumer that died without rebalancing, or a poison message at the head blocking everything behind it. Oldest message age is the only one of the four that can't be diluted by healthy traffic, which is exactly why it's worth paging on separately. High age with low lag is nearly always head-of-line blocking in one partition.
+Lag and depth are totals across all partitions, and a total over dozens of partitions will happily average away one that is completely stuck: a consumer that died without its partition being reassigned, or a poison message at the front blocking everything behind it.
+
+Oldest message age is the only one of the four that healthy traffic can't dilute, which is why it's worth paging on separately. High age with low lag nearly always means head-of-line blocking in one partition.
 
 </Quiz>
 
 <Quiz q="You doubled your consumers to clear a 2-million-message backlog. Six hours later it's barely moved. What's the arithmetic?" options={["A backlog drains at N·C, so the broker must be throttling the new consumers", "Only the capacity above the arrival rate drains it, N·C − A, and doubling added little of that", "Each extra consumer adds rebalancing overhead that cancels out its throughput"]} answer={1}>
 
-Only the capacity *above* the arrival rate does any draining: the backlog falls at N·C − A, not at N·C. If you were previously right at the edge, doubling might take you from "keeping up" to "keeping up plus a little," and a little divided into two million is a very long time. Work out the surplus explicitly before you scale — and check that C itself hasn't dropped, because a saturated downstream dependency means the extra consumers are just queueing somewhere else.
+Only capacity *above* the arrival rate does any draining: the backlog shrinks at N·C − A, not N·C. If you were right at the edge before, doubling may take you from "keeping up" to "keeping up plus a little", and a little divided into two million is a very long time.
+
+Work out the surplus before you scale. And check that C itself hasn't dropped: if a downstream dependency is saturated, the extra consumers are just queueing somewhere else.
 
 </Quiz>
 

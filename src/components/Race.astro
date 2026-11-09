@@ -1,0 +1,68 @@
+---
+// src/components/Race.astro
+// Two requests side by side, one step per row in time order, so a race
+// condition can be read top to bottom instead of decoded from a log.
+//
+//   <Race a="Alice" b="Bob" result="11 bookings for 10 places" tone="bad" steps={[
+//     { a: "Reads slot 7: 9 of 10 booked" },
+//     { b: "Reads slot 7: 9 of 10 booked" },
+//     { a: "Books it", tone: "good" },
+//     { b: "Waits for Alice…", note: true },
+//   ]} />
+//
+// A step names one lane (`a` or `b`); `tone` colours it, `note` makes it a
+// quiet aside such as "waiting".
+interface Step { a?: string; b?: string; tone?: 'good' | 'bad'; note?: boolean }
+interface Props {
+  a: string;
+  b: string;
+  steps: Step[];
+  result?: string;
+  tone?: 'good' | 'bad';
+}
+const { a, b, steps, result, tone = 'bad' } = Astro.props;
+---
+<figure class="race" aria-label={`${a} and ${b}, step by step`}>
+  <div class="race-head" aria-hidden="true"><span></span><span>{a}</span><span>{b}</span></div>
+  <ol>
+    {steps.map((s, i) => (
+      <li>
+        <span class="t">{i + 1}</span>
+        <span class:list={['cell', { filled: s.a, [s.tone ?? '']: s.a && s.tone, note: s.a && s.note }]}>
+          {s.a && <span class="who">{a}: </span>}{s.a}
+        </span>
+        <span class:list={['cell', { filled: s.b, [s.tone ?? '']: s.b && s.tone, note: s.b && s.note }]}>
+          {s.b && <span class="who">{b}: </span>}{s.b}
+        </span>
+      </li>
+    ))}
+  </ol>
+  {result && <figcaption class:list={['result', tone]}>{result}</figcaption>}
+</figure>
+
+<style>
+  .race { margin: 18px 0 24px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .race-head, .race li { display: grid; grid-template-columns: 34px 1fr 1fr; }
+  .race-head { background: var(--panel-2); font-weight: 700; font-size: 0.9rem; }
+  .race-head span { padding: 9px 12px; }
+  .race ol { list-style: none; margin: 0; padding: 0; }
+  .race li { margin: 0; border-top: 1px solid var(--border); }
+  .t { padding: 10px 0; text-align: center; color: var(--muted); font-size: 0.8rem; font-weight: 600; }
+  .cell { padding: 10px 12px; font-size: 0.92rem; line-height: 1.45; border-left: 1px solid var(--border); }
+  .cell.filled { background: var(--panel); }
+  .cell.good { background: var(--good-soft); }
+  .cell.bad { background: var(--bad-soft); }
+  .cell.note { color: var(--muted); font-style: italic; }
+  .who { display: none; font-weight: 600; }
+  .result { margin: 0; padding: 10px 14px; font-weight: 700; font-size: 0.95rem; border-top: 1px solid var(--border); }
+  .result.bad { background: var(--bad-soft); color: var(--danger); }
+  .result.good { background: var(--good-soft); color: var(--accent-2); }
+
+  /* On narrow screens the lanes stack; each step says whose it is. */
+  @media (max-width: 560px) {
+    .race-head { display: none; }
+    .race li { grid-template-columns: 30px 1fr; }
+    .cell:not(.filled) { display: none; }
+    .who { display: inline; }
+  }
+</style>

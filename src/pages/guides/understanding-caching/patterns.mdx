@@ -1,96 +1,117 @@
 ---
 layout: ../../../layouts/MainLayout.astro
 title: "Read and write patterns"
-description: "Part 1 of Understanding Caching. The read and write strategies, cache-aside worked through in code, and three invalidation bugs."
+description: "Part 1 of Understanding Caching. The read and write strategies, cache-aside worked through in code, and the bugs hiding in it."
 chapter: "1"
 current: "1. Caching"
 sections:
   - id: "strategies"
-    title: "Read/write strategies"
+    title: "Who fills the cache, and when"
   - id: "worked"
     title: "Cache-aside in code"
   - id: "bugs"
-    title: "Three invalidation bugs"
+    title: "Four bugs in thirteen lines"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
-import CacheRaceDiagram from '../../../components/CacheRaceDiagram.astro';
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Race, Reading, Recap, Stack, Table } from '../../../components';
 import CacheRaceSimulator from '../../../components/CacheRaceSimulator.astro';
 import DiagramUnderstandingCaching2 from '../../../components/diagrams/DiagramUnderstandingCaching2.astro';
 
-<Collapse id="strategies" title="1. Read/write strategies">
+<Collapse id="strategies" title="1. Who fills the cache, and when">
 
-Each pattern answers two questions: *who talks to the cache*, and *when does the cache get written*. The read patterns decide how misses get filled; the write patterns decide how the cache stays in step with the source of truth.
+You've decided to cache user profiles. Two questions come up straight away. When a profile isn't in the cache, *who* goes to the database and puts it there? And when a user edits their profile, *when* does the cached copy change? Every caching pattern is one answer to those two questions.
 
-### Quick Strategy Decision Matrix
+### Cache-aside: your code does it, on demand
 
-<Table>
-
-| Strategy | Consistency | Write Overhead | Ideal Workload / Use Case |
-| :--- | :--- | :--- | :--- |
-| **Cache-aside** | <Pill tone="mid">eventual</Pill> | Low | Read-heavy, general purpose. The safe default pattern. |
-| **Read-through** | <Pill tone="mid">eventual</Pill> | Low | Read-heavy workloads where caching logic is encapsulated in data providers. |
-| **Write-through** | <Pill tone="good">strong-ish</Pill> | High | Critical data requiring fresh reads, where write latency trade-off is acceptable. |
-| **Write-back** | <Pill tone="bad">weak</Pill> | Very Low | Write-heavy, high-burst workloads where occasional node-crash data loss is tolerable. |
-| **Write-around** | <Pill tone="mid">eventual</Pill> | Low | Data written frequently but rarely re-read immediately. |
-
-</Table>
-
-### Cache-aside (lazy loading) — the default
-
-The application manages the cache. On a read: check cache → hit returns it → miss reads the DB, writes the value into the cache, then returns it. On a write: update the DB and invalidate the cached entry.
+The usual answer: your application code manages the cache itself. On a read, it checks the cache; if the value is there (a **hit**), it returns it. If not (a **miss**), it reads the database, stores the value in the cache, and returns it. On a write, it updates the database and deletes the cached copy, so the next read fetches the new one. This is called **cache-aside**, or lazy loading, and it's the default for good reason.
 
 <DiagramUnderstandingCaching2 />
 
-- <Pill tone="good">+</Pill> Only requested data is cached (lean, cheap). If the cache disappears, reads still *return* — they fall through to the database instead of erroring.
-- <Pill tone="bad">−</Pill> The first request for any key always misses (cold start). The app carries the caching logic. A small window exists where DB and cache can disagree.
+- <Pill tone="good">+</Pill> Only data someone actually asked for gets cached, so the cache stays lean and cheap. If the cache disappears, reads still *return*: they fall through to the database instead of erroring.
+- <Pill tone="bad">−</Pill> The first request for any key always misses (a **cold start**). Your app carries the caching logic. And there's a small window where the database and the cache disagree.
 
 <Note type="warn" label='"Resilient to cache failure" has an asterisk on it'>
 
-You will read that cache-aside means "if the cache dies, the app still works." What it actually means is that the app *degrades* rather than throwing errors — which is not the same thing as surviving. If your cache was absorbing 95% of reads, then the moment it goes away cold your database receives **twenty times** its normal read load, all at once, with no ramp. Databases do not politely queue; they fall over.
+You'll read that with cache-aside, "if the cache dies, the app still works". What it actually means is the app *slows down* rather than throwing errors, which is not the same as surviving. If the cache was absorbing 95% of reads, the moment it's gone your database gets **twenty times** its normal read load, all at once, with no ramp. Databases don't politely queue; they fall over.
 
-Losing a cache cold is one of the best-documented ways to take a service down, and it is why cache warmup, request coalescing and load shedding exist at all. Cache-aside buys you a failure mode you can survive *if you built for it* — see [the Reliability guide](/guides/reliability-toolkit/) for the machinery.
+Losing a cache cold is one of the best-documented ways to take a service down, and it's why cache warmup, request coalescing and load shedding exist at all. Cache-aside gives you a failure you can survive *if you built for it*; see [the Reliability guide](/guides/reliability-toolkit/) for the machinery.
 
 </Note>
 
-### Read-through
+### Read-through: the cache fetches for you
 
-Like cache-aside, but the *cache* knows how to load from the DB on a miss (via a library/provider), so the app only ever talks to the cache. Cleaner app code; loading logic moves into the caching layer.
+Same flow as cache-aside, but the *cache* knows how to load from the database on a miss, through a library or provider you configure, so your app only ever talks to the cache. This is **read-through**. Your app code gets cleaner; the loading logic moves into the caching layer.
 
-### Write-through
+### Write-through: update both at once
 
-Every write updates the cache and the DB synchronously, together.
+Every write updates the cache and the database together, synchronously, before the request returns. This is **write-through**.
 
-- <Pill tone="good">+</Pill> Cache and DB stay consistent; any key that's been written is served warm (unwritten or evicted keys still miss).
-- <Pill tone="bad">−</Pill> Every write pays to write both; you cache data that may never be read (bloat). Often paired with cache-aside reads.
+- <Pill tone="good">+</Pill> Cache and database stay in step, and any key that's been written is already in the cache (keys never written, or evicted, still miss).
+- <Pill tone="bad">−</Pill> Every write pays to write twice, and you cache data that may never be read. Often paired with cache-aside reads.
 
-### Write-back (write-behind)
+### Write-back: write the cache now, the database later
 
-Write to the cache immediately and return; flush to the DB asynchronously later, in batches.
+The write goes into the cache and returns immediately; the cache flushes changes to the database later, in batches. This is **write-back** (or write-behind).
 
-- <Pill tone="good">+</Pill> Very fast writes; absorbs bursts; fewer DB writes.
-- <Pill tone="bad">−</Pill> Data loss risk if the cache node dies before the flush. More complex.
+- <Pill tone="good">+</Pill> Very fast writes, absorbs bursts, fewer database writes.
+- <Pill tone="bad">−</Pill> If the cache node dies before the flush, those writes are gone. More complex.
 
-### Write-around
+### Write-around: skip the cache on writes
 
-Writes go straight to the DB, bypassing the cache; the cache fills later on a read miss.
+Writes go straight to the database and don't touch the cache; the cache fills later, on a read miss. This is **write-around**.
 
-- <Pill tone="good">+</Pill> Avoids flooding the cache with write-heavy data that isn't read soon.
-- <Pill tone="bad">−</Pill> Recently written data is a guaranteed miss on first read.
+- <Pill tone="good">+</Pill> Write-heavy data that nobody reads soon doesn't crowd out useful entries.
+- <Pill tone="bad">−</Pill> Anything just written is a guaranteed miss on its first read.
 
-Real systems mix these. AWS, for instance, recommends combining **write-through** (to keep the cache fresh) with **cache-aside** reads (as the miss fallback), plus TTLs to keep it lean.
+### The patterns side by side
 
-Worth saying out loud: caching is not the only way to take read load off a database. Read replicas move the same reads to a different machine without introducing a second copy of the truth with its own lifetime — see [the Database Scaling guide](/guides/database-scaling/). Caching wins when the work is expensive to *compute*, not merely expensive to *fetch*.
+<Table>
+
+| Strategy | In plain words | Freshness | Write cost | Good for |
+| :--- | :--- | :--- | :--- | :--- |
+| **Cache-aside** | Your code fills the cache on a miss | <Pill tone="mid">eventual</Pill> | Low | Read-heavy, general purpose. The safe default. |
+| **Read-through** | The cache fills itself on a miss | <Pill tone="mid">eventual</Pill> | Low | Read-heavy, with loading logic kept in a caching library. |
+| **Write-through** | Every write updates cache and database together | <Pill tone="good">strong-ish</Pill> | High | Data that must read fresh, where slower writes are acceptable. |
+| **Write-back** | Write the cache now, the database later | <Pill tone="bad">weak</Pill> | Very low | Bursty, write-heavy data where losing a few writes on a crash is tolerable. |
+| **Write-around** | Writes skip the cache | <Pill tone="mid">eventual</Pill> | Low | Data written often but rarely re-read soon. |
+
+</Table>
+
+Real systems mix these. AWS, for instance, recommends combining **write-through** (to keep the cache fresh) with **cache-aside** reads (to fill misses), plus TTLs to keep it lean.
+
+Worth saying out loud: caching isn't the only way to take read load off a database. Read replicas move the same reads to another machine without creating a second copy of the truth with its own lifetime; see [the Database Scaling guide](/guides/database-scaling/). Caching wins when the work is expensive to *compute*, not merely expensive to *fetch*.
+
+### How the cache finds out its copy is wrong
+
+A user changes their name. The database has the new one; the cache still has the old one. Telling the cache its copy is no longer valid is called **invalidation**, and there are three broad ways to do it:
+
+- **Let entries expire.** Every entry gets a time to live (**TTL**) and lapses on its own. Simple, but readers can see old data for up to the whole window.
+- **Delete the entry when you write.** Update the database, then delete or update the cache entry in the same code path. Fresher, but you must find *every* place a value is cached, and the database write plus cache delete isn't all-or-nothing: a crash between them leaves the two disagreeing.
+- **Publish change events.** Every change emits an event (via pub/sub, a database change stream, Redis Pub/Sub) that fans out and purges keys. Scales well, has more moving parts, and inherits every delivery question the transport has; see [the Message Queues guide](/guides/message-queues/), because "every purge arrives at least once" and "every purge arrives at most once" are very different promises about your cache.
+
+<Note type="warn" label="The question that decides it">
+
+*How stale can this specific data safely be?* The answer picks the strategy, field by field.
+
+</Note>
+
+<Note type="wild" label="◈ In the wild · E-commerce product pages">
+
+On a product page, the *description and images* barely change, so they're cached at the CDN for hours. The *price and stock count* must be close to live, to avoid selling things that are out of stock, so they're cached for seconds, written through on every change, or fetched live.
+
+</Note>
+
+Most caches give **eventual consistency**: for a window, readers may see old data, and eventually they'll see the new. If that's unacceptable for some data (account balances, say), [the Consistency & CAP guide](/guides/consistency-cap/) unpacks exactly what you are and aren't promised.
 
 </Collapse>
 
 <Collapse id="worked" title="2. Cache-aside in code">
 
-Everything above is vocabulary. Here is what cache-aside looks like when you actually write it, and it is worth staring at, because this exact function is in production somewhere near you right now.
+Here is what cache-aside looks like when you actually write it. It's worth staring at, because this exact function is in production somewhere near you right now.
 
 ```python
 def get_user(user_id):
@@ -108,96 +129,70 @@ def update_user(user_id, fields):
     redis.delete(f"user:{user_id}")
 ```
 
+Thirteen lines, textbook-correct in shape, and wrong in at least four ways. None of them show up on your laptop, because each needs either many requests at once or unlucky timing.
+
 </Collapse>
 
-<Collapse id="bugs" title="3. Three invalidation bugs (and their fixes)">
+<Collapse id="bugs" title="3. Four bugs in thirteen lines, and their fixes">
 
-Textbook cache-aside code is straightforward in shape but wrong in several critical ways. Let's trace how real-world scheduling, negative responses, and application rollouts break it.
+### Bug 1: a thousand misses, a thousand queries
 
-### Cache invalidation
+A popular user's entry expires. Ten thousand requests for it arrive in the next few milliseconds. Here are two of them:
 
-The cache holds a *copy*. The moment the source of truth changes, that copy might be wrong. Three broad approaches:
+<Race a="Request A" b="Request B" result="Result: two identical database queries, and with 10,000 requests, 10,000 of them" steps={[
+  { a: "Checks the cache: empty" },
+  { b: "Checks the cache: empty" },
+  { a: "Runs the SELECT on the database", tone: "bad" },
+  { b: "Runs the same SELECT on the database", tone: "bad" },
+  { a: "Stores the result in the cache" },
+  { b: "Stores the same result again" }
+]} />
 
-- **TTL / expiry** — let entries lapse. Simple, eventually consistent, but stale within the window.
-- **Write-time invalidation** — when you update the DB, delete/update the cache entry in the same flow. Fresher, but you must find *every* place a value is cached, and the DB-write + cache-delete pair isn't atomic (a failure between them leaves you inconsistent).
-- **Event-driven invalidation** — publish change events (pub/sub, a CDC stream, Redis Pub/Sub) that fan out and purge keys. Scales well, more moving parts, and you inherit every delivery guarantee question the transport has — see [the Message Queues guide](/guides/message-queues/), because "at-least-once purge" and "at-most-once purge" are very different promises about your cache.
+The cache doesn't queue misses or know they're related, so every request runs its own query. One expiry becomes a database overload. This is called a **thundering herd**, or cache stampede.
 
-<Note type="warn" label="The Core Question">
+**The fix: let one request fetch, and the rest wait for its answer.** The first request to miss takes a short lock on that key and fills the cache; everyone else waits and then reads what it stored. This is called **single-flight**, or **request coalescing**. Why it works: ten thousand misses become one query, however many requests arrive.
 
-*How stale can this specific data safely be?* The answer determines your caching strategy for each field.
+### Bug 2: everything expires at the same second
 
-</Note>
+Every key gets exactly `3600` seconds. A deploy or batch job fills thousands of keys within the same minute, so an hour later they all expire within the same minute too, and the database takes a spike of misses. The code manufactures a load spike every hour.
 
-<Note type="wild" label="🌍 In the wild: E-Commerce Product Pages">
+**The fix: add randomness to the TTL.** Give each key, say, `3600 ± 300` seconds. This is called **jitter**. Why it works: keys written together now expire spread over ten minutes, so the cliff becomes a gentle slope.
 
-On an e-commerce product page, the *description and images* barely change, so they are cached aggressively at the CDN for hours. But the *price and inventory count* must be near-real-time to avoid selling out-of-stock items, so they are cached for only seconds, written through on every change, or fetched live from the origin.
+### Bug 3: the cache that stays wrong for an hour
 
-</Note>
+This one is subtle, and it's the reason people lose faith in their cache. A **Reader** request misses and goes to fetch the user, while a **Writer** request updates the same user:
 
-<Note type="key" label="Eventual Consistency">
+<Race a="Reader" b="Writer" result="Result: the database says Grace, the cache says Ada, for the next hour" steps={[
+  { a: "Cache miss. Reads the row from the database: name is Ada" },
+  { a: "Paused before writing to the cache (garbage collection, a slow network)", note: true },
+  { b: "Updates the database: name is now Grace", tone: "good" },
+  { b: "Deletes the cache key. It was already empty, so nothing happens" },
+  { a: "Wakes up and stores Ada in the cache for 3,600 seconds", tone: "bad" }
+]} />
 
-Most caches give **eventual consistency** — for a window, readers may see old data. If that trade-off is critical for your data type (like account balances), [the Consistency & CAP guide](/guides/consistency-cap/) unpacks exactly what you are and aren't promised.
+Every step was correct on its own. The problem is order: the Writer's delete ran *before* the Reader's stale write, so it deleted nothing, and nothing will clear the key unless the user edits their profile again. This is the **stale-forever race** (forever, that is, until the TTL runs out).
 
-</Note>
+That's why **deleting on write is not enough on its own**, however carefully you find every call site. The window is small, but "small" times "a million writes a day" is a support ticket. You can narrow it. Facebook's *leases* give the reader that missed a token, and the writer's delete cancels that token, so the late write is rejected. A "delayed double delete" removes the key again a second after the write. Closing it completely needs a version check on the fill: store only if nothing newer has been written.
 
-Thirteen lines, textbook-correct in shape, and wrong in at least four ways.
-
-<CardGrid>
-
-<Card title="Bug 1: Nothing coalesces the misses">
-
-Ten thousand concurrent requests for the same missing key run the function ten thousand times. Each one sees an empty cache and issues its own `SELECT` query. The cache does not queue them or know they are related — converting a single expiry event into a database outage (thundering herd).
-
-**The Fix: Single-flight / Request Coalescing** — The first caller to miss takes a short mutex lock and populates the cache while all other callers wait for its answer.
-
-</Card>
-
-<Card title="Bug 2: Constant TTL (Synchronised Expiry)">
-
-Setting a fixed `3600s` TTL for all keys causes entries populated during a deploy or batch job to expire at the exact same second — manufacturing periodic load spikes.
-
-**The Fix: Jitter** — Randomise the TTL (e.g. `3600 ± 300s`) to smooth out expiration times over a window.
-
-</Card>
-
-</CardGrid>
-
-### Bug 3: The Stale-Forever Race
-
-This one is subtle and it is the reason people lose faith in their cache. Think of it as a story of a **Reader** thread that gets temporarily "distracted" (descheduled by the CPU) while a **Writer** updates the database in the background:
-
-<CacheRaceDiagram />
-
-Here is what happens step-by-step during this race:
-
-- The **Reader** misses the cache, loads the old row value (`Ada`) from the database, and is just about to write it back to Redis.
-- Right then, the Reader gets suspended by the operating system (e.g. during a garbage collection pause or network lag).
-- While the Reader is asleep, a **Writer** updates the database to `Grace` and deletes the Redis key. Since the key was already empty, this delete is a silent no-op.
-- The Reader wakes up and finishes its write, saving the stale value `Ada` back into the empty Redis slot.
-
-Now, the database has `Grace` but the cache confidently serves `Ada`. No subsequent writes will clear this key unless a user updates their profile again. The cache will remain stale for the entire 60 minutes.
-
-This is why **invalidation-on-write alone is not sufficient**, no matter how carefully you find every call site. The window is small, but "small" times "a million writes a day" is a support ticket. Narrowing it is possible — Facebook's *leases* hand the missing reader a token that the writer's delete invalidates, so the late fill is simply rejected; a "delayed double delete" removes the key again a second after the write. Eliminating it needs versioned compare-and-set on the fill.
-
-And it is why a **bounded TTL is a safety net rather than a nicety**. The TTL is the only thing in the buggy version above that ever repairs this. Every key you cache without an expiry is a key that can be silently wrong forever. If you find yourself writing `SET` with no TTL, you are betting that your invalidation logic is perfect. It is not.
+And it's why **a TTL is a safety net, not a nicety**. In the code above, the TTL is the only thing that ever repairs this. Every key cached without an expiry can be silently wrong forever. If you find yourself writing `SET` with no TTL, you're betting your invalidation logic is perfect. It isn't.
 
 <CacheRaceSimulator />
 
-### 4. Misses and empty results are the same thing
+### Bug 4: "doesn't exist" looks like a real value
 
-`db.query_one` returns `None` for a user that doesn't exist. `json.dumps(None)` is the string `"null"`, which gets cached for a full hour and is indistinguishable from a real value. So a user created one second after somebody looked them up stays invisible for an hour.
+`db.query_one` returns `None` for a user that doesn't exist. `json.dumps(None)` is the string `"null"`, which gets cached for a full hour and looks just like a real entry. So a user created one second after somebody looked them up stays invisible for an hour.
 
-Flip the code the other way — only cache when `user is not None` — and you get the opposite failure, **cache penetration**: every request for a non-existent ID misses the cache and hits the database, forever, which is a free denial-of-service for anyone who can guess URLs.
+Flip the code the other way, caching only when `user is not None`, and you get the opposite failure: every request for an ID that doesn't exist misses the cache and hits the database, forever. That's a free denial-of-service for anyone who can guess URLs, and it's called **cache penetration**.
 
-The answer is to cache negatives *deliberately*, with their own short TTL and a sentinel you can tell apart from real data. (While you are in there: `if cached:` is also wrong — an empty cached value is falsy, so a legitimately-empty entry is treated as a miss on every read. Test `is not None`.)
+The answer is to cache "not found" *deliberately*, with its own short TTL and a marker value you can tell apart from real data. (While you're there: `if cached:` is also wrong. An empty cached value counts as false in Python, so a legitimately empty entry is treated as a miss on every read. Test `is not None`.)
 
-### 5. Schema/key versioning during deploys
+### And a deploy trap: version your keys
 
-Prefix every key with a schema version: `v3:user:123`. You will not appreciate why until the deploy where you add a field to the serialised shape, and every instance running the old code starts reading objects that have it while every instance running the new code reads objects that don't.
+You add a field to the user object. During the deploy, servers running the old code and servers running the new code share one cache: old servers read objects that have the new field, and new servers read objects that don't.
 
-Without a version prefix your options are (a) flush the cache, which is the cold-start outage described in [Part 2](/guides/understanding-caching/failure/#hotkeys), or (b) write defensive deserialisation forever. With one, you bump `v3` to `v4`, the new code writes and reads new keys, the old keys are read by nobody and quietly age out under their own TTL or get evicted by LRU. It costs six characters per key.
+Put a version in every key: `v3:user:123`. Without it, your options are (a) empty the whole cache, which is the cold-start outage in [Part 2](/guides/understanding-caching/failure/#hotkeys), or (b) write defensive decoding forever. With it, you bump `v3` to `v4`: new code reads and writes new keys, and the old keys are read by nobody and age out under their own TTL or get evicted. It costs six characters per key.
 
-### The version that survives contact
+### The version that survives production
 
 ```python
 MISS = "◇none"                      # sentinel: cached "does not exist"
@@ -232,17 +227,48 @@ def update_user(user_id, fields):
     redis.delete(f"v3:user:{user_id}")   # delete, don't write the new value in
 ```
 
-What changed: misses collapse to one query, TTLs no longer synchronise, non-existent users get a short negative entry instead of either an hour of invisibility or an open channel to the database, and the key carries a schema version. `nx=True` means a slow reader can never clobber a value someone else has already refreshed — it does *not* close the stale-forever race, because after the writer's `DEL` the slot is empty and the stale `SET` succeeds. Only the bounded TTL saves you there, which is the whole point.
+What changed: concurrent misses collapse to one query, TTLs no longer line up, users that don't exist get a short "not found" entry instead of either an hour of invisibility or an open channel to the database, and the key carries a version.
 
-Note also the last line: the writer *deletes* rather than writing the new value. Two concurrent writers who both write their value into the cache can land in the opposite order they landed in the database. Delete-on-write has one outcome — the next reader goes and finds out — and one outcome is much easier to reason about than two.
+`nx=True` means "only store if the key is empty", so a slow reader can never overwrite a value someone else has already refreshed. It does *not* close the stale-forever race: after the writer's delete the slot is empty, so the stale write succeeds. Only the TTL saves you there, which is the whole point.
+
+### Why the writer deletes instead of writing the new value
+
+Note the last line: the writer *deletes* the key rather than storing the new value. Here's what happens if two writers store their values instead:
+
+<Race a="Writer 1" b="Writer 2" result="Result: the database says green, the cache says blue" steps={[
+  { a: "Updates the database: colour = blue" },
+  { b: "Updates the database: colour = green", tone: "good" },
+  { b: "Stores green in the cache" },
+  { a: "Stores blue in the cache, last", tone: "bad" }
+]} />
+
+The writes reached the cache in the opposite order from the database. With delete-on-write there's only one outcome: the key is gone, and the next reader fetches the truth.
+
+<Note type="key" label="What to remember">
+
+- Cache-aside is the default: read the cache, fill it on a miss, and on write update the database and *delete* the key.
+- Deleting on write can't prevent every stale entry; a slow reader can write old data back. Always set a TTL; it's the only thing that repairs the bug you didn't see.
+- Collapse concurrent misses into one query, add jitter to TTLs, cache "not found" deliberately, and version your keys.
+
+</Note>
 
 </Collapse>
 
 <Collapse id="check" title="Check your understanding">
 
-<Quiz q="You invalidate on every write, you've checked every call site, and users still report stale data — for almost exactly your TTL duration. What happened?" options={["Redis evicted the key under memory pressure and refilled it from a lagging replica", "The CDN cached the API response for the same duration as the cache TTL", "A slow reader wrote its stale value back after the writer's delete, so only the TTL could clear it"]} answer={2}>
+<Quiz q="You delete the cache key on every write, you've checked every call site, and users still see stale data, for almost exactly your TTL. What happened?" options={["Redis evicted the key under memory pressure and refilled it from a lagging replica", "The CDN cached the API response for the same duration as the cache TTL", "A slow reader stored its old value after the writer's delete, so only the TTL could clear it"]} answer={2}>
 
-The stale-forever race. A reader missed, read the old value from the database, got descheduled; your writer updated the row and deleted a key that wasn't there; the reader woke up and wrote its stale value into the empty slot. Your invalidation ran before the poisoning write, so it invalidated nothing. The giveaway is the duration: it's the TTL, because the TTL is the only thing that ever clears it. Narrow the window with leases or a delayed second delete, and never remove the TTL.
+The stale-forever race. A reader missed, read the old value from the database, and got paused. Your writer updated the row and deleted a key that wasn't there yet. Then the reader woke up and stored its old value in the empty slot. Your delete ran *before* the stale write, so it deleted nothing.
+
+The giveaway is the duration: it matches the TTL, because the TTL is the only thing that ever clears it. Narrow the window with leases or a delayed second delete, and never remove the TTL.
+
+</Quiz>
+
+<Quiz q="Two requests update the same product at nearly the same moment. Each writes the database, then stores its new value in the cache. Afterwards the cache disagrees with the database. Why?" options={["Redis applied the two writes out of order", "The two requests reached the cache in the opposite order from the database, so the older value landed last", "The database transaction rolled back one of the writes"]} answer={1}>
+
+Each request did its two steps in order, but nothing kept the two requests in the same order at both places. The one that wrote the database first wrote the cache last, so the cache ended up with the older value.
+
+Delete the key instead of storing the new value. Then there's only one outcome, whatever the timing: the key is gone, and the next reader fetches the current value from the database.
 
 </Quiz>
 

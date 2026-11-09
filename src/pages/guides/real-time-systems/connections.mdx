@@ -6,103 +6,147 @@ chapter: "11"
 current: "11. Real-Time Systems"
 sections:
   - id: "cost"
-    title: "What a connection actually costs"
+    title: "What an open connection really costs"
   - id: "routing"
-    title: "Routing to a stateful server"
+    title: "Getting a message to the right server"
   - id: "fanout"
-    title: "Fan-out: on write or on read?"
+    title: "One post, a million screens: when to pay"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Race, Reading, Recap, Stack, Table } from '../../../components';
 
-<Collapse id="cost" title="1. What a connection actually costs">
+<Collapse id="cost" title="1. What an open connection really costs">
 
-The "C10K problem" was solved twenty years ago and the folklore has not caught up. Modern servers using epoll or kqueue hold enormous numbers of idle connections; WhatsApp famously reached **2 million connections on a single FreeBSD box** in 2012. The cost is not the connection, it is what you attach to it.
+Your team plans to hold 100,000 WebSocket connections and someone asks how many servers that needs. The folklore answer is "lots, connections are expensive". That folklore is twenty years out of date.
+
+Twenty-odd years ago, holding 10,000 connections on one server was a famous hard problem, the "C10K problem". It was solved by letting the operating system watch thousands of connections at once and wake the server only for the ones with data waiting (`epoll` on Linux, `kqueue` on BSD). WhatsApp famously reached **2 million connections on a single FreeBSD box** in 2012. The cost isn't the connection. It's what you attach to it.
+
+### The memory arithmetic
+
+Each connection carries three things in memory. The **kernel socket buffers** hold bytes waiting to be read or sent. The **TLS session state** holds the encryption keys. And **your own per-connection object** holds the user ID, subscriptions, a queue of messages waiting to go out, and the parser's state.
 
 <Note type="key" label="The memory arithmetic">
 
-Per connection you pay: kernel socket buffers (typically **4–64 KB** combined, and tunable), TLS session state (**~10–20 KB**), and your own per-connection object — user ID, subscriptions, send queue, parser state.
+Per connection you pay: kernel socket buffers (typically **4–64 KB** combined, and tunable), TLS session state (**~10–20 KB**), and your own per-connection object.
 
-At **50 KB** per connection, 100,000 connections is **5 GB** — comfortable. At **500 KB**, because someone attached a generous send buffer and a cached user profile, the same 100,000 connections is **50 GB**, and you are buying ten times the machines for the same product.
+At **50 KB** per connection, 100,000 connections is **5 GB**. Comfortable. At **500 KB**, because someone attached a generous send buffer and a cached user profile, the same 100,000 connections is **50 GB**, and you're buying ten times the machines for the same product.
 
 </Note>
 
-So the tuning levers are: keep the per-connection object small (store an ID, not an object graph), bound the send queue explicitly (see [backpressure](/guides/real-time-systems/failure/#backpressure)), reduce socket buffer sizes for connections you know carry small messages, and prefer TLS session resumption so handshake state is not duplicated.
+So the levers are all about keeping that per-connection number small:
 
-Then there is CPU, which behaves differently. Idle connections cost almost nothing. Each message costs a syscall, a framing operation, and possibly TLS encryption. The killer is *fan-out*: one message to a 50,000-member channel is 50,000 sends. If you also serialise the message once per recipient rather than once per broadcast, you have turned a 200-byte message into 10 MB of allocation and JSON encoding, per broadcast. Serialise once, send many.
+- **Store an ID, not an object graph.** Look up the profile when you need it.
+- **Give every send queue a maximum size** (see [backpressure](/guides/real-time-systems/failure/#backpressure) for what happens when it fills).
+- **Shrink socket buffers** for connections you know carry small messages.
+- **Use TLS session resumption**, so a reconnecting client reuses its earlier keys instead of doing a full new handshake.
+
+### CPU: idle is free, broadcasting isn't
+
+CPU behaves differently. An idle connection costs almost nothing. Each message costs a system call, framing, and usually encryption.
+
+The expensive case is one message going to many people, called **fan-out**. One message to a 50,000-member channel is 50,000 sends. Now suppose your code turns the message into JSON once per recipient instead of once per broadcast. A 200-byte message becomes 50,000 × 200 bytes = 10 MB of allocation and encoding, every broadcast. The fix is one line of discipline: **serialise once, send the same bytes to everyone.**
 
 <Note type="warn" label="Ephemeral ports">
 
-A single client IP can open at most ~64,000 connections to a single server IP:port, because that is the size of the ephemeral port space. This is invisible in production (clients have different IPs) and appears instantly in load testing from one machine, where it is usually misdiagnosed as a server limit.
+Every TCP connection is identified by the client's IP and port plus the server's IP and port. A client picks its port from a fixed range, so a single client IP can open at most ~64,000 connections to a single server IP and port. In production that's invisible, because real clients have different IPs. In a load test from one machine it appears instantly, and it's usually misdiagnosed as a server limit.
 
-It also bites *between* your own tiers: a gateway holding many connections to one backend can exhaust ports. Fix with multiple backend ports or IPs, and by reusing pooled connections rather than opening new ones.
+It also bites *between* your own tiers: a gateway holding many connections to one backend can run out of ports. Fix it with multiple backend ports or IPs, and by reusing pooled connections instead of opening new ones.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="routing" title="2. Routing to a stateful server">
+<Collapse id="routing" title="2. Getting a message to the right server">
 
-Your user is connected to gateway 7. An event for that user is generated by a worker that has never heard of gateway 7. Getting the message from one to the other is the central architectural problem of real-time systems, and there are three standard answers.
+Priya is connected to gateway 7. Someone mentions her in a channel, and that event is created by a worker that has never heard of gateway 7. (A **gateway** is the server that holds the open connections.) How does the message get from the worker to Priya's connection? This is the central problem of real-time systems, and there are three standard answers.
 
 <Stack>
-  <Layer idx="A">**Registry.** Every gateway writes "user 8817 is on gateway-7" into a shared store (Redis, or a coordination store from [Getting Machines to Agree](/guides/coordination-consensus/)). Senders look it up and deliver directly. Precise and efficient; the registry becomes a hot dependency, and it goes stale the instant a gateway dies.</Layer>
-  <Layer idx="B">**Broadcast bus.** Every gateway subscribes to a pub/sub topic; senders publish and every gateway discards what isn't theirs. No registry, no staleness, trivially correct. Cost is that every gateway sees every message — fine at ten gateways, ruinous at a thousand.</Layer>
-  <Layer idx="C">**Sharded topics.** The middle ground and the usual answer at scale. Partition by channel or conversation; a gateway subscribes only to the partitions its connected users care about. Senders publish to a partition without knowing who is listening. Scales because each gateway's traffic is proportional to its users' interests, not to global volume.</Layer>
+  <Layer idx="A">**Registry: write down where everyone is.** Every gateway records "user 8817 is on gateway-7" in a shared store, such as Redis or a coordination store from [Getting Machines to Agree](/guides/coordination-consensus/). Senders look the user up and deliver directly. Precise and efficient, but the registry becomes a dependency every message needs, and it's wrong the instant a gateway dies.</Layer>
+  <Layer idx="B">**Broadcast bus: tell every gateway everything.** Every gateway subscribes to one publish/subscribe topic. Senders publish, and each gateway throws away messages for users it doesn't hold. Nothing to keep up to date, so nothing goes stale. The cost is that every gateway sees every message: fine at ten gateways, ruinous at a thousand.</Layer>
+  <Layer idx="C">**Sharded topics: tell each gateway only what its users care about.** The usual answer at scale. Split traffic into topics by channel or conversation. A gateway subscribes only to the topics its connected users belong to, and senders publish to a topic without knowing who's listening. It scales because each gateway's traffic grows with its own users' interests, not with global volume.</Layer>
 </Stack>
 
-Layered on top of routing is the question of which gateway a client lands on in the first place. The load balancer must support the upgrade (an L7 balancer that doesn't understand the WebSocket handshake will break it), and it must not balance mid-stream. Long-lived connections also defeat ordinary load balancing in a subtle way described in [Load Balancing](/guides/load-balancing/): least-connections works beautifully for short requests and terribly for long ones, because a server that has been up longest accumulates the most connections and never sheds them.
+### Which gateway does a client land on?
 
-<Note type="warn" label="The deploy problem">
+Before routing, the load balancer has to place each new connection. Two things matter. It must understand the WebSocket upgrade (a load balancer that reads HTTP but doesn't understand the handshake will break it). And once a connection is placed, it stays: you can't move a live connection to another server mid-stream.
 
-Restart a gateway holding 50,000 connections and all 50,000 clients reconnect simultaneously — the Slack failure mode. Roll a fleet of twenty gateways and you do that twenty times in a row.
+That second fact undermines ordinary balancing, which is covered in [Load Balancing](/guides/load-balancing/). Every algorithm only decides where *new* connections go. Long-lived ones never move, so an imbalance created by a deploy or a scale-up lasts for hours. Least connections can even make it worse: it sends every new connection to the emptiest server, so a just-restarted gateway receives a whole wave of reconnects at once.
 
-Mitigations: drain slowly, closing connections at a controlled rate (say 500/s) rather than all at once; send a close frame with a reason so clients know to reconnect with jitter rather than immediately; and deliberately rebalance a small fraction of connections continuously in normal operation, so that "reconnect" is a well-exercised path rather than a rare emergency.
+### Restarting a gateway is a small outage you cause yourself
 
-</Note>
+A deploy restarts a gateway holding 50,000 connections. Those clients don't vanish; they reconnect, all at once, onto the gateways that are still up.
+
+<Race a="Gateway 3 (being deployed)" b="Gateway 7 (still up)" result="Result: a routine deploy turns into a reconnect storm on the healthy gateway" steps={[
+  { a: "Restarts. 50,000 connections drop in the same second", tone: "bad" },
+  { b: "Receives 50,000 reconnects: TLS handshake, login check, resubscribe, catch-up for each" },
+  { b: "Its own clients' messages wait behind the reconnect work", note: true },
+  { a: "Comes back empty. Now roll the next of twenty gateways", tone: "bad" }
+]} />
+
+Roll a fleet of twenty gateways and you do that twenty times in a row. Three habits tame it:
+
+- **Drain slowly.** Close connections at a controlled rate, say 500 a second, instead of all at once.
+- **Say goodbye properly.** Send a WebSocket close frame with a reason, so clients know to reconnect after a random delay rather than immediately.
+- **Rebalance a little, all the time.** Deliberately move a small fraction of connections in normal operation, so reconnecting is a well-exercised path rather than a rare emergency.
 
 </Collapse>
 
-<Collapse id="fanout" title="3. Fan-out: on write or on read?">
+<Collapse id="fanout" title="3. One post, a million screens: when to pay">
 
-When one user's action must reach many users' screens, you choose when to pay for the multiplication. This is the single biggest design decision in a feed or chat system, and it is genuinely a choice — both answers are correct for different workloads.
+A user posts. Every follower's feed has to show it. You can do that work when the post is written, or when each feed is read. This is the biggest design decision in a feed or chat system, and both answers are correct for different workloads.
 
 <CardGrid>
   <Card pill="Fan-out on write (push)" tone="good">
-    On publish, immediately write the item into every follower's inbox. Reads are a single sequential fetch of a precomputed list — extremely fast, trivially cacheable. Writes are O(followers) and can be enormous.
+    When someone posts, immediately copy the item into every follower's inbox. Reading a feed is then one fetch of a ready-made list: very fast and easy to cache. Writes cost one insert per follower, which can be enormous.
   </Card>
   <Card pill="Fan-out on read (pull)" tone="mid">
-    Store the item once. On read, gather items from everyone this user follows and merge them. Writes are O(1). Reads are expensive, hard to cache, and get worse as the user follows more people.
+    Store the post once. When someone opens their feed, gather recent posts from everyone they follow and merge them. Writes cost one insert. Reads are expensive, hard to cache, and get worse the more people a user follows.
   </Card>
 </CardGrid>
 
-<Note type="key" label="Why the hybrid exists">
+### Why big platforms do both
 
-Most users have hundreds of followers. Fan-out on write costs a few hundred small writes — nothing.
+Most users have hundreds of followers. Fan-out on write costs a few hundred small writes. Nothing.
 
-A celebrity has **100 million** followers. One post at fan-out-on-write is **100 million inbox writes**, which is not a post, it is an incident. Worse, most of those inboxes belong to people who will not open the app today, so the work is wasted.
+A celebrity has **100 million** followers. One post with fan-out on write is **100 million inbox writes**, which isn't a post, it's an incident. Worse, most of those inboxes belong to people who won't open the app today, so most of that work is wasted.
 
-**The hybrid:** fan out on write for ordinary accounts, and mark accounts above a threshold as "pull". A user's feed is then *their precomputed inbox* merged at read time with *the recent posts of the handful of celebrities they follow*. Both operations stay small. This is, in outline, what Twitter, Instagram and their peers actually do.
+So split by account size. Ordinary accounts fan out on write. Accounts above a follower threshold are marked "pull". When you open your feed, the system takes *your precomputed inbox* and merges in *the recent posts of the few celebrities you follow*. Both halves stay small. This is, in outline, what Twitter, Instagram and their peers do.
+
+### The same choice in chat
+
+Chat has the same decision under different names. A two-person conversation fans out on write, always. A 200,000-member community channel does not: you store each message once in the channel's log and let connected clients read from it. That's roughly Discord's approach: a channel is a stream, and only the members currently connected and looking at it receive a push.
+
+The refinement that matters at scale is to fan out only to *active* recipients. A message must reach the screens that are open right now. Everyone else can read it from the channel log next time they connect, and can get a phone notification through a separate, much cheaper path. Fan-out cost then grows with how many people are watching, not with membership, and those two numbers can differ by a factor of a thousand.
+
+<Note type="key" label="What to remember">
+
+- Connections are cheap; what you attach to each one isn't. Keep per-connection memory small and every send queue bounded.
+- Something must know which server each user is on. Splitting messages into topics that gateways subscribe to is what scales.
+- Pay for fan-out when it's cheap: on write for ordinary users, on read for celebrities, and only to screens that are actually open.
 
 </Note>
-
-For chat the same choice appears with different names. A two-person conversation fans out on write, always. A 200,000-member community channel does not — you store the message once in the channel's log and let connected clients read from it, which is roughly Discord's approach: a channel is a stream, and only the members currently connected and currently looking at it receive a push.
-
-The refinement that makes the difference at scale is to fan out only to *active* recipients. A message needs to reach the screens that are open right now; everyone else can be served from the channel log the next time they connect, and can receive a push notification through an entirely separate, much cheaper path. Fan-out cost then scales with concurrent viewers rather than with membership, and those two numbers can differ by three orders of magnitude.
 
 </Collapse>
 
 <Collapse id="check" title="Check your understanding">
 
-<Quiz q="A server can easily hold 100,000 idle connections, but crashes when they actually start receiving traffic. What changed?" options={["The epoll event loop cannot track that many active file descriptors at once", "TLS handshakes for 100,000 clients exhaust the CPU once they all become active", "Socket buffers and send queues grow with undelivered data, so memory per connection jumps once traffic flows"]} answer={2}>
+<Quiz q="A server holds 100,000 idle connections easily, then runs out of memory once they start receiving traffic. What changed?" options={["The event loop cannot track that many active connections at once", "TLS handshakes for 100,000 clients exhaust the CPU once they all become active", "Socket buffers and send queues fill with undelivered data, so memory per connection jumps once traffic flows"]} answer={2}>
 
-An idle TCP connection costs very little: basic kernel sockets and connection registry metadata (~10–30 KB). The scaling ceiling changes completely when traffic starts flowing. Kernel-level read/write socket buffers dynamically grow (often to 64 KB or higher) to support outstanding data, and application-level send queues can buffer undelivered payloads for slow clients.
+An idle connection costs little: small kernel buffers and a few fields of your own (roughly 10–30 KB). Once traffic flows, two things grow. The kernel's buffers grow (often to 64 KB or more) to hold data in transit, and your send queue holds messages a slow client hasn't taken yet.
 
-If 100,000 connections each accumulate 200 KB of buffered data (e.g. because of slow network receivers), the server requires 20 GB of memory just for queues. Unbounded buffers degrade isolation, causing healthy connections to be dropped when the host goes out of memory. Defensive engineering requires setting hard queue limits and forcing disconnections on slow consumers so they resync from a sequence log later.
+If 100,000 connections each build up 200 KB because some receivers are slow, that's 20 GB just for queues. When the server runs out of memory, healthy connections die along with the slow ones. The defence: a hard limit on every send queue, and disconnect clients that hit it, so they reconnect and catch up from a sequence number later.
+
+</Quiz>
+
+<Quiz q="You deploy a new version to twenty WebSocket gateways, one after another. Error rates spike on the gateways that weren't being deployed. Why?" options={["The new version has a bug that spreads to other gateways", "Each restart drops tens of thousands of clients, who all reconnect at once onto the healthy gateways", "The load balancer stops sending traffic to healthy gateways during a deploy"]} answer={1}>
+
+A restarted gateway's clients don't disappear; they reconnect immediately, all at once, onto the gateways still running. Each reconnect means a TLS handshake, a login check, resubscribing and catching up, so the healthy gateways spend their capacity on that and their own clients suffer. Rolling twenty gateways repeats it twenty times.
+
+Drain each gateway slowly (for example 500 connections a second), send a close frame telling clients to reconnect after a random delay, and keep reconnects routine by rebalancing a few connections continuously.
 
 </Quiz>
 

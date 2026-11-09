@@ -9,49 +9,49 @@ sections:
     title: "Recap in 60 seconds"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Collapse, Footer, Recap, Table } from '../../../components';
 
 <Collapse id="recap" title="Recap in 60 seconds">
 
 <Recap>
 
-- **The job** is to answer "which backend?" correctly, instantly, millions of times a second — and to notice when the answer stops being a backend at all.
+- **The job** is to answer "which server should take this request?" correctly and instantly, every time, and to notice when a server has stopped being able to answer.
 
-- **L4 forwards packets, L7 reads requests.** Content routing, TLS termination, header rewrites, per-route limits and cross-backend retries are all L7. Protocol neutrality, source-IP fidelity and minimum latency are all L4. Edge L4 in front of a tier of L7 proxies is a very common shape.
+- **L4 forwards the connection without reading it; L7 reads the HTTP request.** Routing by URL, decrypting HTTPS, rewriting headers, per-route limits and retrying on another server all need L7. Any protocol, the client's real IP for free and the lowest added delay are L4. An L4 balancer in front of a tier of L7 proxies is a very common shape.
 
-- **Round robin is blind to work.** A backend taking 100× longer gets the same number of requests. Prefer least-connections, and implement it as [power of two random choices](/guides/load-balancing/failure/#p2c) so it survives a tier of load balancers.
+- **Round robin counts requests, not work.** A server taking 100× longer still gets the same number of requests. Prefer least connections, and with more than one balancer use the [power of two random choices](/guides/load-balancing/failure/#p2c): pick two servers at random, send to the less busy one.
 
-- **Consistent hashing** is what stops a fleet size change from invalidating every cache key at once.
+- **Consistent hashing** stops a change in fleet size from moving almost every cache key to a new server at once.
 
-- **Sticky sessions are a band-aid.** Push session state into a shared cache and every server becomes interchangeable — which is also what sharding in [the Database guide](/guides/database-scaling/) assumes.
+- **Sticky sessions are a band-aid.** Keep session state in a shared store and every server becomes interchangeable, which is also what sharding in [the Database guide](/guides/database-scaling/) assumes.
 
-- **Liveness ≠ readiness.** "Restart me?" and "send me traffic?" are different questions. A static 200 answers neither.
+- **"Restart me?" and "send me traffic?" are different questions.** That's liveness versus readiness. A health check that returns a fixed 200 answers neither.
 
-- **Removal is not free.** Drain first, or every deploy is an error spike. And the traffic you remove lands on instances that may not have room for it.
+- **Removing a server is not free.** Let its requests finish first (drain it), or every deploy is an error spike. And its traffic lands on servers that may not have room for it.
 
-- **Health checks can fail open.** If every host looks unhealthy, the likeliest bug is in the checker. Know what your proxy does at zero healthy hosts.
+- **When every server looks unhealthy, suspect the health check.** Good proxies fail open and keep sending traffic. Know what yours does when no server is healthy.
 
-- **Retries multiply.** Retry at one layer, cap it with a budget, jitter the backoff.
+- **Retries multiply across layers.** Retry at one layer, cap it with a budget, and add random jitter to the wait.
 
-- **Only refusal is fast enough.** Autoscaling takes minutes; a cascade takes seconds. Shed load and cap concurrency per instance.
+- **Only refusing work is fast enough.** Autoscaling takes minutes; a cascade takes seconds. Shed excess load and cap requests in progress per server.
 
 </Recap>
 
-And a handful of numbers worth carrying around. These are **order-of-magnitude starting points, not benchmarks** — every one of them should end up tuned to your own request profile, and none of them is a target to hit.
+And a handful of numbers worth carrying around. These are **order-of-magnitude starting points, not benchmarks**: every one should end up tuned to your own traffic, and none of them is a target to hit.
 
 <Table numeric>
 
 | Number | What it is | Why roughly that |
 | ------ | ---------- | ---------------- |
-| 5–10s | Health-check interval | Fast enough to catch a death within one page load's patience; slow enough that a 500-instance fleet isn't a DDoS against its own health endpoint. |
-| 2–3 fails | Unhealthy threshold | One failed check is noise. Two or three is a signal. Combined with the interval this sets your detection time: 3 × 10s ≈ 30 seconds to eject. |
-| 2 passes | Healthy threshold | Coming back should be easier than going away, but not instant, or a flapping instance oscillates in and out of rotation. |
-| 30–120s | Deregistration delay / drain timeout | Longer than your slowest ordinary request, shorter than your appetite for a rolling deploy. AWS defaults to 300s, which is usually far more than a web tier needs. Long-poll or streaming endpoints need more. |
-| 30–300s | Slow-start ramp for a new instance | Long enough to fill pools and warm caches under gradually increasing real traffic. Match it to how long your p99 actually takes to settle after a restart. |
-| ~10–100µs | Added latency, L4 hop | Forwarding with no parsing, often in kernel space or on the NIC. Effectively free next to a network round trip. |
-| ~0.5–2ms | Added latency, L7 hop | Parse, route, re-emit, plus buffering. Small in absolute terms, and material only when your own p50 is single-digit milliseconds or you're chaining several proxies. |
-| 1–5ms | TLS handshake CPU at the terminator | Per new connection, not per request — which is exactly why connection reuse and session resumption matter so much at the edge. |
-| 10–20% | Retry budget, as a share of traffic | Enough headroom to paper over ordinary blips; low enough that a total outage cannot multiply offered load. Envoy defaults to 20%. |
+| 5–10s | Health-check interval | Fast enough to catch a dead server within one page load's patience; slow enough that a 500-instance fleet isn't attacking its own health endpoint. |
+| 2–3 fails | Unhealthy threshold | One failed check is noise. Two or three is a signal. With the interval this sets your detection time: 3 × 10s ≈ 30 seconds to remove a server. |
+| 2 passes | Healthy threshold | Coming back should be easier than leaving, but not instant, or a flapping server bounces in and out of rotation. |
+| 30–120s | Deregistration delay / drain timeout | Longer than your slowest ordinary request, shorter than your patience for a rolling deploy. AWS defaults to 300s, which is usually far more than a web tier needs. Long-poll or streaming endpoints need more. |
+| 30–300s | Slow-start ramp for a new instance | Long enough to fill pools and warm caches under gradually rising real traffic. Match it to how long your p99 takes to settle after a restart. |
+| ~10–100µs | Added latency, L4 hop | Forwarding with no parsing, often in the kernel or on the network card. Effectively free next to a network round trip. |
+| ~0.5–2ms | Added latency, L7 hop | Parse, route, re-send, plus buffering. Matters only when your own median is a few milliseconds or you chain several proxies. |
+| 1–5ms | TLS handshake CPU at the terminator | Per new connection, not per request, which is why reusing connections and resuming TLS sessions matter so much at the edge. |
+| 10–20% | Retry budget, as a share of traffic | Enough to cover ordinary blips; low enough that a total outage can't multiply the load. Envoy defaults to 20%. |
 
 </Table>
 

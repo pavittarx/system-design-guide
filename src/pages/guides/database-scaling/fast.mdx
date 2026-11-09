@@ -6,9 +6,9 @@ chapter: "2"
 current: "2. Scaling Databases"
 sections:
   - id: "rule-zero"
-    title: "Indexes: fixing the cold open"
+    title: "One missing index"
   - id: "queries"
-    title: "Queries and connections"
+    title: "Too many queries, too many connections"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
@@ -18,51 +18,51 @@ sections:
 import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
 
 
-<Collapse id="rule-zero" title="1. Indexes: fixing the cold open">
+<Collapse id="rule-zero" title="1. One missing index took the site down">
 
-Before any distributed anything, exhaust the cheap wins on a single database. They routinely buy 10–100× and cost a fraction of the complexity.
+Before any distributed anything, use up the cheap wins on a single database: indexes, query fixes, a right-sized connection pool, and then a bigger machine. They routinely buy 10–100× and cost a fraction of the complexity. This part takes them in that order.
 
-<CardGrid>
-  <Card title="Indexing">
-    The single biggest lever. An index lets the database jump to the rows it needs instead of scanning the table. Most "the database is slow" problems are really "this query has no usable index."
-  </Card>
-  <Card title="Query & schema tuning">
-    Fix N+1 loops, stop selecting columns you don't use, read the plan with `EXPLAIN`. Free performance hiding in plain sight.
-  </Card>
-  <Card title="Scale up">
-    A bigger machine — more RAM, faster NVMe. Zero code change. The ceiling is real and pricey at the top, but it buys time.
-  </Card>
-  <Card title="Connection pooling">
-    A pooler (PgBouncer, RDS Proxy) multiplexes many clients onto a few database connections — and a *small* pool is a feature, as below.
-  </Card>
-</CardGrid>
+### Back to 09:14: why the query took six seconds
 
-### Back to 09:14
+The cold open's query looks up one customer's recent orders. Without an index, the only way to find them is to read all 40 million rows and keep the ones that match. This is called a **sequential scan**, or full table scan.
 
-The cold open's fix was `CREATE INDEX CONCURRENTLY idx_orders_customer_created ON orders (customer_id, created_at);`. Six seconds became 3 ms. At 30 requests a second, that's `30 × 0.003 ≈ 0.1` connections in flight instead of 180 — the pool never empties and the login page never notices. The second fix was a `statement_timeout`, so the next bad query fails alone instead of taking every endpoint with it.
+An **index** is a separate, sorted copy of one or more columns, with a pointer back to each row. It works like the index at the back of a book: look up the term, get the page number, go straight there. Most "the database is slow" problems are really "this query has no usable index".
 
-### The index that isn't used
+The fix was one statement:
 
-"We have an index on that" is one of the most confidently wrong sentences in software. Having an index and *using* an index are separate facts. Two ways it goes wrong, both of which look fine in code review.
+```sql
+CREATE INDEX CONCURRENTLY idx_orders_customer_created
+  ON orders (customer_id, created_at);
+```
 
-**Case 1: the composite index and the leftmost prefix.** You have an `events` table, 40 million rows, and an index built for a dashboard query:
+`CONCURRENTLY` builds the index without blocking writes to the table; [Part 2](/guides/database-scaling/correct/#migrations) explains why that matters. Six seconds became 3 ms.
+
+Why that saved the pool: the connections you need equal requests per second times the seconds each one holds a connection. At 30 requests a second, that's `30 × 0.003 ≈ 0.1` connections in flight instead of 180. The pool never empties and the login page never notices.
+
+The second fix was a `statement_timeout`. Why it works: a query that runs past the limit is cancelled, which frees its connection, so the next bad query fails alone instead of taking every endpoint with it.
+
+### Why "we have an index on that" is often wrong
+
+"We have an index on that" is one of the most confidently wrong sentences in software. Having an index and the database *using* it are separate facts. Here are two ways it goes wrong, and both look fine in code review.
+
+**Case 1: the index sorted by the wrong column first.** An `events` table has 40 million rows and an index built for a dashboard:
 
 ```sql
 CREATE INDEX idx_events_org_created ON events (org_id, created_at);
 
--- Fast. Filters on the leading column.
+-- Fast. Filters on the first column of the index.
 SELECT * FROM events
 WHERE  org_id = 42
   AND  created_at > now() - interval '7 days';
 
--- Slow. Same index, same table, no predicate on org_id.
+-- Slow. Same index, same table, no filter on org_id.
 SELECT * FROM events
 WHERE  created_at > now() - interval '7 days';
 ```
 
-A composite B-tree is sorted by its columns *in order*: first by `org_id`, and only within each `org_id` by `created_at`. Think of a phone book sorted by last name, then first name. Ask it for everyone called Okafor and it's instant. Ask for everyone called James, with no last name, and the sort order is worthless — the Jameses are on every page.
+An index on several columns is sorted by them *in order*: first by `org_id`, and only within each `org_id` by `created_at`. Think of a phone book sorted by last name, then first name. Ask for everyone called Okafor and it's instant. Ask for everyone called James, with no last name, and the sort order is worthless: the Jameses are on every page.
 
-That's the **leftmost-prefix rule**: an index on `(a, b, c)` serves predicates on `a`, `a AND b`, and `a AND b AND c`, but not on `b` alone. Some engines have a skip scan for a leading column with few distinct values — a consolation prize, not a design. The fix is a second index on `(created_at)`.
+This is called the **leftmost-prefix rule**: an index on `(a, b, c)` helps filters on `a`, on `a AND b`, and on `a AND b AND c`, but not on `b` alone. Some engines have a "skip scan" for a first column with few distinct values; treat it as a consolation prize, not a design. The fix is a second index on `(created_at)`:
 
 ```trace
 Seq Scan on events  (actual time=0.031..~~4128.774~~ rows=1187)
@@ -76,9 +76,9 @@ Index Scan using idx_events_created on events
 Execution Time: ++2.140 ms++
 ```
 
-Forty million rows touched to return 1,187 — a ratio of about 34,000. That is the number from the triage, and this is what it looks like.
+Forty million rows read to return 1,187: a ratio of about 34,000 rows examined per row returned. That's the number from the [triage](/guides/database-scaling/#diagnose), and this is what it looks like.
 
-**Case 2: the function that hides the column.** The index is on exactly the column you filter on, and it still isn't used:
+**Case 2: a function wrapped around the column.** The index is on exactly the column you filter on, and it still isn't used:
 
 ```sql
 CREATE INDEX idx_users_email ON users (email);
@@ -87,11 +87,11 @@ CREATE INDEX idx_users_email ON users (email);
 SELECT * FROM users WHERE lower(email) = 'ada@example.com';
 ```
 
-The index stores `email` verbatim. It has never seen `lower(email)`; to compute that for every row, the database has to read every row. Same bug, different costumes: `WHERE created_at::date = '2026-01-01'`, `WHERE substr(sku, 1, 3) = 'ABC'`, and `WHERE account_number = 12345` against a `varchar` column, where an implicit cast wraps the column. Index the expression you query — `CREATE INDEX ON users (lower(email))` — or normalise on write.
+The index stores `email` exactly as written. It has never seen `lower(email)`, so to compute that for every row, the database has to read every row. The same bug comes in other costumes: `WHERE created_at::date = '2026-01-01'`, `WHERE substr(sku, 1, 3) = 'ABC'`, and, in MySQL, `WHERE account_number = 12345` against a text column, where the database quietly converts every stored value to a number before comparing. (Postgres refuses that comparison with an error instead.) The fix: index the expression you actually query, `CREATE INDEX ON users (lower(email))`, or store the value already normalised.
 
-<Note type="key" label="EXPLAIN is the arbiter, and dev data will lie to you">
+<Note label="EXPLAIN is the judge, and development data will lie to you">
 
-Never reason about index usage from first principles — run `EXPLAIN (ANALYZE, BUFFERS)` and read what the planner chose. `ANALYZE` really executes the statement, so wrap writes in a transaction you roll back. And on a 5,000-row development table the planner will correctly pick a sequential scan however perfect your index is, because reading the whole thing is cheaper. Validate index decisions against production-shaped data.
+Don't reason about index use from first principles. Run `EXPLAIN (ANALYZE, BUFFERS)` and read the plan the database actually chose. `ANALYZE` really runs the statement, so wrap writes in a transaction you roll back. And on a 5,000-row development table the database will correctly pick a sequential scan however perfect your index is, because reading the whole small table is cheaper. Check index decisions against production-sized data.
 
 </Note>
 
@@ -99,22 +99,30 @@ Indexes fix the work each query does. The rest of Part 1 is about how many queri
 
 </Collapse>
 
-<Collapse id="queries" title="2. Queries and connections">
+<Collapse id="queries" title="2. Too many queries, too many connections">
 
-Indexes made each query cheap. The next three problems are about how queries arrive: too many of them, ones that get slower the deeper they page, and too many at once.
+### N+1: 51 queries where one would do
 
-### N+1: four hundred tiny queries
+An orders page loads 50 orders, then loops over them and loads each order's customer. That's 51 trips to the database where one would do, and every trip waits on the network before the database does any work. This is called the **N+1 query problem**, and ORMs make it effortless to write. It hides in development because the list has three items.
 
-The ORM makes it easy: load 50 orders, then loop over them and load each order's customer. That's 51 round trips where one would do, and every round trip pays network latency before the database does any work. It hides in development because the list has three items. Find it by counting queries per request — ORM debug logs and most APM tools show it — and fix it with a join or a single `WHERE id IN (…)` batch load.
+Find it by counting queries per request; ORM debug logs and most APM tools show the count. Fix it by loading all the customers at once, with a join or a single batch:
 
-### `OFFSET` pagination degrades linearly, and it's everywhere
+```sql
+SELECT * FROM customers WHERE id IN (17, 42, 108 /* …all 50 */);
+```
+
+Why this works: the network wait is paid once instead of 51 times. While you're there, stop selecting columns you don't use, and read the plan with `EXPLAIN`. Free performance hiding in plain sight.
+
+### Why page 5,000 is slow: OFFSET
 
 ```sql
 -- Page 5,000 at 20 per page.
 SELECT * FROM messages ORDER BY created_at DESC LIMIT 20 OFFSET 100000;
 ```
 
-`OFFSET` isn't a seek: the database produces 100,000 sorted rows and throws them away before returning your 20. Page 5,000 does 5,000× the work of page 1 — and nobody notices until a crawler starts clicking. **Keyset pagination** remembers where you stopped instead:
+`OFFSET` can't jump ahead. The database produces 100,000 sorted rows and throws them away before returning your 20. Page 5,000 does 5,000× the work of page 1, and nobody notices until a crawler starts clicking "next".
+
+Instead, remember where the last page stopped and ask for the rows after it. This is called **keyset pagination**:
 
 ```sql
 SELECT * FROM messages
@@ -123,19 +131,29 @@ ORDER BY created_at DESC, id DESC
 LIMIT  20;
 ```
 
-Constant cost at any depth, and no skipped or duplicated rows when data changes mid-scroll. You lose "jump to page 5,000", which feeds, exports and APIs never needed.
+Why this works: with an index on `(created_at, id)`, the database jumps straight to where the previous page ended and reads 20 rows, at any depth. Rows added or deleted mid-scroll don't make you skip or repeat anything. You lose "jump to page 5,000", which feeds, exports and APIs never needed.
 
-### Right-size the pool: Little's Law, not a vibe
+### How many connections you actually need
 
-Pool sizes get chosen by doubling until the errors stop. There's an actual formula: **concurrency = throughput × latency**. At 2,000 queries a second and 4 ms each, `2,000 × 0.004 = 8` queries are in flight at any instant. A pool of 20 is comfortable headroom; a pool of 200 is 192 connections that will never be useful at the same time.
+Requests are waiting for a database connection, so someone raises the pool from 20 to 200. Throughput stays the same, and every query gets slower.
 
-An oversized pool is actively harmful. A database can only do so much genuinely parallel work — bounded by cores, disk queue depth and lock contention. Beyond that, extra queries get *interleaved*, not parallelised: the same work in more slices, with context switches between them. In Postgres every connection is a separate OS process. Throughput stays flat while each query gets slower. The HikariCP rule of thumb, `(cores × 2) + effective_spindle_count`, is folk wisdom, but it lands in the right order of magnitude: tens, not hundreds.
+A **connection pool** is a fixed set of open database connections your app reuses, because opening a new one per request is slow. Pool sizes usually get chosen by doubling until the errors stop. There's an actual formula: **concurrency = throughput × latency**, known as **Little's Law**. At 2,000 queries a second taking 4 ms each, `2,000 × 0.004 = 8` queries are running at any instant. A pool of 20 is comfortable headroom; a pool of 200 is 192 connections that will never be useful at the same time.
 
-The part people miss: when a small pool is full, requests queue in *your application*, where you can see the queue, time it out, and shed load. When the pool is huge, the queue moves inside the database, where you can do none of those things.
+Why a bigger pool hurts: a database can only do so much truly parallel work, limited by CPU cores, disk and locks. Beyond that, extra queries don't run in parallel; they take turns, the same work cut into more slices, with switching costs between them. In Postgres every connection is a separate operating-system process. Throughput stays flat while each query gets slower. The HikariCP rule of thumb, `(cores × 2) + effective_spindle_count`, is folk wisdom, but it lands in the right range: tens, not hundreds.
+
+The part people miss is *where* the queue sits. With a small pool, extra requests wait in your application, where you can see the queue, time it out and turn away load. With a huge pool, the queue moves inside the database, where you can do none of those things. If you have many app instances and end up with more than a few hundred connections, put a pooler such as PgBouncer or RDS Proxy in front: it lets many app clients share a few real database connections.
 
 ### Then, and only then, scale up
 
-Once queries are lean, a bigger machine is the cheapest capacity there is. More RAM lifts a falling cache hit ratio immediately, faster NVMe raises the write ceiling, and neither needs a line of code. The ceiling is real and the largest instances are expensive, but it buys time without adding a single distributed-systems problem.
+Once queries are lean, a bigger machine is the cheapest capacity there is. More RAM lifts a falling cache hit ratio immediately, faster NVMe disks raise the write ceiling, and neither needs a line of code. The ceiling is real and the largest machines are expensive, but it buys time without adding a single distributed-systems problem.
+
+<Note type="key" label="What to remember">
+
+- Most slow databases are one missing or unusable index. Check with `EXPLAIN (ANALYZE, BUFFERS)` on production-sized data.
+- An index on `(a, b)` doesn't help a filter on `b` alone, and a function around a column hides it from the index.
+- Size the pool with throughput × latency. It's tens, not hundreds; a small pool keeps the queue where you can manage it.
+
+</Note>
 
 A fast database can still be a *wrong* one. [Part 2](/guides/database-scaling/correct/) is about what happens when two of those fast queries touch the same row at the same moment.
 
@@ -143,9 +161,19 @@ A fast database can still be a *wrong* one. [Part 2](/guides/database-scaling/co
 
 <Collapse id="check" title="Check your understanding">
 
-<Quiz q="Your p99 doubled after you raised the connection pool from 20 to 200. Throughput didn't change. Why?" options={["The database ran out of memory for the extra connections", "Twenty connections already covered the work the database can do in parallel; the extra ones only add switching overhead", "The application now sends more queries per request"]} answer={1}>
+<Quiz q="Your p99 doubled after you raised the connection pool from 20 to 200. Throughput didn't change. Why?" options={["The database ran out of memory for the extra connections", "Twenty connections already covered the work the database can do in parallel; the extra ones only take turns and add switching overhead", "The application now sends more queries per request"]} answer={1}>
 
-Because 20 was already enough, and 200 doesn't create parallelism the database can use. Past the point where it can do real parallel work, extra connections interleave the same work into more slices — context switches and, in Postgres, scheduler overhead across hundreds of processes. Throughput stays flat while every query takes longer, which is exactly a p99 that doubles for no visible reason. The bigger loss is that the queue moved from your application, where you could time it out, into the database, where you can't.
+Twenty was already enough, and 200 doesn't create parallel work the database can actually do. Past that point, extra connections cut the same work into more slices, with switching costs and, in Postgres, hundreds of processes to schedule. Throughput stays flat while every query takes longer, which is exactly a p99 that doubles for no visible reason.
+
+The bigger loss is that the queue moved from your application, where you could time it out, into the database, where you can't.
+
+</Quiz>
+
+<Quiz q="There's an index on events (org_id, created_at). A new report filters only on created_at and runs a sequential scan. Why isn't the index used?" options={["The index is sorted by org_id first, so rows for a date range are scattered across the whole index", "Indexes can't be used for range filters like created_at > …", "The table statistics are out of date"]} answer={0}>
+
+An index on several columns is sorted by the first column, then by the next one within each value of the first. Without a filter on `org_id`, matching dates are spread across every part of the index, like looking for everyone called James in a phone book sorted by last name. That's the leftmost-prefix rule.
+
+Add a separate index on `(created_at)`, and confirm with `EXPLAIN (ANALYZE, BUFFERS)` that the plan switched to an index scan.
 
 </Quiz>
 
@@ -153,7 +181,7 @@ Because 20 was already enough, and 200 doesn't create parallelism the database c
 
 <Reading>
 
-- [Use The Index, Luke](https://use-the-index-luke.com/) — Markus Winand. The best free explanation of how B-tree indexes work and why queries ignore them.
+- [Use The Index, Luke](https://use-the-index-luke.com/) — Markus Winand. The best free explanation of how indexes work and why queries ignore them.
 - [About Pool Sizing](https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing) — HikariCP. Where the `(cores × 2) + spindles` rule comes from, and why smaller pools are faster.
 
 </Reading>

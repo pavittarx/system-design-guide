@@ -6,46 +6,60 @@ chapter: "7"
 current: "7. Observability"
 sections:
   - id: "slo"
-    title: "SLIs, SLOs and error budgets"
+    title: "Turning \"reliable enough\" into a number"
   - id: "alerting"
-    title: "Alert on symptoms, not causes"
+    title: "Page on what users feel, not on what might cause it"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { Collapse, Note, Quiz, Reading } from '../../../components';
 
-<Collapse id="slo" title="1. SLIs, SLOs and error budgets">
+<Collapse id="slo" title="1. Turning &quot;reliable enough&quot; into a number">
 
-Everything so far has been about seeing. This section is about deciding what "working" means, in a number, in advance — which is the part that turns telemetry into a management tool rather than a hobby.
+Product wants to ship a risky feature on Friday. The on-call engineer wants to hold it, because last week was rough. Both sides have a point, and without a number nobody can settle it. Everything so far has been about seeing; this section turns what you see into a decision.
 
-An **SLI** (service level indicator) is a measurement: the proportion of requests that succeeded in under 300 ms. An **SLO** (objective) is a target for it: 99.9% of requests, measured over 30 days. An **SLA** is an SLO with money attached and lawyers involved, and should always be looser than your internal SLO — you want to be paging yourself well before you're paying customers.
+### Three terms, one idea
+
+First decide what "working" means for one request, and measure it. For example: the share of checkout requests that succeeded in under 300 ms. That measurement is called a **service level indicator**, or **SLI**.
+
+Then set a target for it: 99.9% of requests, measured over 30 days. The target is a **service level objective**, or **SLO**.
+
+A **service level agreement**, or **SLA**, is an SLO with money attached and lawyers involved. It should always be looser than your internal SLO, so you're paging yourself well before you're paying customers.
 
 <Note type="key" label="What 99.9% over 30 days actually buys you">
 
-30 days = 43,200 minutes. 0.1% of that is **43.2 minutes** of budget.
+30 days = 43,200 minutes. 0.1% of that is **43.2 minutes** of allowed failure.
 
-At 10,000 requests/second, 30 days is 25.92 billion requests, so the budget is **25.92 million failed requests**.
+At 10,000 requests/second, 30 days is 25.92 billion requests, so the allowance is **25.92 million failed requests**.
 
-Add a nine and it's 4.32 minutes. Take one away and it's 7.2 hours. Each nine is roughly an order of magnitude more engineering, forever — which is why "let's just do five nines" is a sentence that should be met with a cost estimate rather than a nod.
+Add a nine (99.99%) and it's 4.32 minutes. Take one away (99%) and it's 7.2 hours. Each nine is roughly ten times more engineering, forever, which is why "let's just do five nines" should be met with a cost estimate rather than a nod.
 
 </Note>
 
-The **error budget** is the inversion, and it's the genuinely clever idea: if your SLO is 99.9%, you are *permitted* 0.1% failure. That budget is a resource. Spend it on risky deploys, migrations, chaos experiments, an aggressive feature launch. Reliability stops being a vague virtue that competes with shipping and becomes a quantity that both sides of the argument can point at.
+### The failures you're allowed are a budget
 
-Budget remaining? Ship. Budget exhausted? Freeze features, spend the sprint on stability. The policy has to be agreed before the budget is gone, or it is not a policy — it is a negotiation you will lose during an incident.
+Here's the clever part. If your SLO is 99.9%, you are *permitted* 0.1% failure. That allowance is called the **error budget**, and you can spend it: on risky deploys, migrations, chaos experiments, an aggressive launch. Reliability stops being a vague virtue that competes with shipping and becomes a quantity both sides can point at.
 
-Two design decisions determine whether an SLO is useful or theatre. First, **measure from the user's side**: at the load balancer or in the client, not inside the service, or you will systematically exclude the failures where the request never arrived. Second, **pick a window and stick to it**. A rolling 30-day window is standard; calendar-month windows produce an unhelpful psychological reset on the first of the month, where the team that burned everything on the 29th is suddenly flush again on the 1st.
+Back to Friday. Budget left? Ship. Budget gone? Freeze features and spend the sprint on stability. Agree that policy *before* the budget runs out, or it isn't a policy: it's a negotiation you'll lose during an incident.
+
+### Two choices that make it honest
+
+**Measure from the user's side**: at the load balancer or in the client, not inside the service. Otherwise you systematically miss the failures where the request never reached you.
+
+**Pick a window and stick to it.** A rolling 30-day window is standard. Calendar months create an unhelpful reset on the 1st: the team that burned everything on the 29th is suddenly flush again two days later.
 
 </Collapse>
 
-<Collapse id="alerting" title="2. Alert on symptoms, not causes">
+<Collapse id="alerting" title="2. Page on what users feel, not on what might cause it">
 
-An alert should mean: a human needs to do something, now. Everything else is a dashboard, a ticket, or a weekly report. Most alerting systems fail because they were built on the opposite principle — page on every cause anyone could think of — and the result is not vigilance but noise.
+An alert should mean one thing: a human needs to do something, now. Everything else belongs on a dashboard, in a ticket or in a weekly report. Most alerting fails because it was built the other way round, paging on every cause anyone could think of, and the result is noise.
 
-The arithmetic of noise is brutal. Sixty alert rules, each with one false positive per month, is two pages a day, forever. Nobody stays sharp under that. The team learns, correctly and rationally, that pages are usually nothing, and the response time on the page that *is* something quietly stretches from three minutes to twenty.
+### Noise trains people to ignore pages
+
+Sixty alert rules, each with one false alarm a month, is two pages a day, forever. Nobody stays sharp under that. The team learns, correctly, that pages are usually nothing, and the response time on the page that *is* something quietly stretches from three minutes to twenty.
 
 <Note label="Symptom vs cause, concretely">
 
@@ -55,15 +69,37 @@ The arithmetic of noise is brutal. Sixty alert rules, each with one false positi
 
 </Note>
 
-The refinement on top of symptom alerting is **burn-rate alerting**, which asks not "are we failing right now" but "at this rate, will we blow the budget." A burn rate of 1 means you'll consume exactly your budget over the SLO window.
+A **cause** is something that might hurt users. A **symptom** is users actually being hurt. Page on symptoms.
 
-A burn rate of 14.4 sustained for an hour consumes 2% of a 30-day budget — because an hour is 1/720 of thirty days, or about 0.139%, and 14.4 × 0.139% ≈ 2%. That combination is the standard fast-burn page: severe enough to be real, short enough to catch quickly.
+### Ask how fast the budget is burning
 
-Pair it with a slow-burn rule — something like a burn rate of 3 sustained over six hours — routed to a ticket rather than a page. The fast rule catches the outage. The slow rule catches the steady 0.5% error rate that no single moment makes urgent but that will exhaust your budget by the 20th. Requiring both a short and a long window to be in violation before firing is what keeps a thirty-second blip from waking anyone.
+"Are we failing right now?" is the wrong question for a page. The useful one is "at this rate, will we blow the budget?" The speed you're using up the budget is called the **burn rate**.
+
+Burn rate is your current error rate divided by the error rate your SLO allows. With a 99.9% SLO you're allowed 0.1% errors:
+
+- **0.1% errors** is a burn rate of 1: you'll use exactly your budget over the 30 days.
+- **0.15% errors** is a burn rate of 1.5: the budget runs out on day 20.
+- **1.44% errors** is a burn rate of 14.4.
+
+A burn rate of 14.4 for one hour uses 2% of the whole 30-day budget. Why: one hour is 1/720 of thirty days, about 0.139%, and 14.4 × 0.139% ≈ 2%. That's the standard fast-burn page: severe enough to be real, short enough to catch quickly.
+
+### A fast rule for pages, a slow rule for tickets
+
+Pair the fast rule with a slow one routed to a ticket, not a page. The Google SRE Workbook suggests a burn rate of 1 over three days, which is 10% of the budget. The fast rule catches the outage. The slow rule catches the steady 0.15% error rate that no single moment makes urgent but that will empty the budget by the 20th.
+
+Each rule should check two windows at once: a long one and a short one. The Workbook's fast page fires only when the burn rate is over 14.4 across both the last hour *and* the last five minutes. A thirty-second blip can't trip the hour, and once errors stop, the five-minute window clears the alert within five minutes instead of an hour.
 
 <Note type="warn" label="The 3 a.m. denominator problem">
 
-At peak, a 5% error rate is thousands of failures and unambiguously real. At 3 a.m. you serve two requests, one fails, and your ratio-based alert reports a **50% error rate** and pages someone. Every rate-based alert needs a minimum-volume floor: fire only if the error ratio is breached *and* the absolute count of failures exceeds some threshold. Otherwise your alerting gets loudest exactly when your traffic is quietest.
+At peak, a 5% error rate is thousands of failures and unambiguously real. At 3 a.m. you serve two requests, one fails, and your ratio-based alert reports a **50% error rate** and pages someone. Every rate-based alert needs a minimum-volume floor: fire only if the error ratio is breached *and* the count of failures is above some threshold. Otherwise your alerting is loudest exactly when traffic is quietest.
+
+</Note>
+
+<Note type="key" label="What to remember">
+
+- An SLO turns reliability into a budget of allowed failures: 99.9% over 30 days is 43.2 minutes.
+- Page on symptoms users feel, not on causes that might matter.
+- Alert on burn rate across a long and a short window, with a minimum-volume floor for quiet hours.
 
 </Note>
 
@@ -73,11 +109,19 @@ At peak, a 5% error rate is thousands of failures and unambiguously real. At 3 a
 
 <Quiz q="Your metrics pipeline dies at 2 a.m. Every graph goes flat and no alert fires. Why, and what would have caught it?" options={["Threshold rules have no value to compare once data stops, so absence looks like calm; a staleness rule and an external dead man's switch catch it", "The thresholds were too high for night-time traffic; a minimum-volume floor would have caught it", "The alert manager throttles pages overnight; a second notification channel would have caught it"]} answer={0}>
 
-Because almost every alert is written as a threshold on a value — errors above N, latency above M — and when a series stops arriving there is no value to compare, so the rule evaluates to nothing rather than to a breach. Absence looks like calm.
+Almost every alert is a threshold on a value: errors above N, latency above M. When the data stops arriving there's no value to compare, so the rule evaluates to nothing rather than to a breach. Absence looks like calm.
 
-Two mechanisms cover it: an explicit staleness rule that fires when a series you expect has reported nothing for some multiple of its scrape interval, and a dead man's switch, which is an alert deliberately wired to fire continuously into an external service that pages you if the stream *stops*.
+Two mechanisms cover it. A **staleness rule** fires when a series you expect hasn't reported for some multiple of its scrape interval. A **dead man's switch** is an alert wired to fire *continuously* into an outside service, which pages you if the stream of alerts *stops*.
 
-The second is the one that catches a total pipeline failure, because it does not depend on the pipeline being alive to work — and the general principle it embodies is that anything monitoring itself has a blind spot exactly the size of itself.
+The second catches a total pipeline failure, because it doesn't need the pipeline to be alive. The general principle: anything that monitors itself has a blind spot exactly the size of itself.
+
+</Quiz>
+
+<Quiz q="Your SLO is 99.9% over 30 days. For the last hour, 1.44% of requests have failed. What should happen?" options={["Nothing yet; 1.44% is a small error rate", "Page someone: that's a burn rate of 14.4, which uses 2% of the monthly budget in one hour", "Open a ticket for the next working day"]} answer={1}>
+
+Your SLO allows 0.1% errors, so 1.44% is 14.4 times the allowed rate: a burn rate of 14.4. One hour is 1/720 of the 30-day window, so an hour at that rate uses about 2% of the whole month's budget. If it continues, the budget is gone in about two days.
+
+That's exactly the fast-burn threshold the Google SRE Workbook recommends paging on. The number that looks small, 1.44%, is only meaningful against the budget, which is the whole point of burn-rate alerting.
 
 </Quiz>
 

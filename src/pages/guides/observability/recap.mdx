@@ -9,27 +9,27 @@ sections:
     title: "Recap in 60 seconds"
 ---
 
-import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { Collapse, Footer, Recap } from '../../../components';
 
 <Collapse id="recap" title="Recap in 60 seconds">
 
 <Recap>
 
-- **Monitoring answers known questions; observability answers new ones.** The failure that takes you down is the one nobody put on the dashboard.
+- **Monitoring answers the questions you wrote down; observability answers new ones.** The failure that takes you down is the one nobody put on the dashboard.
 
-- **Three signals, three jobs.** Metrics say *that* something is wrong (cheap, but cardinality-bound). Traces say *where* (sampled). Logs say *why* (linear in traffic, therefore expensive).
+- **Three signals, three jobs.** Metrics say *that* something is wrong (cheap per request, expensive per label). Traces say *where* (sampled). Logs say *why* (cost grows with every request).
 
-- **Averages hide everything that matters.** 99 requests at 20 ms and one at 2 s averages to a healthy-looking 40 ms. Use percentiles — and never average percentiles across hosts; aggregate buckets instead.
+- **Averages hide the people who suffered.** 99 requests at 20 ms and one at 2 s average to a healthy-looking 40 ms. Use percentiles, and never average them across hosts: add the histogram buckets, then compute once.
 
-- **Watch saturation, not just utilization.** Utilization stops carrying information at 100%; queue depth keeps counting.
+- **Watch the queue, not just how busy something is.** Busy-ness stops at 100%; the number of things waiting keeps counting.
 
-- **Cardinality is a multiplication.** Labels must be bounded and small. Never a user ID, a raw URL path, or anything from user input. Use events and exemplars for the unbounded stuff.
+- **Every label combination is a separate series.** Keep labels to a small, fixed set of values. Never a user ID, a raw URL path or anything typed by a user; put those in events, or link to them with exemplars.
 
-- **An SLO turns reliability into a budget.** 99.9% over 30 days is 43.2 minutes. Spend the budget deliberately; agree the freeze policy before you need it.
+- **An SLO turns "reliable enough" into a budget.** 99.9% over 30 days is 43.2 minutes of failure. Spend it deliberately, and agree what happens when it runs out before it does.
 
-- **Alert on symptoms and burn rate, never on causes.** Add a minimum-volume floor so 3 a.m. arithmetic doesn't page anyone.
+- **Page on what users feel, and on how fast the budget is burning, not on possible causes.** Add a minimum-volume floor so two requests at 3 a.m. can't page anyone.
 
-- **Missing data is not zero,** and a monitoring system that fails silently is worse than none.
+- **No data is not the same as zero,** and a monitoring system that fails silently is worse than none.
 
 </Recap>
 

@@ -6,56 +6,89 @@ chapter: "6"
 current: "6. Consistency & CAP"
 sections:
   - id: "conflicts"
-    title: "Clocks, vectors, CRDTs"
+    title: "When two writes collide"
   - id: "fencing"
-    title: "Locks & fencing tokens"
+    title: "Why a lock isn't enough"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Statement, Table } from '../../../components';
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Race, Reading, Recap, Stack, Statement, Table } from '../../../components';
 
-<Collapse id="conflicts" title="1. When writes collide: clocks, version vectors, CRDTs">
+<Collapse id="conflicts" title="1. When two writes collide: clocks, version vectors, CRDTs">
 
-Line `t4` of the [quorum trace](/guides/consistency-cap/spectrum/#trace) ended with "something must now decide." That something deserves its own section, because the default answer is bad and almost nobody changes it.
+The [quorum walkthrough](/guides/consistency-cap/spectrum/#trace) ended with two copies holding different values and the line "something must now decide." This section is about that something, because the usual default is bad and almost nobody changes it.
 
-### Last-write-wins is a data-loss policy with good branding
+### Last-write-wins, and the correction that vanished
 
-The obvious rule is: attach a wall-clock timestamp to every write, and when two versions conflict, keep the newer one. It's simple, it's stateless, and it's wrong in a way that produces no evidence.
+The obvious rule: stamp every write with the time on the machine's clock, and when two versions conflict, keep the newer one. This is called **last-write-wins**. It's simple, it needs no extra bookkeeping, and it's wrong in a way that leaves no evidence.
 
-Consider two nodes whose clocks disagree by 300 ms — an entirely ordinary amount of NTP drift, and a rounding error compared to what a bad VM migration or a leap-second handler can do. A user updates their shipping address on node A at 12:00:00.000; A's clock is fast, so the write is stamped `12:00:00.300`. A moment later, genuinely afterwards, they correct a typo via node B at 12:00:00.150; B's clock is accurate, so that write is stamped `12:00:00.150`.
+Server clocks are kept roughly in sync by a background service called **NTP**, but "roughly" means they drift apart. Take two machines whose clocks disagree by 300 ms, an entirely ordinary amount, and small next to what a bad VM migration or a leap-second bug can do. Machine A's clock runs 300 ms fast; B's is accurate. A user saves a new shipping address, then spots a typo and fixes it:
 
-Last-write-wins compares the stamps, keeps the address from A, and discards the correction. The package goes to the old address. There was no error, no retry, no warning, no log line — the system did precisely what it was configured to do, and the only artefact is a confused customer. **With last-write-wins, your consistency guarantee is only as good as your clock synchronisation**, and clock synchronisation is a best-effort background daemon.
+<Race a="Machine A (clock 300 ms fast)" b="Machine B (clock correct)" result="Result: the uncorrected address wins. The package goes to the wrong place" steps={[
+  { a: "Real time 12:00:00.000: saves the new address. Stamped .300" },
+  { b: "Real time 12:00:00.150, genuinely later: saves the typo fix. Stamped .150" },
+  { a: "Copies compare stamps: .300 beats .150", note: true },
+  { b: "The correction is discarded", tone: "bad" }
+]} />
+
+No error, no retry, no warning, no log line. The system did precisely what it was configured to do, and the only trace is a confused customer. **With last-write-wins, your data is only as correct as your clock synchronisation**, and clock sync is a best-effort background service.
 
 <Note type="wild" label="◈ In the wild · Google Spanner">
 
-Google Spanner takes the opposite bet: instead of hoping the clocks agree, it measures how much they might disagree. Its [TrueTime](https://research.google/pubs/spanner-googles-globally-distributed-database-2/) API uses GPS receivers and atomic clocks in every datacentre to bound how wrong any clock can be, and a transaction waits out that uncertainty window before it commits. So commit timestamps never lie about ordering, which is what lets Spanner offer externally consistent (linearizable) transactions worldwide. Rather than trusting a clock, it prices in the doubt.
+Spanner bets the other way: instead of hoping clocks agree, it measures how much they might disagree. Its [TrueTime](https://research.google/pubs/spanner-googles-globally-distributed-database-2/) API uses GPS receivers and atomic clocks in every datacentre to bound clock error, and each transaction waits out that uncertainty before committing. So commit timestamps never lie about order, which lets Spanner offer externally consistent (linearizable) transactions worldwide.
 
 </Note>
 
-### Logical clocks: ordering without trusting time
+### Version vectors: ask what a write knew, not when it happened
 
-The fix in principle is to stop asking "when did this happen?" and start asking "what did this write know about?" A **version vector** tags each value with a per-replica counter, so when two versions meet you can compare them structurally: if one vector dominates the other on every entry, that write genuinely happened *after* — keep it, no clocks involved.
+The fix is to stop asking "when did this happen?" and ask "what had this write already seen?" A **version vector** is a small counter per machine, attached to each value. Every time a machine accepts a write, it bumps its own counter. Here's two machines starting from the same value, `{A:1, B:0}`:
 
-If neither dominates, the writes are **concurrent**, and you now know something a timestamp could never tell you: this is a real conflict, not a slow packet. (Lamport clocks give you a total order that's consistent with causality, but they can't distinguish concurrent from ordered; vectors can, which is why they're the ones you want at a merge point.)
+<Race a="Machine A" b="Machine B" result="Result: neither vector is ahead on every entry, so the writes are concurrent: a real conflict" steps={[
+  { a: "Has {A:1, B:0}" },
+  { b: "Has {A:1, B:0}" },
+  { a: "Accepts a write. Now {A:2, B:0}" },
+  { b: "Accepts a different write, without having seen A's. Now {A:1, B:1}" },
+  { a: "Compare: A is ahead on A's counter, B is ahead on B's", tone: "bad" }
+]} />
 
-The honest costs. Vectors grow with the number of writers — fine for a handful of replicas, awkward when every client is an actor, which is why real systems reach for dotted version vectors, pruning, and other machinery to stop the metadata outgrowing the data.
+Why this works: if one vector is greater than or equal to the other on every entry, that write had already seen the other one, so it genuinely came *after*. Keep it, no clocks involved. Had B first received A's write and then written, B's vector would be `{A:2, B:1}`, ahead on both, and B's value would win cleanly.
 
-And detection is not resolution: a version vector can tell you two writes are concurrent, but it has no opinion about what your business wants done about it. Riak's answer was to hand the application both siblings and let it decide, which is honest and is also why teams found it exhausting. Someone still has to write the merge function, and that function is where the actual correctness lives.
+If neither is ahead on every entry, as above, the writes are **concurrent**: each was made without knowing about the other. Now you know something a timestamp could never tell you: this is a real conflict, not a slow packet. (**Lamport clocks**, a single counter per value, give an order that respects cause and effect, but they can't tell "concurrent" apart from "one after the other". Vectors can, which is why they're the ones you want when merging.)
+
+The honest costs. Vectors grow with the number of machines (or clients) that write. That's fine for a handful of replicas and awkward when every client writes, which is why real systems use dotted version vectors, pruning and other tricks to stop the bookkeeping outgrowing the data.
+
+And detecting a conflict is not resolving it. A vector can tell you two writes are concurrent; it has no opinion about which one your business wants. Riak's answer was to hand the application both versions (called **siblings**) and let it decide. That's honest, and it's also why teams found it exhausting. Someone still has to write the merge function, and that function is where the real correctness lives.
 
 ### CRDTs: make the conflict impossible instead
 
-The other move is to change the data type so there's nothing to resolve. A **CRDT** — conflict-free replicated data type — is one whose merge operation is commutative, associative and idempotent, meaning replicas that have seen the same set of updates in *any* order, with duplicates, end up identical. Order stops mattering, so divergence stops being a problem to fix and becomes a state to merge.
+The other move is to change the data type so there's nothing to resolve. A shopping cart edited on two copies during a partition: one adds a book, the other adds a lamp. The obvious merge is "keep everything from both", and it doesn't matter which copy goes first.
 
-It's the same instinct as making a queue consumer [idempotent](/guides/message-queues/): design the operation so repetition and reordering are harmless, rather than building machinery to prevent them.
+A **CRDT** (conflict-free replicated data type) is a data type built so that every merge works like that. Its merge is:
 
-The catalogue is real and in production. Counters that only grow, or a pair of them for increment-and-decrement. Sets with explicit add/remove tagging so a concurrent add and remove resolve by rule rather than by luck. And collaborative text — the reason two people can type in the same document and neither one's cursor jumps.
+- **commutative**: merging A into B gives the same result as merging B into A;
+- **associative**: merging three copies gives the same result whichever two you merge first;
+- **idempotent**: merging the same update twice is the same as merging it once.
+
+Together these mean copies that have seen the same set of updates, in *any* order and with duplicates, end up identical. Order stops mattering, so divergence stops being a problem to fix and becomes a state to merge. It's the same instinct as making a queue consumer [idempotent](/guides/message-queues/): design the operation so repetition and reordering are harmless, rather than building machinery to prevent them.
+
+The simplest example is a counter that only grows. Each machine counts its own increments, `{A: 15, B: 7}`, and the total is the sum. To merge two copies, take the larger number for each machine. Taking a maximum gives the same answer in any order and any number of times, so it can't go wrong.
+
+The catalogue is real and in production: counters that only grow, or a pair of them for increment and decrement; sets that tag each add and remove so a simultaneous add and remove resolve by rule rather than luck; and collaborative text editing, the reason two people can type in the same document and neither one's cursor jumps.
 
 <Note type="warn" label="The limit, stated plainly">
 
-Not every problem has a commutative formulation. CRDTs converge; they do not enforce invariants that span replicas. "The set of items in the cart" merges beautifully. "This balance must never go below zero" does not — two replicas can each independently approve a withdrawal that's fine locally and catastrophic jointly, and no merge function can retroactively make that legal, because the invariant was violated before the merge existed. Global invariants need coordination. Your bank balance is not a CRDT, and neither is the last seat on the flight.
+Not every problem can be written so that order doesn't matter. CRDTs make copies agree; they don't enforce rules that span copies. "The set of items in the cart" merges beautifully. "This balance must never go below zero" does not: it's the cold open again.
+
+<Race a="Copy 1" b="Copy 2" result="Result: balance −$100, and no merge function can make that legal after the fact" steps={[
+  { a: "Balance $100. Approves a $100 withdrawal: fine locally" },
+  { b: "Balance $100. Approves a $100 withdrawal: fine locally" },
+  { a: "Copies merge: both withdrawals counted", tone: "bad" }
+]} />
+
+The rule was broken before the merge existed. Rules that span copies need coordination. Your bank balance is not a CRDT, and neither is the last seat on the flight.
 
 </Note>
 
@@ -85,30 +118,44 @@ Build this mini-project to implement conflict-free convergence across distribute
 
 </Collapse>
 
-<Collapse id="fencing" title="2. Locks aren't enough: fencing tokens">
+<Collapse id="fencing" title="2. Why a lock isn't enough: fencing tokens">
 
-Somewhere in your system there's a job that must only run once, guarded by a distributed lock. Here's why that lock, on its own, guarantees nothing.
+### The job that ran twice
 
-```trace
-**c1**   acquires lock, lease 10s, **token 33**
-**c1**   ~~stops. GC pause / VM freeze. 14 seconds.~~
-**+10s** lease expires. The lock service is right
-      to release it — c1 looks dead.
-**c2**   acquires lock, **token 34**
-**c2**   write(data, token=34)  → ++accepted++
-**c1**   ...wakes up. Believes it still holds
-      the lock, because from c1's point of
-      view no time passed at all.
-**c1**   write(data, token=33)  → ++rejected: 33 < 34++
+Somewhere in your system there's a job that must only run once at a time, guarded by a distributed lock. The lock service grants the lock with a **lease**: "it's yours for 10 seconds; renew it or lose it". That way a client that crashes doesn't hold the lock forever. Here's what that lock, on its own, can't protect against:
 
-~~without the token, c1's write lands last and wins~~
-```
+<Race a="Client 1" b="Client 2" result="Result: both clients wrote while &quot;holding&quot; the lock, and the stale write landed last" steps={[
+  { a: "Gets the lock, 10-second lease" },
+  { a: "Freezes: a 14-second garbage-collection pause or VM freeze", note: true },
+  { b: "Lease has expired, so the lock service rightly gives the lock to client 2" },
+  { b: "Writes the data", tone: "good" },
+  { a: "Wakes up. From its point of view no time passed, so it still \"holds\" the lock" },
+  { a: "Writes the data, overwriting client 2", tone: "bad" }
+]} />
 
-The lease didn't fail; it did its job. The problem is that **"I hold the lock" is a statement about the past**, and an arbitrary amount of wall-clock time can elapse between checking it and acting on it. A stop-the-world GC pause of several seconds is routine. A VM being live-migrated or a laptop lid closing can be worse. No amount of re-checking closes the gap, because the pause can always land between the check and the write.
+The lease didn't fail; it did its job, because client 1 looked dead. The problem is that **"I hold the lock" is a statement about the past**, and any amount of time can pass between checking it and acting on it. A garbage-collection pause of several seconds is routine. A VM being live-migrated or a laptop lid closing can be worse. Re-checking just before the write doesn't help, because the pause can always land between the check and the write.
 
-The fix is a **fencing token**: the lock service hands out a monotonically increasing number with every grant, the client passes it along with every write, and *the storage layer* remembers the highest token it has seen and rejects anything lower.
+### The fix: a number the storage can check
 
-Note where the enforcement lives — not in the client, which is the thing that can't be trusted, and not in the lock service, which isn't in the write path. The resource itself has to check. If your storage can't do that, you don't have mutual exclusion; you have a strong hint. This is the cleanest example in the whole guide of why distributed correctness is about what you can *enforce*, not what you can *agree*.
+With every grant, the lock service hands out a number that only ever goes up: 33, then 34, then 35. This is a **fencing token**. The client sends it along with every write, and the storage remembers the highest token it has seen and rejects anything lower:
+
+<Race a="Client 1" b="Client 2" result="Result: the stale write is refused by the storage itself" tone="good" steps={[
+  { a: "Gets the lock with token 33" },
+  { a: "Freezes for 14 seconds", note: true },
+  { b: "Gets the lock with token 34" },
+  { b: "Writes with token 34: accepted. Storage notes \"highest is 34\"", tone: "good" },
+  { a: "Wakes, writes with token 33: rejected, 33 is lower than 34", tone: "good" }
+]} />
+
+Notice where the check lives. Not in the client, which is the thing that can't be trusted. Not in the lock service, which never sees the write. The storage itself has to check. If your storage can't, you don't have mutual exclusion, you have a strong hint. This is the clearest example in the guide of why distributed correctness is about what you can *enforce*, not what you can *agree*.
+
+<Note type="key" label="What to remember">
+
+- Last-write-wins trusts machine clocks, and clocks drift. It throws away real writes with no error.
+- Version vectors tell you whether two writes are concurrent; CRDTs make merging automatic. Neither enforces a rule like "balance never below zero": that needs coordination.
+- A lock only says you held it at some point in the past. Pair it with a fencing token that the storage checks.
+
+</Note>
 
 </Collapse>
 
@@ -116,9 +163,9 @@ Note where the enforcement lives — not in the client, which is the thing that 
 
 <Quiz q="A batch job holds a 10-second lease, freezes for 20 seconds, wakes up and writes. What must have been in place for that to be safe?" options={["A longer lease, comfortably above the worst GC pause", "A fencing token, with the storage layer rejecting any write whose token is lower than one it has already seen", "The job re-checking that it still holds the lock immediately before writing"]} answer={1}>
 
-A fencing token, enforced at the storage layer. The lock service was right to expire the lease and right to grant it to someone else; nothing the client does can make "I hold the lock" true again, because the check happened 20 seconds ago. Safety requires that the resource itself track the highest token it has seen and reject the stale writer's lower one.
+A fencing token, checked by the storage. The lock service was right to expire the lease and right to give it to someone else. Nothing the job does can make "I hold the lock" true again, because it last checked 20 seconds ago. A longer lease only moves the line: some pause will always be longer. Re-checking fails because the pause can land between the check and the write.
 
-If enforcement lives in the client or only in the lock service, you don't have mutual exclusion — you have an agreement between processes that one of them has stopped honouring.
+Safety needs the storage itself to remember the highest token it has seen and reject the stale writer's lower one. If the check lives only in the client or the lock service, you don't have mutual exclusion, just an agreement that one process has stopped honouring.
 
 </Quiz>
 

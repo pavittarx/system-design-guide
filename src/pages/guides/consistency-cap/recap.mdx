@@ -15,25 +15,25 @@ import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, 
 
 <Recap>
 
-- **CAP's C is linearizability. ACID's C is your constraints.** They share a letter and nothing else. Ask which one someone means before you design anything.
+- **"Consistency" means two different things.** In CAP it means the system behaves like one copy. In ACID it means your own rules (constraints) hold. Ask which one someone means before you design anything.
 
-- **P isn't a choice.** The real decision is C or A, and only during a partition. A single node is trivially CP, which tells you how little the label is worth.
+- **When the network splits, you either refuse or answer with possibly-old data.** That's the whole CAP choice, and it only applies during a split. A single server is trivially "CP", which shows how little the label tells you.
 
-- **A partition is a timeout you configured.** Shorter timeout, more partitions resolved faster; longer timeout, fewer partitions that hurt longer. There is no zero.
+- **A partition is a timeout you configured.** Machines never see a split, only silence longer than a limit you set. Shorter limit: more partitions, resolved faster. Longer: fewer, each hurting longer. There's no zero.
 
-- **PACELC's else-branch is the one that runs.** Latency vs. consistency is decided on every request all day; availability vs. consistency is decided a few minutes a year.
+- **The everyday choice is speed versus agreement.** PACELC's "else" branch runs on every request: wait for other copies (consistent) or answer now (fast). The partition branch runs a few minutes a year.
 
-- **R + W > N means the read set and the write set intersect.** That's all it means. Not linearizable, no help for read-modify-write, and suspended entirely during a sloppy quorum.
+- **R + W > N means the read and write groups share a machine.** That's all. It isn't linearizable, doesn't make read-modify-write safe, and is switched off during a sloppy quorum.
 
-- **Last-write-wins is a data-loss policy.** If your clocks disagree by 300 ms, so does your idea of "last" — and the loss is silent. Version vectors detect concurrency honestly; CRDTs remove it by construction; neither decides what a conflict *means* to your business.
+- **Last-write-wins quietly throws writes away.** If clocks disagree by 300 ms, so does the idea of "last", and nothing reports the loss. Version vectors honestly detect concurrent writes; CRDTs make merging automatic; neither decides what a conflict *means* for your business.
 
-- **A lock is a statement about the past.** Add a fencing token the storage layer checks, or accept that a paused process will eventually wake up and overwrite you.
+- **Holding a lock is a fact about the past.** A paused process can wake up and write after its lock expired. Give each lock a fencing token and have the storage reject old ones.
 
-- **Compensation is not rollback.** The intermediate state was visible, some actions can't be undone, so put the irreversible steps last. And 2PC's real danger is the blocking window when the coordinator dies mid-protocol.
+- **A saga's undo is not a rollback.** Everyone saw the in-between state, and some actions can't be undone, so put irreversible steps last. Two-phase commit's real danger is rows stuck locked when the coordinator dies mid-way.
 
-- **Read-your-writes is the one users notice.** Route their reads to the primary for a window, or carry an LSN/GTID and wait for the replica to reach it.
+- **Read-your-writes is the bug users notice.** Send their reads to the primary for a while, or carry an LSN/GTID and wait for a replica to catch up to it.
 
-- **Choose per data type, not per system.** Strong for money and inventory, session guarantees for a user's own content, eventual for counters.
+- **Choose per kind of data, not per system.** Strong for money and inventory, session guarantees for a user's own content, eventual for counters.
 
 </Recap>
 

@@ -6,11 +6,11 @@ chapter: "9"
 current: "9. CDNs & Edge"
 sections:
   - id: "tls"
-    title: "TLS termination and the handshake you skipped"
+    title: "Why a CDN speeds up pages it can't cache"
   - id: "compute"
-    title: "Edge compute"
+    title: "What code belongs at the edge"
   - id: "failure"
-    title: "How CDNs fail"
+    title: "How CDNs fail, and what's yours to fix"
   - id: "gotchas"
     title: "The gotchas that actually bite"
   - id: "check"
@@ -19,48 +19,75 @@ sections:
     title: "Related reading"
 ---
 
-import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { Card, CardGrid, ColdOpen, Collapse, Lab, Note, Quiz, Race, Reading } from '../../../components';
 
-<Collapse id="tls" title="1. TLS termination and the handshake you skipped">
+<Collapse id="tls" title="1. Why a CDN speeds up pages it can't cache">
 
-Everything so far has been about bytes. A large part of what a CDN actually saves you is *handshakes*, and those are pure round trips — the thing physics charges most for.
+Your account page is different for every user, so the CDN caches none of it: a 0% hit rate. You'd expect putting a CDN in front of it to change nothing, or to add a hop. In practice it often gets noticeably faster. The bytes aren't what's being saved. The **handshakes** are, and handshakes are pure round trips, the thing physics charges most for.
 
-Opening a fresh HTTPS connection costs one round trip for TCP's SYN/SYN-ACK and, with TLS 1.3, one more for the handshake. Two round trips before a single byte of your content moves. On our Sydney-to-Virginia link at 160 ms RTT, that is **320 ms** of pure protocol before the request is even sent. Terminate TLS at a PoP 10 ms away and the same two round trips cost **20 ms**.
+### What a fresh HTTPS connection costs
 
-The connection from the PoP to your origin still has to exist, but it is a long-lived, pooled, already-warm connection that the CDN reuses across thousands of users. You pay its handshake once an hour instead of once per visitor. This is why a CDN speeds up content it cannot cache at all: a personalised, no-store API response still gets the short handshake and the warm backhaul, often landing 30–40% faster than direct even at a 0% hit rate.
+Opening a new HTTPS connection costs one round trip for TCP's handshake (the "can we talk?" / "yes" exchange, called SYN and SYN-ACK) and, with TLS 1.3, one more to agree on encryption keys. That's two round trips before a single byte of your content moves.
+
+On the Sydney-to-Virginia link at 160 ms per round trip, that's **320 ms** of protocol before the request is even sent. Finish the handshakes at a PoP 10 ms away instead, which is called **terminating TLS** at the edge, and the same two round trips cost **20 ms**.
+
+### The trip to your origin is already open
+
+The PoP still needs a connection to your origin, but it isn't a fresh one. It's a long-lived connection the CDN keeps open and reuses across thousands of users, so its handshake is paid once an hour instead of once per visitor.
+
+Why that speeds up uncacheable pages: the user's slow, cold handshakes became fast local ones, and the request rides an already-warm connection the rest of the way. A personalised, `no-store` API response often lands 30–40% faster than going direct, even at a 0% hit rate.
+
+### Skipping the last round trip has a price
+
+TLS 1.3 offers **0-RTT resumption**: a client that has connected before can send its request along with its very first TLS message, saving another round trip. The catch is that this early data can be **replayed**: someone who captures it can send it again, and the server can't tell the copy from the original.
+
+<Race a="Your user" b="An attacker on the network" result="Result: the payment runs twice" steps={[
+  { a: "Reconnects and sends POST /pay in its 0-RTT data" },
+  { b: "Records the packets as they pass" },
+  { a: "Server accepts it. Payment made", tone: "good" },
+  { b: "Sends the recorded 0-RTT data again. Server accepts it", tone: "bad" }
+]} />
 
 <Note type="warn" label="0-RTT is not free">
 
-TLS 1.3 offers **0-RTT resumption**: a returning client can send its request in the very first packet, saving another round trip. The catch is that 0-RTT data is **replayable** — an attacker who captures it can send it again.
-
-Only allow 0-RTT for idempotent requests (GET, HEAD). Never for a POST that moves money. Most CDNs let you configure this per-method; the default is not always what you want.
+Only allow 0-RTT for requests that are safe to repeat (GET, HEAD). Never for a POST that moves money. Most CDNs let you set this per method, and the default isn't always what you want.
 
 </Note>
 
-Terminating TLS at the edge also means the CDN holds a certificate for your domain and sees your plaintext. That is a real trust decision, not a technicality. The mitigations are to re-encrypt on the origin leg (edge-to-origin TLS, ideally with origin certificate pinning) so the traffic is not in the clear on the public internet, and to accept that your CDN is inside your security perimeter — because it is.
+### The CDN sees your traffic in plain text
+
+Finishing TLS at the edge means the CDN holds a certificate for your domain and sees your traffic unencrypted. That's a real trust decision, not a technicality. Re-encrypt the leg from the PoP to your origin (ideally with your origin checking it's really your CDN, called **certificate pinning**), so the traffic isn't readable on the public internet. And accept that your CDN is inside your security perimeter, because it is.
 
 </Collapse>
 
-<Collapse id="compute" title="2. Edge compute">
+<Collapse id="compute" title="2. What code belongs at the edge">
 
-Once you have a hundred locations running code to decide cache keys, the temptation to run *your* code there is obvious. Edge compute — Cloudflare Workers, Fastly Compute, Lambda@Edge — gives you a small, fast, isolated runtime at every PoP, invoked on request or response.
+You want UK visitors redirected to `/uk`. Today that request crosses the Atlantic to your origin just to be told "go somewhere else". The CDN already runs code at every PoP to decide cache keys; why not run yours there too?
 
-The rule for what belongs there is simple: **work that needs to be near the user and does not need your data.**
+**Edge compute** (Cloudflare Workers, Fastly Compute, Lambda@Edge) is exactly that: a small, fast, sandboxed runtime at every PoP, run on each request or response.
+
+### The rule: near the user, and doesn't need your data
 
 <CardGrid>
   <Card pill="Good at the edge" tone="good">
-    Redirects and URL rewrites. A/B test bucketing from a cookie. Geolocation-based routing. Adding or stripping headers. Validating a JWT signature. Bot fingerprinting. Rewriting a cache key. Serving a maintenance page.
+    Redirects and URL rewrites. A/B test bucketing from a cookie. Routing by country. Adding or stripping headers. Checking a JWT signature. Spotting bots. Rewriting a cache key. Serving a maintenance page.
   </Card>
   <Card pill="Bad at the edge" tone="bad">
-    Anything that reads your primary database. Anything needing a transaction. Anything requiring a consistent global view. Long-running work. Anything with a large dependency tree or slow cold start.
+    Anything that reads your main database. Anything needing a transaction. Anything needing one consistent view of the world. Long-running work. Anything with a large dependency tree or slow start-up.
   </Card>
 </CardGrid>
 
-The reason the right column is bad is that a PoP is far from your database by construction — that was the entire point. Edge code that queries your primary in Oregon from a PoP in Singapore has paid 170 ms to get closer to the user and then 170 ms to go back, and it would have been faster to run in Oregon in the first place. Edge compute is not "your backend, but everywhere". It is a programmable request path.
+Why the right column is bad: a PoP is far from your database, on purpose; that was the whole point. Edge code in Singapore that queries your primary in Oregon has paid 170 ms to get closer to the user and then 170 ms to go back. It would have been faster to run in Oregon in the first place. Edge compute isn't "your backend, everywhere". It's a programmable step in the request's path.
 
-JWT validation is the canonical good case and worth calling out, because it connects to the [API design guide](/guides/api-gateways/): verifying a signature needs a public key and a clock, both of which fit at the edge, so you can reject an expired or forged token in Singapore without ever crossing an ocean to learn it was invalid. Authorisation — what this user is allowed to do — usually needs your data, and so usually does not belong there.
+### The classic good case: rejecting bad tokens early
 
-The runtimes are deliberately constrained: V8 isolates or WebAssembly rather than containers, with cold starts in single-digit milliseconds and hard CPU-time limits (often a few milliseconds to 50 ms). You are writing something closer to a filter than a service. Edge key-value stores exist and are useful for configuration and feature flags, but they are eventually consistent by design — treat them as a cache with a nice API, not a database.
+A **JWT** is a signed login token. Checking the signature needs only a public key and a clock, and both fit at the edge, so you can reject an expired or forged token in Singapore without crossing an ocean to find out it was invalid (more in [APIs, Gateways & Rate Limiting](/guides/api-gateways/)). Deciding what the user is *allowed* to do usually needs your data, so that part usually stays home.
+
+### Built to be small
+
+The runtimes are deliberately limited. Instead of containers they use **V8 isolates** (lightweight sandboxes inside one JavaScript engine) or WebAssembly, so they start in single-digit milliseconds. They also cap CPU time per request: Cloudflare Workers allows 10 ms on its free plan, and the average Worker uses about 2.2 ms. You're writing something closer to a filter than a service.
+
+Edge key-value stores exist and are handy for configuration and feature flags, but they're eventually consistent by design: a write in one region shows up elsewhere a little later. Treat them as a cache with a nice API, not a database.
 
 <Lab
   title="Build a Cloudflare Worker / Edge Redirector"
@@ -119,74 +146,88 @@ Build this mini-project to implement custom routing logic at the network edge:
 
 </Lab>
 
+<Note type="key" label="What to remember">
+
+- Most of what a CDN saves on uncacheable traffic is handshake round trips, finished nearby, plus a warm connection back to your origin.
+- 0-RTT data can be replayed, so allow it only for requests that are safe to repeat.
+- Edge code is for work that's near the user and doesn't need your database. If it needs your data, run it next to your data.
+
+</Note>
+
 </Collapse>
 
-<Collapse id="failure" title="3. How CDNs fail">
+<Collapse id="failure" title="3. How CDNs fail, and what's yours to fix">
 
-A CDN is a distributed system with a global control plane, which means it has failure modes your origin does not, and they are correlated across every customer at once.
+A CDN is one big system with a global **control plane**: the machinery that pushes configuration to every PoP. That gives it failure modes your origin doesn't have, and they hit every customer at once.
 
 <ColdOpen tag="2 July 2019">
 
-Cloudflare deploys a WAF rule containing the regular expression ``(?:(?:\"|'|\]|\}|\\|\d|(?:nan|infinity|true|false|null|undefined|symbol|math)|\`|\-|\+)+[)]*;?((?:\s|-|~|!|\{\}|\|\||\+)*.*(?:.*=.*)))``. The nested quantifiers cause catastrophic backtracking. CPU on every machine in the global network goes to 100%. The rule was pushed everywhere in seconds, because that is what a global control plane is for. **Roughly 27 minutes of global outage**, ended by a manual kill of the WAF.
+Cloudflare deploys a firewall (WAF) rule containing the regular expression ``(?:(?:\"|'|\]|\}|\\|\d|(?:nan|infinity|true|false|null|undefined|symbol|math)|\`|\-|\+)+[)]*;?((?:\s|-|~|!|\{\}|\|\||\+)*.*(?:.*=.*)))``. The nested repetition makes the regex engine try an explosive number of matches, called **catastrophic backtracking**. CPU on every machine handling web traffic, across the global network, goes to 100%. The rule reached everywhere in seconds, because that's what a global control plane is for. **About 27 minutes of global outage**, ended by a manual global kill of the WAF.
 
 </ColdOpen>
 
-That is the shape of the worst CDN failure: a configuration change, applied globally and instantly, with no blast-radius control. The edge is enormously reliable at serving bytes and much less reliable at accepting config. Fastly's June 2021 outage that opened this guide was the same genus — a latent bug in a config-parsing path, triggered by a customer setting, taking down the network in under a minute.
+That's the shape of the worst CDN failure: a configuration change, applied everywhere at once, with nothing limiting how far it spreads (its **blast radius**). The edge is extremely reliable at serving bytes and much less reliable at accepting config. Fastly's June 2021 outage, from this guide's opening, was the same kind: a hidden bug in config handling, triggered by one customer's setting, taking down the network in under a minute.
 
-The other failure modes are yours, not the vendor's:
+### The failures you cause yourself
 
-<Note type="warn" label="Synchronised expiry">
+<Note type="warn" label="Everything expires at once">
 
-Deploy at 09:00 with a uniform 3600-second TTL and every object across every PoP expires at 10:00 together. Origin gets a wall. Add jitter to TTLs — the same fix as cache stampede in [Understanding Caching](/guides/understanding-caching/), for the same reason.
+Deploy at 09:00 with the same 3600-second TTL on everything, and every object across every PoP expires at 10:00, together. Your origin gets a wall of requests. Add a little random variation (**jitter**) to TTLs: the same fix as cache stampedes in [Understanding Caching](/guides/understanding-caching/), for the same reason.
 
 </Note>
 
 <Note type="warn" label="Cache-busting query strings">
 
-If the cache key includes the full query string, an attacker (or a badly written crawler) requests `/page?x=1`, `/page?x=2`… and every one is a guaranteed miss straight to origin. Normalise the key to the parameters that actually change the response, and ignore the rest.
+If the cache key includes the full query string, an attacker or a badly written crawler requests `/page?x=1`, `/page?x=2`… and every one is a guaranteed miss, straight to origin. Build the key only from the parameters that actually change the response.
 
 </Note>
 
-<Note type="warn" label="Uncached errors">
+<Note type="warn" label="Errors that aren't cached">
 
-404s are frequently configured not to cache. A scanner probing ten thousand nonexistent paths then hits your origin ten thousand times. Cache 404s with a short TTL — 30 seconds is usually plenty — and cache 5xx for a few seconds too, so an origin that is falling over is not being helped along by the CDN.
+404s are often set not to cache. A scanner probing ten thousand paths that don't exist then hits your origin ten thousand times. Cache 404s briefly (30 seconds is usually plenty) and 5xx errors for a few seconds too, so an origin that's falling over isn't pushed further by the CDN.
 
 </Note>
 
-The mitigation for the vendor-side failures is the uncomfortable one: a CDN outage is largely not yours to fix. What you can do is make sure your origin can survive being exposed (it will be, when someone suggests bypassing the CDN mid-incident), keep a DNS TTL short enough that failing over to a second CDN or straight to origin is a minutes-not-hours operation, and rehearse that failover before you need it.
+### When the vendor is down
 
-Multi-CDN is real and some large sites run it, but it doubles your configuration surface — which, per the two outages above, is where the failures actually come from.
+The uncomfortable truth: a CDN outage is mostly not yours to fix. What you can do is prepare to route around it:
+
+- **Make sure your origin can survive being exposed.** Mid-incident, someone will suggest bypassing the CDN.
+- **Keep your DNS TTL short**, so pointing traffic at a second CDN or straight at your origin takes minutes, not hours.
+- **Rehearse that switch** before you need it.
+
+Some large sites run two CDNs at once. That's real, but it doubles your configuration, and per the two outages above, configuration is where the failures come from.
 
 </Collapse>
 
 <Collapse id="gotchas" title="4. The gotchas that actually bite">
 
 <Note label="1 · Set-Cookie on a cacheable response">
-The worst bug in this guide: one user's session handed to another. CDNs refuse this by default; the danger is someone disabling that default to raise a hit rate. Keep personalised and cacheable content on separate URLs so it cannot happen by misconfiguration.
+The worst bug in this guide: one user's session handed to another. CDNs refuse to cache these by default; the danger is someone switching that off to raise a hit rate. Keep personalised and cacheable content on separate URLs so a misconfiguration can't mix them.
 </Note>
 
 <Note label="2 · Vary: User-Agent or Vary: Cookie">
-`Vary` multiplies your cache. User-Agent has effectively unbounded cardinality; Cookie is per-user. Either turns a shared cache into a very expensive disk that never hits. Normalise to a device class instead, or don't vary at all.
+`Vary` multiplies your cache. User-Agent has a nearly endless number of values; Cookie is different per user. Either turns a shared cache into an expensive disk that never hits. Group devices into a few classes instead, or don't vary at all.
 </Note>
 
 <Note label="3 · Query parameter order">
-`?a=1&b=2` and `?b=2&a=1` are different cache keys unless you sort. So are tracking parameters — `utm_source` fragments your cache across every campaign for responses that are byte-identical. Sort and allowlist.
+`?a=1&b=2` and `?b=2&a=1` are different cache keys unless you sort them. Tracking parameters like `utm_source` split your cache across every campaign for responses that are byte-identical. Sort, and keep only the parameters you know.
 </Note>
 
 <Note label="4 · Purge treated as deletion">
-Purge is a best-effort broadcast, not a transaction. For legal takedowns, remove at origin first, then purge, then verify from multiple regions.
+A purge is a best-effort broadcast, not a guarantee. For legal takedowns, remove at origin first, then purge, then check from several regions.
 </Note>
 
 <Note label="5 · Certificate expiry at the edge">
-The CDN holds a cert for your domain. Automated renewal usually works, until a domain-validation record changes or a certificate is uploaded manually and then forgotten. Monitor edge certificate expiry independently of your origin's.
+The CDN holds a certificate for your domain. Automatic renewal usually works, until a domain-validation DNS record changes, or a certificate was uploaded by hand and forgotten. Monitor the edge certificate's expiry separately from your origin's.
 </Note>
 
 <Note label="6 · Egress and request pricing">
-CDN bills have two dimensions — bytes out and requests — and they respond to different mistakes. A low hit rate raises origin egress; tiny objects raise request count. A poorly chosen cache key can quietly double both.
+CDN bills charge for bytes sent and for requests, and different mistakes raise each. A low hit rate raises the bytes your origin sends; lots of tiny objects raise the request count. A badly chosen cache key can quietly double both.
 </Note>
 
 <Note label="7 · Testing from your desk">
-Your local PoP is warm and 5 ms away. Your users' PoPs are neither. Measure from synthetic probes in the regions you actually serve, and from real-user monitoring, or you will optimise a number nobody experiences.
+Your local PoP is warm and 5 ms away. Your users' PoPs are neither. Measure with synthetic checks from the regions you actually serve, and from real-user monitoring, or you'll optimise a number nobody experiences.
 </Note>
 
 </Collapse>
@@ -195,19 +236,19 @@ Your local PoP is warm and 5 ms away. Your users' PoPs are neither. Measure from
 
 <Quiz q="You are asked to serve personalised pricing at the edge. How do you keep the cache useful?" options={["Cache a shell with no user dimension and fetch or inject the personal part separately; low-cardinality variants can go in the key", "Add the user ID to the cache key so each user gets their own cached copy", "Set a one-second TTL so a personal price is never more than a second stale"]} answer={0}>
 
-Split the page. Serve a cacheable shell — layout, navigation, product description, images — with a long TTL and a key that has no user dimension. Fetch the personalised fragment (price, availability, cart) with a separate uncached request, or inject it at the edge from a small piece of edge compute.
+Split the page. Serve a cacheable shell (layout, navigation, product description, images) with a long TTL and a key that has nothing user-specific in it. Fetch the personal part (price, availability, cart) with a separate uncached request, or add it at the edge with a small piece of edge code.
 
-If the personalisation has low cardinality — currency by country, three pricing tiers — you can put it in the cache key directly: three or five variants is cheap and every one of them still gets hits. The failure is putting a per-user dimension in the key, which produces one variant per user and a cache that is just a slow, distributed copy of your origin.
+If the personalisation has only a few possible values, like currency by country or three pricing tiers, you can put it in the cache key: three or five copies is cheap, and each still gets hits. The failure is a per-user value in the key, which makes one copy per user and a cache that's just a slow, distributed copy of your origin.
 
-Whatever you do, never let a response carrying `Set-Cookie` into the shared cache. That is the one mistake here with a security consequence rather than a cost one.
+Whatever you do, never let a response carrying `Set-Cookie` into the shared cache. That's the one mistake here with a security cost rather than a money one.
 
 </Quiz>
 
 <Quiz q="Your CDN vendor has a global outage. What can you actually do?" options={["Open a priority ticket and wait; the edge is the vendor's to fix", "Purge everything so every PoP reloads its configuration", "Fail away by repointing DNS to origin or a second CDN, which only works if TTLs are short, origin can take the load, and you've rehearsed it"]} answer={2}>
 
-In the moment: not much at the edge, which is the honest answer. What you can do is fail away from it — repoint DNS at your origin or a second CDN. That only works if your DNS TTL is short (60–300 seconds), if your origin can survive full unshielded traffic, and if you have rehearsed it. All three are decisions you make months earlier.
+In the moment, not much at the edge, which is the honest answer. What you can do is route around it: point DNS at your origin or a second CDN. That only works if your DNS TTL is short (60–300 seconds), your origin can survive the full traffic with no CDN in front, and you've practised it. All three are decisions made months earlier.
 
-Before the moment: keep origin capacity and autoscaling headroom for the un-CDN'd case, keep a tested runbook, keep a second CDN configured even if it carries 1% of traffic so its config is known-good, and monitor from outside your vendor's network so you find out from your own probes rather than from Twitter.
+Before the moment: keep spare origin capacity for the no-CDN case, keep a tested runbook, keep a second CDN configured even if it carries 1% of traffic so you know its config works, and monitor from outside your vendor's network so you hear about it from your own checks rather than from Twitter.
 
 </Quiz>
 

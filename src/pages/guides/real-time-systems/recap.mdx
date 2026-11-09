@@ -15,36 +15,36 @@ import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Q
 
 <Recap>
 
-**Push makes servers stateful.** That one change breaks stateless load balancing, stateless deploys, and requests-per-second capacity planning all at once.
+**Push makes servers remember.** Once the server holds a connection per user, it can't forget them between requests. That breaks the easy kind of load balancing, deploys and capacity planning all at once.
 
-**Climb the ladder only as far as you must.** Polling for rare updates, SSE for server-to-client streams, WebSockets when the client streams too. SSE is the most under-used option by a wide margin.
+**Climb the ladder only as far as you must.** Polling for rare updates, SSE when only the server streams, WebSockets when the browser streams too. SSE is the most under-used option by a wide margin.
 
-**Connections are cheap; what you attach to them isn't.** 50 KB each is 5 GB at 100k. 500 KB each is 50 GB. Keep per-connection state small and send queues bounded.
+**Connections are cheap; what you attach to them isn't.** 50 KB each is 5 GB at 100,000 connections. 500 KB each is 50 GB. Keep per-connection state small and send queues bounded.
 
-**Something must know where the user is.** Registry, broadcast bus, or sharded topics — the last one is what scales.
+**Something must know which server the user is on.** Write it in a registry, broadcast to every gateway, or split messages into topics gateways subscribe to. The last one is what scales.
 
-**Fan out on write for normal users, on read for celebrities.** 100 million inbox writes for one post is not a design, and most of those inboxes are never opened.
+**Copy posts into inboxes for normal users; fetch them at read time for celebrities.** 100 million inbox writes for one post is not a design, and most of those inboxes are never opened.
 
-**Presence costs rate × audience.** Scope to who's looking, batch on an interval, debounce flapping, and never persist ephemeral signals.
+**A signal costs how often it changes times how many people get it.** Send presence only to viewers, batch it, wait before marking people offline, and never store it.
 
-**Sequence numbers are load-bearing.** They give you gap-free reconnect, cheap resume, deduplication, and the freedom to disconnect slow clients.
+**Sequence numbers do the heavy lifting.** They let a reconnecting client get exactly what it missed, make resuming cheap, catch duplicates, and let you disconnect slow clients safely.
 
-**The reconnect is the load test.** Jittered backoff on the client, cheap resume, and admission control at the gateway — all shipped before the incident.
+**The reconnect is the load test.** Random backoff on the client, cheap resume, and a cap on new connections at the gateway, all shipped before the incident.
 
-**Bound every send queue.** Drop, conflate, or disconnect. Unbounded buffering means one slow client can kill a server full of healthy ones.
+**Give every send queue a limit.** Drop, combine, or disconnect. Unlimited buffering means one slow client can kill a server full of healthy ones.
 
-**Heartbeat everything.** Idle timeouts you never configured will close your connections, and TCP will not tell you.
+**Heartbeat everything.** Timeouts you never set will close quiet connections, and TCP won't tell you.
 
 </Recap>
 
 </Collapse>
 
 <Footer>
-  Slack Engineering, "A Terrible, Horrible, No-Good, Very Bad Day at Slack" (2020) ·
-  Discord Engineering, "How Discord Scaled Elixir to 5,000,000 Concurrent Users" ·
+  Discord Engineering, "How Discord Scaled Elixir to 5,000,000 Concurrent Users" (2017) ·
   WhatsApp/Erlang Factory, "Scaling to Millions of Simultaneous Connections" (2012) ·
   RFC 6455 (The WebSocket Protocol) ·
   WHATWG HTML, Server-Sent Events ·
+  Figma, "How Figma's multiplayer technology works" ·
   Twitter Engineering, "Timelines at Scale" ·
   Cloudflare, "Backpressure explained".
 </Footer>

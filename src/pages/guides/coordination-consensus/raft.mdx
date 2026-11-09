@@ -6,44 +6,88 @@ chapter: "10"
 current: "10. Coordination"
 sections:
   - id: "raft"
-    title: "How Raft actually works"
+    title: "How Raft picks one leader and commits a write"
   - id: "quorum"
-    title: "Quorums and the odd-number rule"
+    title: "Why a majority, and why an odd number"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Collapse, Figure, Layer, Note, Quiz, Race, Reading, Stack, Table } from '../../../components';
 import DiagramCoordinationConsensus1 from '../../../components/diagrams/DiagramCoordinationConsensus1.astro';
 
-<Collapse id="raft" title="1. How Raft actually works">
+<Collapse id="raft" title="1. How Raft picks one leader and commits a write">
 
-Paxos is the famous one and Raft is the one people actually implement, because Raft was explicitly designed to be understandable. It is worth knowing in outline, because every managed coordination service you will use is running something very close to it.
+You run three nodes, and the leader crashes. The other two must each decide, without a reliable way to talk, whether to take over. If neither does, you're stuck. If both do, you have two leaders, which is worse. An algorithm that gets a group of machines to make one decision anyway is called a **consensus algorithm**.
 
-Every node is in one of three states: **follower**, **candidate**, or **leader**. Time is divided into numbered **terms** — a logical clock that only ever increases, and which is the mechanism that makes stale leaders detectable.
+Paxos is the famous one; **Raft** is the one people actually implement, because it was designed to be understandable. Every managed coordination service you'll use runs something close to it.
+
+### Three roles and a counter
+
+Every node is a **follower**, a **candidate** (asking to become leader) or the **leader**. Time is divided into numbered **terms**: a counter that only goes up, with at most one leader per term. It's how an out-of-date leader gets caught.
+
+### How an election works
 
 <Stack>
-  <Layer idx="1">**Everyone starts a follower.** Followers do nothing but respond to messages. Each holds a randomised election timeout, typically 150–300 ms.</Layer>
-  <Layer idx="2">**The leader sends heartbeats.** As long as heartbeats arrive, followers reset their timers and stay followers.</Layer>
-  <Layer idx="3">**A timeout means a candidacy.** A follower that hears nothing increments the term, votes for itself, and asks everyone else for a vote.</Layer>
-  <Layer idx="4">**One vote per node per term.** A node grants its vote only if the candidate's log is at least as up to date as its own — this is what stops a node that missed writes from becoming leader.</Layer>
-  <Layer idx="5">**A majority wins.** The candidate that collects *n*/2 + 1 votes becomes leader and immediately starts heartbeating, which suppresses further elections.</Layer>
-  <Layer idx="6">**Split votes resolve by randomness.** If nobody wins, the term ends with no leader, timers fire again at different random times, and the next round almost always succeeds.</Layer>
+  <Layer idx="1">**Everyone starts as a follower.** Followers only respond to messages. Each one holds an election timeout picked at random, typically 150–300 ms.</Layer>
+  <Layer idx="2">**The leader sends heartbeats.** While heartbeats keep arriving, followers reset their timers and stay followers.</Layer>
+  <Layer idx="3">**Silence starts a candidacy.** A follower whose timer runs out adds one to the term, votes for itself, and asks every other node for a vote.</Layer>
+  <Layer idx="4">**One vote per node per term.** A node votes for a candidate only if the candidate's log is at least as up to date as its own. This stops a node that missed writes from becoming leader.</Layer>
+  <Layer idx="5">**A majority wins.** The candidate with votes from a majority of the cluster becomes leader and immediately starts sending heartbeats, which stops anyone else from starting an election.</Layer>
+  <Layer idx="6">**A tie just tries again.** If nobody gets a majority, the term ends with no leader. Timers run out again at different random times, and the next round almost always succeeds.</Layer>
 </Stack>
 
-Once elected, the leader handles every write as a **log append**. It appends the entry locally, sends it to all followers, and waits for a majority to acknowledge. Once a majority has it, the entry is **committed** — durable regardless of any subsequent failure, because any future leader must have it in order to have won an election. Only then does the leader apply it to the state machine and answer the client.
+### Why the timeouts are random
+
+Step 6 needs a picture. Five nodes; the leader has just crashed. Suppose two followers had exactly the same timeout:
+
+<Race a="Node A" b="Node B" result="Result: term 5 ends with no leader" steps={[
+  { a: "Timer runs out. Starts term 5 and votes for itself" },
+  { b: "Timer runs out at the same moment. Starts term 5 and votes for itself" },
+  { a: "Node C votes for A: 2 votes" },
+  { b: "Node D votes for B: 2 votes" },
+  { a: "Needs 3 of 5. Nobody else can vote this term", tone: "bad" },
+  { b: "Needs 3 of 5. Waits until the term times out", tone: "bad" }
+]} />
+
+That's a **split vote**, and with identical timers it could repeat every round. With random timeouts, one node's timer almost certainly fires first next round, and it collects its votes before anyone else wakes up.
+
+### How a write gets committed
+
+Once elected, the leader handles every write as an entry added to the end of a **log**, an ordered list of changes:
+
+<Stack>
+  <Layer idx="1">**The leader appends the entry** to its own log.</Layer>
+  <Layer idx="2">**It sends the entry to every follower** and waits for replies.</Layer>
+  <Layer idx="3">**When a majority has stored it, the entry is committed.** It's now permanent whatever fails next, because any future leader must have it in order to win an election.</Layer>
+  <Layer idx="4">**Only then does the leader apply the change** and answer the client.</Layer>
+</Stack>
+
+One detail from the Raft paper: a leader counts copies this way only for entries from *its own* term; older entries commit along with them.
 
 <Note type="key" label="The two guarantees that make it work">
 
-**Election restriction:** a node cannot win an election unless its log is at least as current as a majority's. So the winner always has every committed entry.
+**Election restriction:** each voter refuses candidates whose log is behind its own, and a winner needs a majority of votes. So the winner's log is at least as current as every node in some majority, which means it has every committed entry.
 
-**Term monotonicity:** every message carries a term. A node receiving a message from an older term rejects it; a node receiving a newer term immediately steps down. This is how an isolated ex-leader learns it has been replaced — the moment it can talk to anyone again.
+**Term monotonicity:** every message carries its sender's term. A node rejects messages from an older term, and a leader or candidate that sees a newer term steps down immediately. This is how a cut-off ex-leader learns it's been replaced, the moment it can talk to anyone again.
 
 </Note>
 
-That second guarantee is the direct answer to split brain *inside* the consensus group. An old leader partitioned away from the majority will keep believing it is leader, but it can never commit anything, because commits require a majority it does not have. Its writes hang. It is a leader with no power, which is exactly the right failure mode.
+### The leader that didn't know it was replaced
+
+That second guarantee is what prevents two leaders inside the cluster. Five nodes; the leader, in term 3, gets cut off with one follower, while the other three can still talk:
+
+<Race a="Old leader (term 3, minority side)" b="Majority side (3 nodes)" result="Result: only one side could ever commit, so there is no conflict to merge" tone="good" steps={[
+  { b: "Heartbeats stop. One node times out and wins term 4 with 3 votes" },
+  { a: "Still believes it leads. Accepts a client write" },
+  { a: "Can reach only 2 of 5 nodes. Can't commit: the write hangs", note: true },
+  { b: "New leader commits writes with 3 of 5", tone: "good" },
+  { a: "Partition heals. Sees term 4, steps down, drops its uncommitted entry", tone: "good" }
+]} />
+
+The old leader can never commit anything, because committing needs a majority it doesn't have. It's a leader with no power, which is exactly the right way to fail.
 
 <Figure>
   <DiagramCoordinationConsensus1 />
@@ -51,16 +95,28 @@ That second guarantee is the direct answer to split brain *inside* the consensus
 
 </Collapse>
 
-<Collapse id="quorum" title="2. Quorums and the odd-number rule">
+<Collapse id="quorum" title="2. Why a majority, and why an odd number">
 
-A majority of *n* is ⌊*n*/2⌋ + 1. Two majorities of the same set must overlap in at least one member, and that overlap is the entire reason consensus works: any two decisions share a witness, so they cannot contradict each other.
+Two data centres, two nodes each. The link between them breaks, and each side sees the other go quiet. Which side carries on? If both do, you get GitHub's split brain. Raft's answer is the rule you just saw: only a group holding a **majority** may decide anything.
+
+### The majority rule
+
+$$
+\text{majority of } n \;=\; \left\lfloor \frac{n}{2} \right\rfloor + 1
+$$
+
+(The ⌊ ⌋ brackets mean "round down".) The group of nodes whose agreement counts is called a **quorum**, and here it's a majority.
+
+Why this works: two majorities of the same cluster must share at least one node. Take five nodes, A to E. If A, B and C agreed on one thing and C, D and E later decided something else, C was in both groups, so the second decision was made by a group that already knew about the first. Any two decisions share a witness, so they can't contradict each other. And in the 2+2 split above, neither side has 3 of 4, so neither side carries on.
+
+### What each size buys you
 
 <Table numeric>
 
 | Nodes | Majority | Failures tolerated | Verdict |
 | ----- | -------- | ------------------ | ------- |
 | 1 | 1 | 0 | Not a cluster |
-| 2 | 2 | **0** | Worse than 1 — twice the failure surface, no tolerance |
+| 2 | 2 | **0** | Worse than 1: twice the machines that can fail, no tolerance |
 | 3 | 2 | 1 | The sensible minimum |
 | 4 | 3 | **1** | Same tolerance as 3, more cost, slower writes |
 | 5 | 3 | 2 | The standard for anything important |
@@ -68,11 +124,25 @@ A majority of *n* is ⌊*n*/2⌋ + 1. Two majorities of the same set must overla
 
 </Table>
 
-The table explains the odd-number rule that everyone repeats and few justify: **an even cluster gives you nothing an odd one below it doesn't.** Four nodes tolerate exactly as many failures as three while requiring one more acknowledgement per write and adding a node that can itself fail. Going from 3 to 5 is a real upgrade; going from 3 to 4 is paying money to get slower.
+Hence the odd-number rule: **an even-sized cluster gives you nothing the odd size below it doesn't.** Four nodes survive as many failures as three, while needing one more acknowledgement per write. Going from 3 to 5 is a real upgrade. Going from 3 to 4 is paying money to get slower.
 
-Larger is not better in general, either. Every write waits for a majority to acknowledge, so write latency is governed by the *slowest node in the fastest majority*. At five nodes you wait for the third-fastest. At seven you wait for the fourth-fastest, across more machines and probably more distance. Consensus clusters get slower as they get bigger, which is the opposite of the intuition people bring from stateless services in [Load Balancing](/guides/load-balancing/).
+### Bigger clusters are slower
 
-This is also where cross-region deployment turns painful. Put five etcd nodes in three continents and every single write costs a cross-ocean round trip to reach a majority — 150 ms or more, per write, forever. The usual answer is to keep the consensus group inside one region (or a few nearby availability zones) and treat other regions as asynchronous consumers of its decisions. When you truly need global consensus, you are in the territory of Spanner and its atomic clocks, discussed in [Consistency & the CAP Theorem](/guides/consistency-cap/).
+A write is as slow as the *slowest node in the fastest majority*: with five nodes you wait for the third-fastest, with seven the fourth-fastest. Consensus clusters get slower as they grow, the opposite of stateless services in [Load Balancing](/guides/load-balancing/).
+
+### Spreading across regions costs every write
+
+Put five etcd nodes on three continents and every write needs a cross-ocean round trip to reach a majority: 150 ms or more, per write, forever. So keep the consensus group in one region, or a few nearby availability zones, and let other regions receive its decisions asynchronously. When you truly need agreement across the globe, you're in the territory of Spanner and its atomic clocks, covered in [Consistency & the CAP Theorem](/guides/consistency-cap/).
+
+<Note type="key" label="What to remember">
+
+- Raft elects a leader by majority vote within a numbered term; random timeouts keep ties rare, and only a node with every committed write can win.
+- A write is committed once a majority has stored it. A leader cut off from the majority can't commit anything, and steps down when it sees a newer term.
+- Use 3 or 5 nodes, close together. Any two majorities overlap, which is why consensus is safe; even sizes add cost and latency without adding tolerance.
+
+[Part 2](/guides/coordination-consensus/safety/) is about what happens outside the cluster, where systems act on what it told them.
+
+</Note>
 
 </Collapse>
 
@@ -80,7 +150,9 @@ This is also where cross-region deployment turns painful. Put five etcd nodes in
 
 <Quiz q="Why are even-numbered cluster sizes (like 4 nodes) almost always a bad design?" options={["A 4-node cluster tolerates the same single failure as 3 nodes, but every write waits for one more acknowledgement", "Raft cannot elect a leader when the number of voters is even", "An even cluster can split into two equal halves that each elect their own leader"]} answer={0}>
 
-Because a 4-node cluster requires 3 nodes to agree for a majority quorum (4/2 + 1 = 3), meaning it can only tolerate 1 failure (4 - 3 = 1). A 3-node cluster also requires 2 nodes for quorum, allowing it to tolerate 1 failure as well. Therefore, adding the 4th node does not increase the cluster's fault tolerance, but it increases hardware cost, write latency (waiting for 3 ACKs instead of 2), and adds another node that can fail. You pay more to get a slower, less reliable cluster.
+A 4-node cluster needs 3 nodes to agree (4 ÷ 2 + 1 = 3), so it survives only 1 failure (4 − 3 = 1). A 3-node cluster needs 2, so it also survives 1. The fourth node adds no tolerance, but it adds hardware cost, slower writes (waiting for 3 acknowledgements instead of 2), and another machine that can fail.
+
+An even cluster can split into two equal halves, but neither half has a majority, so neither elects a leader. That's safe, just unavailable.
 
 </Quiz>
 

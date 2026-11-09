@@ -12,33 +12,35 @@ series:
     - load-balancing
 sections:
   - id: "sync"
-    title: "Synchronous vs. async"
+    title: "Do the work now, or later?"
   - id: "queue"
     title: "The queue as a shock absorber"
   - id: "parts"
-    title: "Producers, consumers, brokers"
+    title: "One consumer or every consumer?"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Layer, Note, Stack } from '../../../components';
 import DiagramMessageQueues1 from '../../../components/diagrams/DiagramMessageQueues1.astro';
 
 <ColdOpen tag="◇ the checkout that punished success">
 
-Black Friday. A user clicks "Buy." Behind that one click, your code synchronously charges the card, generates an invoice PDF, emails a receipt, updates the warehouse, pings the analytics service, and posts to Slack. The user stares at a spinner for 11 seconds because the email server is having a slow day.
+Black Friday. A user clicks "Buy". Behind that one click, your code charges the card, generates an invoice PDF, emails a receipt, updates the warehouse, pings the analytics service and posts to Slack, one after the other, while the user waits. The email server is having a slow day, so the user stares at a spinner for 11 seconds.
 
-Multiply by 50,000 concurrent shoppers and the whole site seizes — not because buying is hard, but because you insisted on doing *everything* before saying "thanks for your order." A queue is how you hand off the boring parts and reply instantly.
+Multiply that by 50,000 shoppers at once and the whole site seizes. Buying isn't hard; you just insisted on doing *everything* before saying "thanks for your order". A queue is how you hand off the boring parts and reply straight away.
 
 </ColdOpen>
 
-<Collapse id="sync" title="1. Synchronous vs. asynchronous">
+<Collapse id="sync" title="1. Synchronous vs. asynchronous: do the work now, or later?">
 
-**Synchronous** is a phone call: you both have to be on the line at the same time, and you wait for the answer. **Asynchronous** is a text message: you send it and get on with your life; the other side handles it when they can.
+Look at that checkout again. The user needs to know one thing: did my order go through? They don't need to *watch* the receipt email being sent, and they certainly don't need to wait for the analytics service.
 
-Lots of work has no business being synchronous. The user doesn't need to *watch* their receipt email get sent — they just need to know the order went through. So do the essential bit inline (record the order, take the money), drop everything else onto a queue, and return "success" immediately. The slow, non-urgent work happens in the background.
+There are two ways to ask another part of the system to do something. **Synchronous** is a phone call: both sides are on the line at once and you wait for the answer. **Asynchronous** is a text message: you send it and get on with your day; the other side handles it when it can.
 
-<Note type="wild" label="◈ In the wild · E-Commerce Checkout">
+Much of the work behind a click has no business being synchronous. So do the essential part while the user waits (record the order, take the money), write everything else down as a to-do for later, and return "success" immediately. The slow, non-urgent work happens in the background, and a slow email server only delays the email.
 
-When you click "Buy" on Amazon or Shopify, the instant "Order confirmed!" is a fast asynchronous hand-off. The email generation, warehouse inventory booking, and credit card settlement details are queued, allowing the client interface to load instantly.
+<Note type="wild" label="◈ In the wild · E-commerce checkout">
+
+When you click "Buy" on Amazon or Shopify, the instant "Order confirmed!" is a fast asynchronous hand-off. The email, the warehouse booking and the card settlement details are queued, so the page can load straight away.
 
 </Note>
 
@@ -46,54 +48,52 @@ When you click "Buy" on Amazon or Shopify, the instant "Order confirmed!" is a f
 
 <Collapse id="queue" title="2. The queue as a shock absorber">
 
-A message queue is a durable line that work waits in. Producers add messages to one end; consumers take them off the other and do the work. Its magic trick is **decoupling in both time and speed.**
+Those to-dos have to be kept somewhere safe until a worker gets to them, even if a server restarts in between. That place is a **message queue**: a durable line that work waits in. Each to-do is a **message**. Code that adds messages is a **producer**; code that takes them off and does the work is a **consumer**. The server that holds the queue is the **broker**.
 
 <Stack>
-  <Layer idx="P" title="Producer">
-    Drops a "send receipt" message and moves on instantly.
+  <Layer idx="1" title="Producer">
+    Adds a "send receipt" message and moves on instantly.
   </Layer>
   <Arrow>↓ enqueue ↓</Arrow>
-  <Layer idx="≡" title="Queue (broker)" speed="the buffer">
+  <Layer idx="2" title="Queue (broker)" speed="the buffer">
     Holds messages durably until someone processes them. Absorbs bursts.
   </Layer>
   <Arrow>↓ dequeue ↓</Arrow>
-  <Layer idx="C" title="Consumer(s)">
-    Pull messages at their own pace. Add more to go faster.
+  <Layer idx="3" title="Consumer(s)">
+    Take messages at their own pace. Add more to go faster.
   </Layer>
 </Stack>
 
-When a traffic spike hits, the queue simply gets longer — it doesn't fall over. Consumers chew through the backlog at a steady rate the downstream systems can survive. That's the shock absorber: *bursty* input, *smooth* output. A queue turns "everything at once" into "a steady, controlled rate."
+Why this helps: producer and consumer no longer have to work at the same time or the same speed. When a traffic spike hits, the queue just gets longer; it doesn't fall over. Consumers work through the backlog at a steady rate the systems behind them can survive. Bursty in, smooth out.
 
-<Note type="key" label="This is load-leveling — and where backpressure comes in">
+### Buffer the spike, but bound the buffer
 
-Absorbing a spike by *buffering* it (letting the queue grow) is **load-leveling**: the database sips at its own pace instead of getting knocked over. This is the cheapest thing you can put in front of a write-bound database — writes are the hard half to scale, as [the Database Scaling guide](/guides/database-scaling/) gets into, and a queue lets you cap the write rate without dropping the writes.
+Absorbing a spike by letting the queue grow is called **load leveling**: the database takes writes at its own pace instead of being knocked over. It's the cheapest thing you can put in front of a database that's struggling with writes. Writes are the hard half to scale, as [the Database Scaling guide](/guides/database-scaling/) explains, and a queue lets you cap the write rate without dropping any writes.
 
-True **backpressure** is the next step — a *bounded* queue that, when full, pushes back on or sheds producers, so an unbounded backlog can't itself become the outage (runaway memory, ever-staler messages). Buffer for smoothness; bound the queue so the buffer can't sink you.
-
-</Note>
+A queue that can grow forever has its own failure: it eats memory, and the messages at the back get older and staler. So the next step is a *bounded* queue that, when full, pushes back on producers or turns work away. That push-back is called **backpressure**. Buffer for smoothness; bound the queue so the buffer can't sink you.
 
 <Note type="wild" label="◈ In the wild · LinkedIn & Kafka">
 
-Kafka was built at LinkedIn around 2010 for exactly this reason. Dozens of services needing data from dozens of others had become point-to-point wiring — *N* systems to *M* systems is *N×M* brittle pipelines. Kafka replaced that web with one **durable, append-only log** every system publishes to and reads from at its own pace. LinkedIn open-sourced it in 2011, and much of the industry now runs its event backbone on it.
+LinkedIn built Kafka around 2010. Dozens of services needed data from dozens of others, and point-to-point wiring meant *N×M* brittle pipelines. Kafka replaced the web with one **durable, append-only log** every system writes to and reads from at its own pace. Open-sourced in 2011, it now carries much of the industry's event traffic.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="parts" title="3. Producers, consumers, and two shapes of delivery">
+<Collapse id="parts" title="3. One consumer or every consumer: two shapes of delivery">
 
-Beyond the basic queue, there are two classic patterns, and knowing which you want saves a lot of confusion:
+Two kinds of message look alike and need opposite handling. "Send this receipt" should be done by exactly one worker; if three workers each send it, the customer gets three emails. "An order was placed" should reach billing, shipping *and* analytics; if only one of them hears it, the other two never act.
 
 <CardGrid>
   <Card title="Work queue (point-to-point)">
     Each message goes to *exactly one* consumer. Ten workers share the load; a receipt gets emailed once. This is task distribution.
   </Card>
   <Card title="Pub/sub (publish–subscribe)">
-    Each message is broadcast to *every* interested subscriber. "Order placed" fans out to billing, shipping, and analytics — each gets its own copy. This is event notification.
+    Each message goes to *every* interested subscriber. "Order placed" fans out to billing, shipping and analytics, and each gets its own copy. This is event notification.
   </Card>
 </CardGrid>
 
-Pub/sub is the backbone of **event-driven architecture**: services announce that something happened and don't care who's listening. New feature? Subscribe to the existing event stream — no need to touch the producer. It's how big systems add capabilities without everything having to know about everything.
+Pub/sub is the backbone of **event-driven architecture**: services announce that something happened and don't care who's listening. Need a new feature that reacts to orders? Subscribe to the existing event stream; the producer never has to change. That's how big systems add capabilities without every service knowing about every other.
 
 <Figure>
   <DiagramMessageQueues1 />

@@ -6,72 +6,121 @@ chapter: "8"
 current: "8. APIs & Gateways"
 sections:
   - id: "versioning"
-    title: "Versioning and the promise you can't take back"
+    title: "Which changes you can ship without a v2"
   - id: "pagination"
-    title: "Collections: pagination and filtering"
+    title: "Paging through a list that keeps changing"
   - id: "errors"
-    title: "Errors a client can act on"
+    title: "Errors that tell the client what to do next"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { ColdOpen, Collapse, Figure, Footer, Lab, Note, Quiz, Reading, Recap, Table } from '../../../components';
+import { Collapse, Figure, Note, Quiz, Race, Reading, Table } from '../../../components';
 import DiagramApiGateways1 from '../../../components/diagrams/DiagramApiGateways1.astro';
 
-<Collapse id="versioning" title="1. Versioning and the promise you can't take back">
+<Collapse id="versioning" title="1. Which changes you can ship without a v2">
 
-The useful frame is not "how do we version" but "which changes are safe." Most changes are, and teams that understand which ones almost never need a v2.
+Your order status can be `pending`, `paid` or `shipped`. You add `refunded`. Nothing was removed, so it feels safe. A partner's code has a `switch` over the three statuses it knows, and every refunded order now falls into its error branch.
+
+The useful question isn't "how do we version?" It's "which changes are safe?" Most are, and teams that know which ones almost never need a v2.
+
+### Adding is usually safe
+
+An old client never sends a field it doesn't know about, so a new *optional* request field is safe: the server fills in a default. A new endpoint is safe because nobody calls it yet. A new response field is usually safe, because most clients ignore fields they don't read, but not if a client validates strictly and rejects anything unfamiliar.
+
+### Removing, renaming and tightening break callers
+
+If a client reads a field and it's gone, the client breaks; that's the [cold open](/guides/api-gateways/). Making an optional field required breaks every caller that doesn't send it. A new enum value breaks clients that handle every known value and treat anything else as an error, as in the `refunded` example.
+
+### The two that break silently
+
+Two kinds of change don't look like API changes in a code review. Someone adds a length check to a validator, and requests that worked yesterday now get a 400. Someone flips a default from `false` to `true`, and behaviour changes with no error at all. A partner's integration starts misbehaving with no version bump and no announcement.
 
 <Table>
 
 | Change | Safe? | Why |
 | ------ | ----- | --- |
-| Add an optional request field | Safe | Old clients omit it; server defaults |
-| Add a response field | Usually safe | Unless a client validates strictly — see the [cold open](/guides/api-gateways/) |
+| Add an optional request field | Safe | Old clients omit it; the server defaults it |
+| Add a response field | Usually safe | Unless a client rejects fields it doesn't recognise |
 | Add a new endpoint | Safe | Nobody calls it yet |
-| Add a new enum value | Breaking | Clients switch exhaustively and fall through to an error branch |
+| Add a new enum value | Breaking | Clients that handle each known value fall into their error branch |
 | Make an optional field required | Breaking | Every existing caller starts failing validation |
-| Remove or rename a field | Breaking | Callers dereference it |
-| Tighten validation | Breaking, invisibly | Requests that worked yesterday now 400 |
+| Remove or rename a field | Breaking | Callers still read it — see the [cold open](/guides/api-gateways/) |
+| Tighten validation | Breaking, invisibly | Requests that worked yesterday now get a 400 |
 | Change a default | Breaking, silently | Behaviour changes with no error to notice |
 
 </Table>
 
-The last two are the dangerous ones, because they don't look like API changes in a code review. Somebody adds a length check to a validator or flips a default from `false` to `true`, and a partner's integration starts behaving differently with no version bump and no announcement.
+### When you genuinely must break
 
-When you genuinely must break, the options in increasing order of cost: a **new field alongside the old one** (both populated during a transition), a **new endpoint**, a **version in the URL** (`/v2/`), or a **version negotiated by header**. URL versioning is the most common because it's visible and debuggable, and its true cost is not the routing — it's that you now run two implementations, and the old one still needs security patches long after everyone has stopped caring about it.
+The options, from cheapest to most expensive: a **new field alongside the old one** (both filled in during a transition), a **new endpoint**, a **version in the URL** (`/v2/`), or a **version chosen by a request header**.
+
+URL versioning is the most common because it's visible and easy to debug. Its real cost isn't the routing. It's that you now run two implementations, and the old one still needs security patches long after everyone has stopped caring about it.
 
 <Note label="Deprecation that actually works">
 
-Announce, then instrument, then chase, then remove. The instrumentation is the step people skip and the only one that matters: log every call to the deprecated path with the caller's identity, so that when you propose removal you can say "eleven integrations still call this, here they are" instead of guessing. HTTP has standard headers for the announcement — `Deprecation` and `Sunset` — and essentially no client reads them, so send email as well.
+Announce, then instrument, then chase, then remove. Instrumenting is the step people skip and the only one that matters: log every call to the old path with the caller's identity. Then, when you propose removing it, you can say "eleven integrations still call this, here they are" instead of guessing.
+
+HTTP has standard headers for the announcement, `Deprecation` and `Sunset`, and essentially no client reads them, so send email as well.
 
 </Note>
 
-Write clients to be **tolerant readers**: ignore unknown fields, treat unknown enum values as a defined "other" case, and never assume field order. This is the same discipline as schema evolution in [Message Queues & Async](/guides/message-queues/), and for the same reason — producer and consumer are never upgraded at the same instant.
+### Make clients forgiving
+
+Write clients to ignore fields they don't know, treat unknown enum values as a defined "other" case, and never assume field order. A client written this way is called a **tolerant reader**. It's the same discipline as schema evolution in [Message Queues & Async](/guides/message-queues/), for the same reason: the producer and the consumer are never upgraded at the same instant.
 
 </Collapse>
 
-<Collapse id="pagination" title="2. Collections: pagination and filtering">
+<Collapse id="pagination" title="2. Paging through a list that keeps changing">
 
-Every collection endpoint eventually returns more rows than anyone wants, and the way you paginate determines whether that's a small problem or a permanent one.
+Every list endpoint eventually returns more rows than anyone wants, so you return them a page at a time. How you do that decides whether it's a small problem or a permanent one.
 
-**Offset pagination** — `?page=5&limit=20` — is what everyone builds first. It has two defects. The first is performance: `OFFSET 100000` makes the database walk and discard a hundred thousand rows before returning anything, so page 5,000 is thousands of times more expensive than page 1. The second is correctness, and it's worse: if a row is inserted while a user is paging, every subsequent page shifts by one, and they will see one item twice and never see another at all.
+### Page numbers: skip N rows, take 20
 
-**Cursor (keyset) pagination** — `?after=eyJpZCI6ODgyMTN9` — sends back an opaque token encoding the sort position of the last row. The next query becomes `WHERE (created_at, id) < (:ts, :id) ORDER BY created_at DESC, id DESC LIMIT 20`, which uses the index and costs the same on page 5,000 as on page 1.
+The first version everyone builds is `?page=5&limit=20`, which becomes `OFFSET 80 LIMIT 20` in SQL. This is called **offset pagination**. It has two defects.
 
-Inserts don't shift anything, because position is defined by value rather than by count. The trade-off you accept is no "jump to page 47" — which almost no real client needs, and which the ones that do can get from a search index instead.
+The first is speed. `OFFSET 100000` makes the database walk past and throw away a hundred thousand rows before returning anything, so page 5,000 is thousands of times more expensive than page 1.
+
+The second is correctness, and it's worse. Watch what happens when someone adds an order while a user is paging through the newest-first list:
+
+<Race a="User paging (20 per page)" b="Another customer" result="Result: the user sees one order twice. A delete instead would make them skip one" steps={[
+  { a: "Loads page 1 (OFFSET 0): the 20 newest orders" },
+  { b: "Places an order. It becomes the newest, pushing every other order down one place" },
+  { a: "Loads page 2 (OFFSET 20). Its first row is the order that ended page 1", tone: "bad" }
+]} />
+
+The position "20th row" moved under the user's feet. A delete does the opposite: everything shifts up one, and one row is never shown at all.
+
+### Cursors: "carry on after this row"
+
+Instead of counting rows, remember *where you stopped*. The server returns a token encoding the sort values of the last row, such as `?after=eyJpZCI6ODgyMTN9`, and the next query asks for rows that come after it:
+
+```sql
+SELECT … FROM orders
+WHERE  (created_at, id) < (:ts, :id)
+ORDER  BY created_at DESC, id DESC
+LIMIT  20;
+```
+
+This is called **cursor** (or **keyset**) **pagination**. The query jumps straight to the right spot in the index, so page 5,000 costs the same as page 1. And because the position is defined by a *value* rather than a count, inserts and deletes elsewhere can't shift it.
+
+The trade-off: no "jump to page 47". Almost no real client needs it, and the ones that do can get it from a search index.
 
 <Note type="warn" label="The tiebreaker is not optional">
 
-Sorting by a non-unique column alone — `ORDER BY created_at` where thousands of rows share a timestamp — makes the ordering undefined among ties, and any pagination built on it will duplicate and skip rows nondeterministically. Always append a unique tiebreaker to the sort, and include it in the cursor. This is the single most common pagination bug in production and it presents as an intermittent, unreproducible "sometimes a record is missing." [Scaling Databases](/guides/database-scaling/) has the query-plan side of this.
+Sort by a column that isn't unique, like `ORDER BY created_at` when thousands of rows share a timestamp, and the order among those ties is undefined. The database can return them differently each time, so pages duplicate and skip rows at random.
+
+Always add a unique tiebreaker such as `id` to the sort, and include it in the cursor. This is the single most common pagination bug in production, and it shows up as an intermittent, unreproducible "sometimes a record is missing". [Scaling Databases](/guides/database-scaling/) covers the query-plan side.
 
 </Note>
 
-Keep the cursor opaque — base64 an internal structure — so that clients cannot construct one by hand and you retain the freedom to change what's inside it. The moment a customer discovers your cursor is `base64("id:88213")`, someone will generate cursors, and your encoding becomes part of the contract you didn't mean to make.
+### Keep the cursor a black box
 
-Two more collection rules worth adopting: always impose a **maximum page size** the server enforces regardless of what was asked for, and never let filters be arbitrary — every filterable field is a query pattern you have promised to serve efficiently, which means an index you have promised to maintain.
+Encode the cursor so it's **opaque**: clients can pass it back but can't read or build one by hand. That keeps you free to change what's inside. The moment a customer discovers your cursor is `base64("id:88213")`, someone will generate cursors, and your encoding becomes part of a contract you never meant to make.
+
+Two more rules: always enforce a **maximum page size** on the server, whatever the client asks for. And don't allow filtering on any field the client likes, because every filterable field is a query you've promised to serve fast, which means an index you've promised to maintain.
 
 <Figure>
   <DiagramApiGateways1 />
@@ -79,27 +128,59 @@ Two more collection rules worth adopting: always impose a **maximum page size** 
 
 </Collapse>
 
-<Collapse id="errors" title="3. Errors a client can act on">
+<Collapse id="errors" title="3. Errors that tell the client what to do next">
 
-An error response has exactly one job: tell the caller what to do next. There are only four possible answers — fix your request, authenticate, retry later, or give up — and a good error makes it obvious which one applies.
+A request fails. The client's code has to decide what to do, usually without understanding your domain at all. An error response has exactly one job: make that decision obvious. There are only four answers: fix your request, authenticate, retry later, or give up.
 
-Status codes carry the first, coarsest signal, and getting the 4xx/5xx split right matters more than any individual code. **4xx means the client did something wrong; retrying an identical request will fail identically.** **5xx means the server failed; the same request might succeed later.**
+### The status code says whose fault it was
 
-That distinction is what lets a client library decide, without understanding your domain at all, whether to retry. Returning a 500 for a validation failure produces clients that retry a request that can never succeed — and at scale that's a self-inflicted traffic multiplier, the retry storm described in [The Reliability Toolkit](/guides/reliability-toolkit/).
+The first and coarsest signal is the status code, and the 4xx/5xx split matters more than any single code.
+
+- **4xx: the client did something wrong.** Sending the identical request again will fail the same way. The notable exceptions are 429 Too Many Requests and 408 Request Timeout, which do invite a later retry.
+- **5xx: the server failed.** The same request might succeed later.
+
+That split lets a generic client library decide whether to retry. Return a 500 for a validation failure and clients will retry a request that can never succeed. At scale that's a self-inflicted traffic multiplier: the retry storm in [The Reliability Toolkit](/guides/reliability-toolkit/).
 
 <Note type="warn" label="The 200-with-an-error-body anti-pattern">
 
-`HTTP 200 {"success": false, "error": "insufficient funds"}` is popular and wrong. Every intermediary between you and the client — load balancers, CDNs, monitoring, the client's own HTTP library — reads the status code and nothing else. A 200 gets cached, counted as a success in your SLI, and silently swallowed by generic error handling. Your error rate dashboard will show a flat 0% during a total functional outage.
+`HTTP 200 {"success": false, "error": "insufficient funds"}` is popular and wrong. Everything between you and the client (load balancers, CDNs, monitoring, the client's own HTTP library) reads the status code and nothing else. A 200 gets cached, counted as a success in your SLI, and silently swallowed by generic error handling. Your error-rate dashboard shows a flat 0% during a total functional outage.
 
 </Note>
 
-The body carries the actionable detail. RFC 7807 (updated by RFC 9457) defines a standard shape — `type`, `title`, `status`, `detail`, `instance` — and whether or not you adopt it literally, adopt its properties: a **stable machine-readable code** that clients can branch on (`insufficient_funds`, not a human sentence that will get reworded), a human-readable message for logs, and for validation failures, *which field* was wrong. Include your request ID in every error body; it turns a support ticket from an archaeology exercise into a lookup.
+### The body says what to fix
 
-Finally, distinguish retryable from non-retryable inside the 5xx range. A 503 with a `Retry-After` is an instruction. A 500 is an unknown. A 504 means the request may well have been processed even though you didn't hear back — which is the case that makes **idempotency keys** essential on any endpoint that moves money or creates records: the client sends a unique key, the server records the outcome against it, and a retry with the same key returns the original result instead of doing the work twice.
+The body carries the detail. RFC 9457, which replaced RFC 7807, defines a standard shape with `type`, `title`, `status`, `detail` and `instance` fields. Whether or not you adopt it literally, copy its properties:
+
+- A **stable machine-readable code** clients can branch on: `insufficient_funds`, not a sentence that will get reworded.
+- A human-readable message for logs.
+- For validation failures, *which field* was wrong.
+
+Put your request ID in every error body. It turns a support ticket from an archaeology dig into a lookup.
+
+### "Did it go through?": the timeout case
+
+Within the 5xx range, the codes mean different things. A 503 with a `Retry-After` header is an instruction: come back in this many seconds. A 500 is an unknown. A 504 Gateway Timeout means a proxy gave up waiting, and the request may well have been processed anyway:
+
+<Race a="Client" b="Payment service" result="Result: the customer is charged twice" steps={[
+  { a: "POST /charges for $40" },
+  { b: "Charges the card. The reply is slow", tone: "good" },
+  { a: "Gateway gives up: 504. Did it work? Unknown, so it retries" },
+  { b: "Sees a new POST /charges. Charges the card again", tone: "bad" }
+]} />
+
+The fix is to let the server recognise a retry. The client generates a unique key for each operation and sends it with every attempt. The server records the outcome against that key, and a retry with the same key gets the original result back instead of doing the work twice. This is called an **idempotency key** (an operation is **idempotent** if doing it twice has the same effect as doing it once). Use one on any endpoint that moves money or creates records.
 
 <Note type="wild" label="◈ In the wild · Stripe">
 
-Stripe lets a client attach an `Idempotency-Key` header to any POST, and records the outcome against the key. When a client retries after a timeout — never certain whether the first charge went through — the retry returns the original result rather than charging the card twice. Keys are honoured for roughly 24 hours, which makes this the canonical production answer to "the request may have succeeded even though I didn't hear back." See [Stripe's idempotent-requests documentation](https://docs.stripe.com/api/idempotent_requests).
+Stripe lets a client attach an `Idempotency-Key` header to any POST and records the outcome against the key. A client retrying after a timeout gets the original result instead of a second charge. Keys are kept for at least 24 hours. See [Stripe's idempotent-requests documentation](https://docs.stripe.com/api/idempotent_requests).
+
+</Note>
+
+<Note type="key" label="What to remember">
+
+- Adding is usually safe; removing, renaming, new enum values, tighter validation and changed defaults break clients, the last two silently.
+- Paginate with a cursor and a unique tiebreaker; offsets are slow deep down and shift when rows change.
+- The status code says whose fault it is and whether to retry; never send 200 with an error, and use idempotency keys where a retry could repeat work.
 
 </Note>
 
@@ -107,21 +188,29 @@ Stripe lets a client attach an `Idempotency-Key` header to any POST, and records
 
 <Collapse id="check" title="Check your understanding">
 
-<Quiz q="You add a new field to a request body. Optional, defaulted, backwards compatible. Two weeks later a partner's integration breaks. What happened?" options={["Their client validates strictly and rejects fields it does not recognise", "The server started treating the new field as required for their requests", "A cache between you and the partner kept serving the old schema"]} answer={0}>
+<Quiz q="You add a new field to a response. Optional, backwards compatible. Two weeks later a partner's integration breaks. What happened?" options={["Their client validates strictly and rejects fields it does not recognise", "The server started treating the new field as required for their requests", "A cache between you and the partner kept serving the old schema"]} answer={0}>
 
-Almost certainly a strict-validation client: many generated clients and API-contract-testing tools reject payloads containing unknown fields, so the field being optional on your side is irrelevant — its mere presence in a response, or a schema that now permits it, fails their validator. The related trap is enums, where adding a new value is technically additive but breaks every client that switches exhaustively over the old set.
+Almost certainly a client that validates strictly. Many generated clients and contract-testing tools reject any payload containing a field they don't recognise, so "optional on our side" doesn't matter: the field's mere presence fails their validator. New enum values are the related trap: technically additive, but they break every client that only handles the values it knew about.
 
-Both are why the tolerant-reader discipline matters: ignore unknown fields, map unknown enum values to a defined "unrecognised" case, and never assume ordering. You cannot make your clients tolerant, but you can document the expectation loudly, ship reference clients that behave that way, and treat "we added a field" as a change worth announcing rather than one worth assuming is invisible.
+Both are why tolerant readers matter: ignore unknown fields, map unknown enum values to a defined "unrecognised" case, never assume order. You can't make your clients tolerant, but you can document the expectation loudly, ship reference clients that behave that way, and announce added fields rather than assume nobody will notice.
 
 </Quiz>
 
 <Quiz q="Users report that paging through a list occasionally skips a record. The query is ORDER BY created_at DESC LIMIT 20 OFFSET n. What's wrong?" options={["The page size is too small, so rows fall between pages", "Offsets shift when rows are inserted or deleted, and created_at isn't unique, so ties come back in no fixed order", "The index on created_at is missing, so rows come back in storage order"]} answer={1}>
 
-Two independent bugs, and both need fixing. First, offset pagination is positional: if a row is inserted near the top between page requests, everything shifts down by one, so the record that was last on page one becomes first on page two — the user sees it twice — and the reverse happens on deletion, where a record is skipped entirely.
+Two separate bugs, and both need fixing. First, an offset is a position, and positions move. Insert a row near the top between page requests and everything shifts down one: the last record on page 1 shows up again as the first on page 2. Delete a row and everything shifts up: one record is never shown.
 
-Second, `created_at` is almost certainly not unique, and rows sharing a timestamp have no defined relative order, so the database is free to return them differently between two executions of the same query; that alone produces duplicates and omissions even with no concurrent writes at all.
+Second, `created_at` is almost certainly not unique. Rows with the same timestamp have no defined order, so the database can return them differently on two runs of the same query, which duplicates and skips rows even with no writes at all.
 
-The fix for both is keyset pagination with a unique tiebreaker: sort by `(created_at, id)`, and have each page request carry the last row's values as a cursor rather than a count. This is also faster, because the database seeks into the index instead of counting past n rows it will discard.
+The fix for both is cursor pagination with a unique tiebreaker: sort by `(created_at, id)` and have each request carry the last row's values instead of a count. It's also faster, because the database jumps into the index instead of counting past n rows it will throw away.
+
+</Quiz>
+
+<Quiz q="A client's POST /orders gets a 504 after 30 seconds. Should it retry?" options={["No, 5xx errors are never safe to retry", "Yes, with the same idempotency key, so the server can return the original result if the order was already created", "Yes, immediately, without any key, because the order clearly failed"]} answer={1}>
+
+A 504 means a gateway stopped waiting, not that the order failed. The service behind it may have finished the work after the gateway gave up. Retry blindly and you may create a second order; refuse to retry and you may abandon a real failure.
+
+An idempotency key removes the guesswork. The client sends the same key on every attempt, and the server returns the stored result if it has already seen that key, so retrying is always safe.
 
 </Quiz>
 

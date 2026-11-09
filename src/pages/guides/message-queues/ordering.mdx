@@ -6,42 +6,61 @@ chapter: "4"
 current: "4. Message Queues"
 sections:
   - id: "order"
-    title: "Ordering & dead letters"
+    title: "Out of order, and stuck forever"
   - id: "outbox"
-    title: "Dual writes & the outbox"
+    title: "Saving and announcing together"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Collapse, Lab, Note, Quiz, Race, Reading } from '../../../components';
 
-<Collapse id="order" title="1. Ordering & the dead-letter queue">
+<Collapse id="order" title="1. Ordering and the dead-letter queue">
 
-**Ordering.** Many queues don't guarantee messages come out in the order they went in — especially once you have multiple consumers racing. If order matters ("account created" must precede "account updated"), you either use a queue that preserves order within a partition (Kafka does, keyed by e.g. user ID) or design so order doesn't matter. Assuming global ordering you don't have is a top-tier source of Heisenbugs.
+### Messages that overtake each other
 
-**Dead-letter queue (DLQ).** What about a message that *can't* be processed — malformed data, a bug, a permanent failure? Without a plan, your consumer retries it forever, blocking everything behind it (a "poison message"). The fix is a DLQ: after N failed attempts, shunt the message to a separate queue for humans to inspect later. It's the inbox of things that went wrong, and checking it occasionally will teach you a lot about your own system.
+A user signs up and immediately changes their email address. Your service publishes "account created", then "account updated". Two consumers pick them up:
+
+<Race a="Consumer 1" b="Consumer 2" result="Result: the update is lost, or fails because the account doesn't exist yet" steps={[
+  { a: "Takes \"account created\". Starts a slow insert" },
+  { b: "Takes \"account updated\". Finds no account to update", tone: "bad" },
+  { a: "Finishes creating the account, with the old email", tone: "bad" }
+]} />
+
+Many queues don't promise that messages come out in the order they went in, and once several consumers work in parallel, even a queue that does can't stop a later message *finishing* first. Assuming an order you don't have is a top source of bugs that appear and vanish when you try to observe them.
+
+If order matters, you have two options. Use a queue that keeps order within a **partition**, a slice of the queue that one consumer reads in sequence. Kafka does this: give both messages the same key, such as the user ID, and they land in the same partition and are read in order. Or design the consumer so order doesn't matter.
+
+### The message that blocks everything
+
+Now a message arrives that can *never* be processed: malformed data, or a bug your consumer hits every time. Without a plan, the consumer retries it forever, and in an ordered queue everything behind it waits too. This is called a **poison message**.
+
+The fix is a **dead-letter queue (DLQ)**: after N failed attempts, move the message to a separate queue for a human to look at later. Why this works: the bad message stops blocking the line, and it isn't thrown away either. The DLQ is the inbox of things that went wrong, and reading it now and then teaches you a lot about your own system.
 
 </Collapse>
 
-<Collapse id="outbox" title="2. The dual-write problem and the transactional outbox">
+<Collapse id="outbox" title="2. Saving and announcing together: the transactional outbox">
 
-Here's a line of code that appears in almost every service that uses a queue, and it's a bug:
+Here's a pair of lines that appears in almost every service that uses a queue, and it's a bug:
 
-```bash
+```python
 db.insert(order)               # write 1
 queue.publish(order_placed)    # write 2
                                # ...and nothing binds them
 ```
 
-Two writes, two systems, no transaction spanning them. Crash between them and you get one of two bad outcomes, and which one you get depends on the order you chose.
+Two writes to two systems, with no transaction covering both. This is called the **dual-write problem**. If the process dies between the two lines, you get one of two bad outcomes, depending on which order you chose:
 
-Write the database first and die: you have taken the order and told nobody, so no receipt, no warehouse pick, no fraud check — a paid order that silently doesn't exist downstream. Publish first and die: you have announced an order you never recorded, and the shipping service is now confidently picking stock for a row that isn't there.
+- **Database first, then crash:** you've taken the order and told nobody. No receipt, no warehouse pick, no fraud check: a paid order that silently doesn't exist downstream.
+- **Publish first, then crash:** you've announced an order you never saved. The shipping service is now confidently picking stock for a row that isn't there.
 
-Wrapping it in a try/catch doesn't help, because the failure you're worried about is the process dying between the two lines, and dead processes don't run catch blocks.
+A try/catch doesn't help. The failure you're worried about is the process dying between the two lines, and dead processes don't run catch blocks.
 
-The **transactional outbox** removes the second system from the critical path. You write the event into an `outbox` table in the *same transaction* as the business data — one commit, one database, atomic by construction. A separate relay process then reads unsent rows from that table and publishes them to the broker, marking them sent.
+### Write the announcement into the database
+
+The fix takes the second system out of the critical moment. Write the event into an `outbox` table in the *same transaction* as the order. It's one commit to one database, so both rows land or neither does. A separate process, called the **relay**, then reads unsent rows from the table, publishes them to the broker, and marks them sent. This is the **transactional outbox**.
 
 ```sql
 BEGIN;
@@ -53,11 +72,13 @@ COMMIT;
 -- then marks the row sent
 ```
 
-Now the only question is *when* the event gets published, never *whether* — if the order committed, the event is in the table, and the relay will get to it. The other route to the same guarantee is **change data capture**: instead of a table you write yourself, a tool tails the database's own replication log (Postgres WAL, MySQL binlog) and turns committed rows into messages. Debezium is the usual name here. Less application code, more infrastructure to run; same property.
+Why this works: the only question left is *when* the event is published, never *whether*. If the order committed, the event is in the table, and the relay will get to it, even if the broker was down at the time.
+
+There's a second route to the same guarantee, called **change data capture (CDC)**. Instead of a table you write yourself, a tool reads the database's own change log (the Postgres WAL or the MySQL binlog) and turns committed rows into messages. Debezium is the usual name. Less application code, more infrastructure to run; same guarantee.
 
 <Note type="warn" label="Outbox gives at-least-once, not exactly-once">
 
-The relay can publish a message and crash before marking the row sent — so it publishes it again on restart. That's not a flaw to be engineered away; it's the same wall from [Part 1](/guides/message-queues/delivery/#delivery), moved one step. The outbox guarantees the event is never *lost*. Making a duplicate harmless is still the consumer's job, which is why the idempotent claim in [Part 1](/guides/message-queues/delivery/#idem) doesn't become optional just because you adopted an outbox.
+The relay can publish a message and crash before marking the row sent, so it publishes it again on restart. That's not a flaw to engineer away; it's the same wall from [Part 1](/guides/message-queues/delivery/#delivery), one step further along. The outbox guarantees the event is never *lost*. Making a duplicate harmless is still the consumer's job, so the idempotent claim from [Part 1](/guides/message-queues/delivery/#idem) doesn't become optional just because you adopted an outbox.
 
 </Note>
 
@@ -66,17 +87,25 @@ The relay can publish a message and crash before marking the row sent — so it 
   tip="Put this project on your portfolio as a benchmark of high-reliability distributed outbox design."
 >
 
-Build this mini-project to implement atomicity between business databases and message brokers:
+Build this mini-project to make saving an order and announcing it succeed or fail together:
 
-- **The Database Schema:** Spin up a Postgres database in Docker. Create an `orders` table and an `outbox_events` table. The `outbox_events` table should have fields: `id (UUID)`, `event_type (VARCHAR)`, `payload (JSONB)`, and `status (VARCHAR, default 'PENDING')`.
+- **The database schema:** Run Postgres in Docker. Create an `orders` table and an `outbox_events` table with fields `id (UUID)`, `event_type (VARCHAR)`, `payload (JSONB)` and `status (VARCHAR, default 'PENDING')`.
 
-- **The Atomic Endpoint:** Write an API server with a POST endpoint `/checkout`. Inside a single database transaction, insert an order row AND insert an event row with type `'order_placed'`.
+- **The atomic endpoint:** Write an API server with a POST endpoint `/checkout`. In a single database transaction, insert an order row AND an event row with type `'order_placed'`.
 
-- **The Publisher Daemon (Relay):** Write a background program that polls the `outbox_events` table for `status = 'PENDING'` rows every 500ms. For each row, publish the event payload to a local message broker (like SQS or RabbitMQ), then mark the database event row status as `'PUBLISHED'`.
+- **The relay:** Write a background program that polls `outbox_events` for `status = 'PENDING'` rows every 500 ms. For each row, publish the payload to a local message broker (such as SQS or RabbitMQ), then set the row's status to `'PUBLISHED'`.
 
-- **Simulate Failures:** Under a load test, force your broker connection to drop (e.g. stop the RabbitMQ Docker container), verify that transactions still commit successfully, and watch events queue up safely inside the database outbox. Restart RabbitMQ and verify that all queued events are delivered to consumers with zero loss.
+- **Simulate failures:** Under a load test, cut the broker connection (for example, stop the RabbitMQ container). Check that orders still commit and events pile up safely in the outbox. Restart RabbitMQ and check that every queued event reaches the consumers, with none lost.
 
 </Lab>
+
+<Note type="key" label="What to remember">
+
+- Order is only guaranteed within a partition. Messages that must stay in order need the same key.
+- A message that always fails should go to a dead-letter queue after a few tries, not block the line forever.
+- Never write to the database and the broker as two separate steps. Put the event in an outbox table in the same transaction, and let a relay publish it.
+
+</Note>
 
 </Collapse>
 
@@ -84,13 +113,17 @@ Build this mini-project to implement atomicity between business databases and me
 
 <Quiz q='Kafka guarantees ordering, so why did your "account created" and "account updated" events arrive backwards?' options={["Kafka only orders messages when a topic has a single consumer group", "Ordering is per partition, and the two events landed in different partitions because they didn't share a key", "The consumer committed offsets out of order during a rebalance"]} answer={1}>
 
-Because the guarantee is per-partition, and those two events almost certainly landed in different partitions — either they were produced with no key (round-robin) or with different keys. Ordering only holds for messages that share a partition, so anything that must be ordered relative to each other has to share a partition key: here, the account ID. The corollary is that your key choice *is* your ordering design, and it also decides your blast radius when one message gets stuck.
+Kafka's guarantee is per partition, and those two events almost certainly landed in different ones: either they were sent with no key, so the producer was free to spread them across partitions, or with different keys. Only messages in the same partition are read in order.
+
+Anything that must stay in order has to share a partition key; here, the account ID. Your choice of key *is* your ordering design, and it also decides how many customers are stuck when one message gets stuck.
 
 </Quiz>
 
 <Quiz q="Your service records the order correctly, but roughly once a week the confirmation email never sends. No exception, no DLQ entry. What's the architectural fix?" options={["A transactional outbox: write the event in the same transaction as the order and let a relay publish it", "Wrap the publish in a try/catch and retry it with backoff", "Send failed publishes to a dead-letter queue so they can be replayed"]} answer={0}>
 
-This is the dual-write problem: the database commit and the queue publish are two separate writes, and once a week the process dies or the broker call fails in the gap between them. There's no exception because there's nobody left to catch it, and no DLQ entry because the message was never published. The fix is the transactional outbox — write the event to an outbox table inside the same transaction as the order, and let a relay publish it. Retrying the publish in a catch block only shrinks the window; it doesn't close it.
+This is the dual-write problem. The database commit and the queue publish are two separate writes, and about once a week the process dies or the broker call fails in the gap between them. There's no exception because nothing is left running to catch it, and no DLQ entry because the message was never published.
+
+Write the event to an outbox table in the same transaction as the order, and let a relay publish it. Retrying in a catch block only shrinks the gap; it doesn't close it.
 
 </Quiz>
 

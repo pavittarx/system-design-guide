@@ -6,127 +6,139 @@ chapter: "1"
 current: "1. Caching"
 sections:
   - id: "eviction"
-    title: "Expiration & Eviction"
+    title: "What the cache throws away"
   - id: "stampede"
-    title: "The Cache Stampede"
+    title: "Two different stampedes"
   - id: "metastable"
-    title: "Metastable failures"
+    title: "Why reverting didn't help"
   - id: "hotkeys"
-    title: "Hot Keys & Partitioning"
+    title: "One key, one node"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Lab, Layer, Note, Pill, Quiz, Race, Reading, Recap, Stack, Table } from '../../../components';
 import DiagramUnderstandingCaching3 from '../../../components/diagrams/DiagramUnderstandingCaching3.astro';
 import StampedeLab from '../../../components/StampedeLab.astro';
 
-<Collapse id="eviction" title="1. Expiration & Eviction: keeping the cache lean">
+<Collapse id="eviction" title="1. What the cache throws away, and when">
 
-A cache has finite memory, so it must decide what to drop.
+Your cache has room for 8 GB and your app would happily store 12. Something has to go. A cache has finite memory, so it needs rules for when an entry stops being used, and for what to drop when it's full.
 
-**Expiration (TTL)** gives every entry a time-to-live; after it lapses, the entry is refetched. TTL is the simplest correctness tool — it bounds how stale data can get without any explicit invalidation. Short TTL = fresher but more misses; long TTL = faster but staler.
+### Entries that expire on a timer
+
+Give every entry a time to live, its **TTL**; when it lapses, the entry is gone and the next read fetches a fresh copy. This is **expiration**, and it's the simplest correctness tool there is: it puts an upper bound on how stale data can get, with no invalidation code at all. A short TTL means fresher data and more misses; a long one means faster responses and staler data.
 
 <Note type="wild" label="◈ In the wild · DNS">
 
-DNS (domain name resolution) is the world's largest example of TTL-based caching. When a website owner updates a DNS record, resolvers worldwide continue serving the old IP address from their caches until the record's TTL lapses. This is why DNS changes "take time to propagate" and represent eventual consistency in action.
+DNS, which turns domain names into server addresses, is the world's largest TTL-based cache. When a site owner changes a DNS record, resolvers worldwide keep serving the old address from their caches until the record's TTL lapses. That's why DNS changes "take time to propagate": eventual consistency in action.
 
 </Note>
 
-**Eviction policies** decide what to drop when memory is full:
+### Choosing what to drop when memory is full
 
-- **LRU (Least Recently Used)** — drop what's gone unused longest. The default sweet spot for most workloads.
-- **LFU (Least Frequently Used)** — drop the least-often accessed; better when popularity is stable.
-- **FIFO** — drop the oldest inserted, regardless of use.
-- **Random / TTL-based** — simpler, occasionally the right call.
+When the cache is full and a new entry arrives, it has to throw something out. Which one is decided by the **eviction policy**:
+
+- **Drop whatever has gone unused longest: LRU** (least recently used). The sensible default for most workloads.
+- **Drop whatever is used least often: LFU** (least frequently used). Better when the same things stay popular for a long time.
+- **Drop the oldest entry, however popular: FIFO** (first in, first out).
+- **Drop at random, or whatever expires soonest.** Simpler, and occasionally the right call.
 
 <Note label="Eviction ≠ invalidation">
 
-Eviction is the cache freeing space *on its own terms*. Invalidation is *you* deciding a value is now wrong. Conflating the two is a common source of confusion.
+Eviction is the cache freeing space *on its own terms*. Invalidation is *you* deciding a value is now wrong. Mixing the two up is a common source of confusion.
 
 </Note>
 
 </Collapse>
 
-<Collapse id="stampede" title="2. The Cache Stampede (Jitter vs. Coalescing)">
+<Collapse id="stampede" title="2. Two different stampedes, two different fixes">
 
-These get taught together but are caused by different mechanics and have completely different fixes. Adding jitter to a hot-key issue will not fix it, and adding single-flight to a mass-expiry issue is overkill. Let's compare them:
+The [cold open](/guides/understanding-caching/) was a stampede: one expiry, and the database drowned in identical queries. But "stampede" covers two problems with different causes, and the fix for one does nothing for the other. Adding jitter to a hot-key problem won't help, and adding single-flight to a mass-expiry problem is overkill.
 
 <DiagramUnderstandingCaching3 />
 
-**1. Synchronised Mass Expiry (Multiple keys, same expiry).** Many *different* keys were written at roughly the same moment — a deploy warmed them, a batch job populated them, the cache restarted and refilled in a burst — and because they all got the same fixed TTL, they all expire at roughly the same moment too. One second you're at a 95% hit rate; the next you're at nothing, and the database gets the whole read load.
+### Many keys expiring together
 
-- **The fix is TTL jitter:** Randomise expiry per key — e.g. 3600 seconds plus 0–360 random — so the cliff becomes a slope. This is a simple, three-line fix that you should do by default.
+Many *different* keys were stored at about the same moment: a deploy warmed them, a batch job filled them, or the cache restarted and refilled in a burst. They all got the same fixed TTL, so they all expire at about the same moment too. One second you're at a 95% hit rate; the next you're at nothing, and the database gets the whole read load. This is **synchronised mass expiry**.
 
-**2. A Single Hot Key Expiring (One key, high traffic).** A single key is requested thousands of times a second (like the homepage feed or a celebrity user profile). When its TTL expires, every in-flight request misses simultaneously and queries the database. Note that jitter does *nothing* here: there is only one key, it has one expiry time, and randomising *when* the cliff happens doesn't reduce the height of the drop.
+- **The fix is TTL jitter.** Randomise each key's expiry, for example 3600 seconds plus a random 0–360, so the cliff becomes a slope. It's three lines; do it by default.
 
-- **Request coalescing / single-flight:** The first request to miss takes a lock and recomputes; the rest wait for its result. N misses become one query. This is the actual fix.
-- **Probabilistic early expiration (XFetch):** (See below).
-- **Serve-stale-while-revalidate:** Keep the old value past its nominal freshness and hand it back instantly while one background task refreshes it. Nobody waits, nobody misses.
+### One very popular key expiring
+
+A single key is requested thousands of times a second: the homepage feed, a celebrity's profile. When its TTL runs out, every request in flight misses at once and queries the database. Jitter does *nothing* here: there's one key with one expiry time, and moving *when* the cliff happens doesn't make it any lower. Three fixes do work:
+
+- **Let one request rebuild it while the rest wait: single-flight**, or request coalescing. The first request to miss takes a lock and recomputes; the rest wait for its result. N misses become one query. This is the actual fix.
+
+<Race a="Request A" b="Request B" result="Result: one database query, however many requests missed" tone="good" steps={[
+  { a: "Cache miss. Takes the lock for this key" },
+  { b: "Cache miss. Lock is taken, so it waits", note: true },
+  { a: "Queries the database once and stores the result", tone: "good" },
+  { b: "Reads the freshly stored value from the cache", tone: "good" }
+]} />
+
+- **Refresh it a little before it expires: probabilistic early expiration** (XFetch), explained below.
+- **Keep serving the old value while one request refreshes it: serve-stale-while-revalidate.** Keep the value past its nominal freshness, hand it back instantly, and let one background task fetch a new one. Nobody waits, nobody misses.
 
 <Note type="wild" label="◈ In the wild · Meta">
 
-Meta runs one of the largest Memcached tiers on the planet in front of its databases, with a coalescing throttle for exactly this hot-key stampede. ["Scaling Memcache at Facebook"](https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf) (NSDI 2013) describes *leases*: on a miss for a hot key, only the first request gets a short-lived token to recompute the value; requests behind it wait briefly or get a slightly stale copy. That is single-flight, enforced at the cache, at production scale.
+Meta runs one of the largest Memcached tiers on the planet in front of its databases. ["Scaling Memcache at Facebook"](https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf) (NSDI 2013) describes *leases*: on a miss for a hot key, only the first request gets a short-lived token to recompute the value; requests behind it wait briefly or get a slightly stale copy. That's single-flight, enforced by the cache, at production scale.
 
 </Note>
 
 <StampedeLab />
 
-### Probabilistic early expiration (XFetch)
+### Refreshing before anyone misses: XFetch
 
-This is the mathematically elegant answer to the hot-key case, and it requires no locks or coordination. Instead of waiting for a key to expire and risking a stampede of misses, XFetch forces one lucky request to refresh the cache *before* it actually expires.
+Single-flight still makes requests wait for one rebuild. XFetch avoids the miss entirely, with no locks or coordination: it gets one lucky request to refresh the cache *before* the key actually expires.
 
-<Note type="key" label='The "Water Cooler" Analogy'>
+<Note label='The water cooler'>
 
-Imagine a water jug in a busy office. If you wait until it is 100% empty, the next person has to wait 5 minutes to refill it, creating a line (a database queue bottleneck).
-
-Instead, imagine each person who gets water rolls a die. If the jug is 20% empty, they only refill it if they roll a 6. If the jug is 90% empty, they refill it if they roll anything other than a 1. Because the office is busy, *someone* will eventually roll the right number and refill the jug in the background before it ever goes completely dry. Nobody ever waits for an empty jug.
+A water jug in a busy office. If everyone waits until it's completely empty, the next person waits five minutes to refill it, and a line forms. Instead, each person who takes water rolls a die. When the jug is 20% empty, they refill it only on a 6. When it's 90% empty, they refill it on anything but a 1. The office is busy, so *someone* refills it before it ever runs dry, and nobody waits.
 
 </Note>
 
-The math does exactly this. On every read, alongside the value, the cache stores how long the last database fetch took (*delta*) and the expiry deadline. Then, each client reader rolls a mathematical "die" on read, deciding to trigger an early background refresh if:
+The maths does exactly this. Alongside the value, the cache stores its expiry time and how long the last database fetch took, *delta*. On every read, the client rolls a "die" and starts a background refresh early if:
 
-```bash
-now - delta * beta * ln(random())  >=  expiry_time
-```
+$$
+\text{now} \;-\; \delta \cdot \beta \cdot \ln(\text{random}()) \;\ge\; \text{expiry}
+$$
 
-Since `random()` returns a decimal between 0 and 1, its natural log `ln(random())` is a negative number. This pushes the left-hand side ahead of `now`. As the key gets closer to its expiration, the probability of rolling a "yes" climbs smoothly. A single request volunteers to refresh the data in the background, updates the cache, and every other user continues hitting a warm cache. *beta* (default 1) lets you tune how early you want the background refreshes to start.
-
-</Collapse>
-
-<Collapse id="metastable" title="3. Metastable Failures: the self-sustaining death spiral">
-
-This is the failure mode that surprises engineers because the original trigger (the bug, the bad deploy) is gone, but the system remains down. It is a **vicious loop** that feeds on its own recovery attempts:
-
-<Table>
-
-| Phase | What happens in the system |
-| ----- | -------------------------- |
-| **1. The Trigger** | A cache node crashes or is flushed at peak traffic. Hit rate drops to 0%. |
-| **2. DB Saturation** | Thousands of concurrent misses hit the database. DB queries slow from 10ms to 8 seconds. |
-| **3. Timeout & Retry** | Clients time out waiting for the database, assume failure, and **retry**. Traffic doubles or triples. |
-| **4. The Trap** | The database is now too busy processing retries to answer *any* query. Because no queries finish, **the cache can never be refilled**. |
-
-</Table>
-
-The system is trapped. Reverting the bad code or restarting the cache does nothing because the offered load is self-sustaining. The only exit is to **forcefully break the loop**: shed traffic at the gateway, disable the expensive endpoint, or drop client retry budgets to zero. Once database load drops, it can finally answer queries, refill the cache, and recover. Only then can you gradually ramp the traffic back up.
+`random()` returns a number between 0 and 1, so its natural log is negative, and subtracting it pushes the left side *ahead* of now: the request pretends it's a little later than it is. Usually only slightly: with a 0.5-second fetch and *beta* at its default of 1, a typical roll pretends about half a second ahead, and a rare roll of 0.01 pretends 2.3 seconds ahead. So refreshes become likely only in the last moments before expiry, and on a busy key one request volunteers, refreshes in the background, and everyone else keeps hitting a warm cache. Raise *beta* to start refreshing earlier.
 
 </Collapse>
 
-<Collapse id="hotkeys" title="4. Hot Keys and Partitioning">
+<Collapse id="metastable" title="3. Why reverting didn't help: failures that sustain themselves">
 
-**Hot keys don't get fixed by more cache nodes.** Worth being explicit, because it's the first thing everyone tries. A cache cluster distributes keys by hashing them — consistent hashing, usually — which means `user:celebrity` maps to exactly one node. Adding nodes changes which node. It does not change how many. You can triple your cluster and that one node is still absorbing 100% of the traffic for that key while the other nodes idle. The fixes are different in kind:
+A cache node crashes at peak. You restart it within a minute, and the site stays down for forty. The trigger is gone; the outage isn't. Here's the loop that keeps it going:
 
-- **Key splitting** — write the same value under `user:celebrity#0` … `#7`, and have readers pick a suffix at random. Eight keys hash to (probably) eight nodes and the load divides. You pay for it in invalidation: a write now has to clear all eight.
-- **A client-local tier** — a small in-process cache in front of the shared one, holding the top few hundred keys for a second or two. A one-second local TTL on a key read 8,000 times a second turns 8,000 remote reads into one. The cost is a second of extra staleness and the fact that every instance can now disagree.
+<Stack>
+  <Layer idx="1" title="The trigger" speed="seconds">A cache node crashes or is flushed at peak traffic. The hit rate drops to 0%.</Layer>
+  <Layer idx="2" title="The database saturates" speed="seconds">Thousands of misses hit the database at once. Queries slow from 10 ms to 8 seconds.</Layer>
+  <Layer idx="3" title="Clients retry" speed="the next minute">Clients give up waiting, assume the request failed, and **retry**. Traffic doubles or triples.</Layer>
+  <Layer idx="4" title="The trap" speed="indefinitely">The database is so busy with retries that it can't finish *any* query. Because no query finishes, **the cache can never be refilled**.</Layer>
+</Stack>
 
-<Note type="wild" label="◈ In the wild · Twitter/X Timelines">
+The system is now stable, but in a bad state. This is called a **metastable failure**: the load keeping it down is generated by the outage itself. Reverting the bad code or restarting the cache does nothing, because the retries keep coming whatever caused them.
 
-Rather than assemble home timelines on every read, Twitter historically precomputed them: a tweet was written into each follower's cached timeline in Redis ahead of time (**fan-out-on-write**).
+The only way out is to **break the loop by force**: turn traffic away at the gateway, switch off the expensive endpoint, or cut client retries to zero. Once database load drops, queries finish again, the cache refills, and the system recovers. Only then ramp traffic back up, gradually.
 
-A celebrity with 100M followers turns that into 100M writes at once — a **hot key** on the write side. So Twitter hybridized: celebrity tweets skip the fan-out and are merged into a user's timeline only at read time (**merge-on-read**).
+</Collapse>
+
+<Collapse id="hotkeys" title="4. One key, one node: why more cache servers don't help">
+
+A celebrity's profile is read 8,000 times a second, and the cache node holding it is pegged at 100% CPU. You triple the cache cluster. That node is still pegged.
+
+Here's why. A cache cluster decides which node holds a key by hashing the key (usually consistent hashing), so `user:celebrity` maps to exactly one node. Adding nodes can change *which* node; it can't change *how many*. That one node still takes 100% of the traffic for that key while the others idle. This is a **hot key**, and the fixes are of a different kind:
+
+- **Store copies under several names: key splitting.** Write the same value under `user:celebrity#0` … `#7`, and have each reader pick a suffix at random. Why it works: eight keys hash to (probably) eight nodes, so the load divides. You pay at invalidation time: a write now has to clear all eight.
+- **Keep the hottest keys inside each app server too: a client-local tier.** A small in-process cache in front of the shared one, holding the top few hundred keys for a second or two. Why it works: with a one-second local TTL, each app server asks the shared cache for that key at most once a second, instead of thousands of times. The cost is a second of extra staleness, and app servers can now briefly disagree.
+
+<Note type="wild" label="◈ In the wild · Twitter/X timelines">
+
+Rather than assemble home timelines on every read, Twitter historically precomputed them: each tweet was written into every follower's cached timeline in Redis ahead of time (**fan-out-on-write**). A celebrity with 100M followers turns that into 100M writes at once, a hot key on the write side. So Twitter mixed approaches: celebrity tweets skip the fan-out and are merged into your timeline when you read it (**merge-on-read**).
 
 </Note>
 
@@ -136,12 +148,20 @@ A celebrity with 100M followers turns that into 100M writes at once — a **hot 
 
 | Problem | What happens | Fix |
 | ------- | ------------ | --- |
-| **Cache penetration** | Requests for keys that don't exist miss the cache *and* the DB every time. | Cache the "not found" (negative cache) with a short TTL, or a Bloom filter. |
+| **Cache penetration** | Requests for keys that don't exist miss the cache *and* the database, every time. | Cache "not found" with a short TTL, or check a Bloom filter (a compact set that says "definitely not here") first. |
 | **Hot key** | One key so popular it saturates the single node it hashes to. | Split the key across suffixes, or add a client-local tier. Not more nodes. |
-| **Cold start** | A freshly deployed/scaled instance has an empty cache and briefly overloads the origin. | Pre-warm on boot; ramp traffic gradually. |
-| **Metastable failure** | Retry amplification keeps the system down after the trigger is gone. | Shed load, then ramp. Waiting doesn't work. |
+| **Cold start** | A freshly deployed or scaled-up instance has an empty cache and briefly overloads the database. | Pre-warm on boot; ramp traffic up gradually. |
+| **Metastable failure** | Retries keep the system down after the trigger is gone. | Shed load, then ramp back. Waiting doesn't work. |
 
 </Table>
+
+<Note type="key" label="What to remember">
+
+- Jitter fixes many keys expiring together. It does nothing for one hot key expiring; that needs single-flight, early refresh or serve-stale.
+- An outage fed by retries keeps going after the cause is fixed. Turn load away until the cache refills, then ramp back.
+- A hot key lives on one node however many nodes you add. Split the key, or cache it locally for a second.
+
+</Note>
 
 </Collapse>
 
@@ -149,13 +169,17 @@ A celebrity with 100M followers turns that into 100M writes at once — a **hot 
 
 <Quiz q="You added jitter to every TTL and your hot-key stampede is exactly as bad as before. What did you misunderstand?" options={["The jitter window is too narrow; ±10% can't spread out a key this hot", "Jitter spreads out different keys' expiries; one hot key still has one expiry, so it needs single-flight, early refresh or serve-stale", "Jitter only takes effect under LFU eviction, not LRU"]} answer={1}>
 
-Jitter desynchronises *different keys* that were written at the same moment. A hot key is one key with one expiry time — randomising when that moment arrives doesn't reduce the number of requests that miss when it does. You need single-flight so only one request rebuilds the value, or probabilistic early expiration so one request refreshes it slightly early and nobody ever sees the miss, or stale-while-revalidate so the old value is served during the rebuild.
+Jitter spreads out *different keys* that were stored at the same moment. A hot key is one key with one expiry time: randomising when that moment comes doesn't reduce how many requests miss when it does.
+
+You need single-flight, so only one request rebuilds the value; or early refresh (XFetch), so one request refreshes it slightly before expiry and nobody sees the miss; or serve-stale-while-revalidate, so the old value is served during the rebuild.
 
 </Quiz>
 
-<Quiz q="You flush the cache during a 3am deploy every week and it's fine. You do it at peak and the site is down for 40 minutes, even though you reverted the change within seconds. Why didn't reverting help?" options={["Timeouts and retries kept offered load above what the database could serve, so the outage sustained itself until load was shed", "The revert took 40 minutes to roll out to every instance", "Flushing at peak evicted the database's buffer pool, which took 40 minutes to warm back up"]} answer={0}>
+<Quiz q="You flush the cache during a 3am deploy every week and it's fine. You do it at peak and the site is down for 40 minutes, even though you reverted within seconds. Why didn't reverting help?" options={["Timeouts and retries kept the load above what the database could serve, so the outage sustained itself until load was shed", "The revert took 40 minutes to roll out to every instance", "Flushing at peak evicted the database's buffer pool, which took 40 minutes to warm back up"]} answer={0}>
 
-At 3am the database has enough headroom to serve 100% of reads while the cache refills. At peak it doesn't, so it saturates, requests exceed the client timeout, clients retry, and offered load doubles or triples at the worst possible moment. That's a metastable failure: the load keeping you down is now being generated by the outage itself, so removing the original trigger changes nothing. You have to shed traffic until the database can answer enough queries to repopulate the cache, then ramp back. Also: version your keys instead of flushing.
+At 3am the database has enough spare capacity to serve every read while the cache refills. At peak it doesn't: it saturates, requests take longer than the client timeout, clients retry, and the load doubles or triples at the worst moment. That's a metastable failure: the load keeping you down is generated by the outage itself, so removing the original trigger changes nothing.
+
+Turn traffic away until the database can answer enough queries to refill the cache, then ramp back up. And version your keys instead of flushing.
 
 </Quiz>
 

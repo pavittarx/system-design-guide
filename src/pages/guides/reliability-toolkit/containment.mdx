@@ -6,11 +6,11 @@ chapter: "5"
 current: "5. Reliability Toolkit"
 sections:
   - id: "breakers"
-    title: "Circuit breakers"
+    title: "Stop calling what is down"
   - id: "bulkheads"
-    title: "Bulkheads & load shedding"
+    title: "Wall off the damage"
   - id: "degrade"
-    title: "Graceful degradation"
+    title: "Lose a feature, not the page"
   - id: "check"
     title: "Check your understanding"
   - id: "reading"
@@ -20,9 +20,11 @@ sections:
 import { Arrow, Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
 import DiagramReliabilityToolkit2 from '../../../components/diagrams/DiagramReliabilityToolkit2.astro';
 
-<Collapse id="breakers" title="1. Circuit breakers">
+<Collapse id="breakers" title="1. Stop calling what is down: circuit breakers">
 
-Named after the one in your house. If a service is clearly down, why keep calling it — failing slowly, tying up threads — every single time? A circuit breaker *trips* after it sees enough failures and then **fails instantly** for a while, without even attempting the call.
+The recommendations service is completely down. Every call to it waits out its 2-second timeout and then fails. At 400 requests a second, you spend 800 thread-seconds every second learning something you already knew, and the struggling service gets hammered with requests it can't answer while it's trying to restart.
+
+A **circuit breaker**, named after the one in your house, fixes this. It watches calls to a dependency, and after it sees enough failures it *trips*: for a while it **fails instantly**, without even attempting the call. It moves through three states:
 
 <Stack>
   <Layer idx="✓" title="Closed" speed="healthy">
@@ -44,7 +46,7 @@ Named after the one in your house. If a service is clearly down, why keep callin
   </Layer>
 </Stack>
 
-The breaker does two kind things at once: it protects *you* (no more threads wasted on doomed calls) and it protects *them* (the struggling service gets breathing room instead of a beating). It's the single most important pattern for stopping cascades.
+Why this works: an open breaker does two kind things at once. It protects *you*, because no threads are wasted on calls that are doomed. And it protects *them*, because the struggling service gets breathing room instead of a beating. It's the single most important pattern for stopping cascades.
 
 <Note type="wild" label="◈ In the wild · Netflix Hystrix">
 
@@ -58,11 +60,19 @@ Netflix built and open-sourced [Hystrix](https://github.com/Netflix/Hystrix/wiki
 
 </Collapse>
 
-<Collapse id="bulkheads" title="2. Bulkheads & load shedding">
+<Collapse id="bulkheads" title="2. Wall off the damage: bulkheads and load shedding">
 
-**Bulkheads** — named after a ship's watertight compartments. Isolate resources so a flood in one area can't sink the whole vessel. If calls to the flaky recommendations service get their own limited thread pool, they can exhaust *that* pool without stealing threads from checkout. One feature browns out; the ship stays afloat.
+### One slow feature shouldn't take every thread
 
-**Load shedding** — when you're truly overwhelmed, it's better to serve *most* requests well than *all* requests badly. So deliberately reject some traffic at the door (return a quick "try again in a moment") to keep the system from collapsing entirely. Counterintuitive but vital: sometimes saying "no" fast is the most reliable thing you can do. Shedding lives next door to the health checks and connection draining in the [load balancing guide](/guides/load-balancing/) — same idea, applied at the door rather than at the pool.
+Your server has one pool of 200 threads shared by every endpoint. Recommendations slows down and its calls hold threads for seconds each. Soon all 200 are waiting on it, and checkout, login and the health check have nothing left to run on.
+
+A **bulkhead**, named after a ship's watertight compartments, stops a flood in one compartment sinking the whole ship. Give calls to recommendations their own small pool, say 20 threads. They can exhaust *that* pool, but they can't take threads from checkout. One feature browns out; the ship stays afloat.
+
+### Too much work: say no quickly
+
+A different problem: nothing is broken, but three times the usual traffic arrives. Try to serve everyone and every request gets slow, queues grow, and requests time out before you even look at them. Everyone is served badly.
+
+**Load shedding** means deliberately rejecting some requests at the door, with a quick "try again in a moment", so that the rest are served well. It's better to serve *most* requests well than *all* requests badly. Counterintuitive but vital: sometimes saying "no" fast is the most reliable thing you can do. It's a close relative of the health checks and connection draining in the [load balancing guide](/guides/load-balancing/): same idea, applied at the door rather than at the pool.
 
 <Lab
   title="Build a Concurrency-Limiting Middleware"
@@ -77,23 +87,31 @@ Build this mini-project to implement active request limits and load shedding (pr
 
 - **Load Shedding:** If a request arrives and the counter is at 10, reject the request immediately with an HTTP status code `503 Service Unavailable` or `429 Too Many Requests`.
 
-- **Run the Load Test:** Use `k6` to hit the route with **50 concurrent virtual users**. Observe that while some requests get rejected, the p99 latency for successfully served requests remains flat around 200ms. Remove the limiter, run the test again, and watch p99 grow infinitely as requests queue up.
+- **Run the Load Test:** Use `k6` to hit the route with **50 concurrent virtual users**. Observe that while some requests get rejected, the p99 latency for successfully served requests remains flat around 200ms. Remove the limiter, run the test again, and watch p99 climb as requests queue up behind each other.
 
 </Lab>
 
 </Collapse>
 
-<Collapse id="degrade" title="3. Graceful degradation">
+<Collapse id="degrade" title="3. Lose a feature, not the page: graceful degradation">
 
-When a non-essential dependency fails, don't take the whole page with it — shed the feature, keep the core. The recommendations engine is down? Show a generic "popular items" list, or nothing, but *still let people check out.* The search ranking service died? Fall back to plain results. Users forgive a missing sidebar; they don't forgive a white screen.
+The recommendations engine is down. Should the product page show an error? Of course not: show a generic "popular items" list, or nothing, and *still let people check out*. The search ranking service died? Fall back to plain results. When a non-essential dependency fails, drop the feature and keep the core. This is called **graceful degradation**. Users forgive a missing sidebar; they don't forgive a white screen.
 
 <Note type="key" label="The mindset">
 
-Ask of every feature: "if this dependency vanishes, what's the least-bad thing we can show?" Design that fallback *on purpose*, before the incident. A system that degrades gracefully feels far more reliable than one that's binary — perfect or dead.
+Ask of every feature: "if this dependency vanishes, what's the least-bad thing we can show?" Design that fallback *on purpose*, before the incident. A system that degrades gracefully feels far more reliable than one that's either perfect or dead.
 
 </Note>
 
-Notice what you're actually doing when you serve stale prices from a cache because the pricing service is down: you're trading correctness for availability, one feature at a time. That's the choice from the [consistency and CAP guide](/guides/consistency-cap/), made concrete. Graceful degradation isn't a separate topic from consistency — it's the AP branch, chosen deliberately and scoped to the parts of the product where slightly-wrong beats not-there. Checkout totals get the other answer.
+Notice what you're doing when you serve stale prices from a cache because the pricing service is down: you're choosing to be available over being correct, one feature at a time. That's the choice from the [consistency and CAP guide](/guides/consistency-cap/), made concrete. Graceful degradation is the "stay available" branch, chosen deliberately and limited to the parts of the product where slightly wrong beats not there. Checkout totals get the other answer.
+
+<Note type="key" label="What to remember">
+
+- A circuit breaker stops calling a dependency that is clearly failing, which saves your threads and gives it room to recover.
+- A bulkhead gives each dependency its own limited pool, so one slow feature can't take every thread. Load shedding rejects excess work quickly when there's simply too much.
+- Decide each feature's fallback before the incident; a missing sidebar beats a white screen.
+
+</Note>
 
 </Collapse>
 

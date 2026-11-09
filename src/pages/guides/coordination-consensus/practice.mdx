@@ -6,11 +6,11 @@ chapter: "10"
 current: "10. Coordination"
 sections:
   - id: "stores"
-    title: "etcd, ZooKeeper, Consul: what you actually get"
+    title: "What etcd, ZooKeeper and Consul actually give you"
   - id: "patterns"
-    title: "Patterns built on top"
+    title: "Building election, discovery and config on three tools"
   - id: "avoid"
-    title: "How to need less of this"
+    title: "How to need less coordination"
   - id: "gotchas"
     title: "The gotchas that actually bite"
   - id: "check"
@@ -19,105 +19,137 @@ sections:
     title: "Related reading"
 ---
 
-import { Card, CardGrid, ColdOpen, Collapse, Figure, Footer, Lab, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Card, CardGrid, Collapse, Layer, Note, Quiz, Race, Reading, Stack, Table } from '../../../components';
 
-<Collapse id="stores" title="1. etcd, ZooKeeper, Consul: what you actually get">
+<Collapse id="stores" title="1. What etcd, ZooKeeper and Consul actually give you">
 
-You will almost never implement Raft. You will run something that has, and use it as a small, strongly consistent, low-throughput key-value store with a few extra powers.
+Your six app servers need exactly one of them to run the nightly billing job, and they need to agree which, even when servers crash or restart. You won't write Raft to solve this. You'll run something that already has, and use it as a small, strongly consistent key-value store with a few extra powers. The three common ones:
 
 <Table numeric>
 
 | | etcd | ZooKeeper | Consul |
 | --- | ---- | --------- | ------ |
 | Protocol | Raft | ZAB (Paxos-like) | Raft |
-| Interface | gRPC key-value | Hierarchical znodes | HTTP/DNS key-value |
-| Change notification | Watch (streaming) | Watch (one-shot) | Blocking queries |
-| Ephemerality | Leases on keys | Ephemeral znodes | Sessions + health checks |
-| Best known for | Kubernetes' entire state | Kafka, HBase, Hadoop | Service discovery, service mesh |
+| Interface | gRPC key-value | A tree of nodes ("znodes") | HTTP/DNS key-value |
+| How you hear about changes | Watch (a stream) | Watch (fires once) | Blocking queries |
+| Entries that vanish when their owner dies | Leases on keys | Ephemeral znodes | Sessions plus health checks |
+| Best known for | All of Kubernetes' state | Kafka, HBase, Hadoop | Service discovery, service mesh |
 
 </Table>
 
-The primitives they all provide are the same three, and they are enough to build everything in the next section: an **atomic compare-and-swap** (write only if the current version is what I think it is), a **lease or session** that expires unless renewed, and a **watch** that notifies you when a key changes so you are not polling.
+### The three tools they all give you
+
+Underneath the differences, all three provide the same three building blocks, and they're enough for everything in the next section:
+
+- **Compare-and-swap**: "write this only if the current version is still the one I read". If someone changed it in between, your write fails instead of overwriting theirs.
+- **A lease or session**: an entry that disappears unless its owner keeps renewing it, so a crashed owner cleans up after itself.
+- **A watch**: the store tells you when a key changes, so you don't have to keep asking.
+
+### They're not databases
 
 <Note type="warn" label="These are not databases">
 
-Every write goes through consensus, so throughput is in the low thousands of writes per second — for the entire cluster, not per node — and total data size should stay in the tens or low hundreds of megabytes. etcd's default database size limit is **2 GB** and you do not want to be near it.
+Every write goes through the leader and has to be stored by a majority, so adding nodes never adds write capacity: there's one throughput limit for the whole cluster. etcd's own docs put a three-member cluster at more than 30,000 requests a second under heavy load. Data size should stay in the tens or low hundreds of megabytes; etcd's default limit is **2 GB**, and you don't want to be near it.
 
-Store *decisions*, not data: who is the leader, what is the current config, which shard lives where, which nodes are members. If you find yourself writing per-user or per-request records into etcd, you have chosen the wrong tool with unusual confidence.
+Store *decisions*, not data: who's the leader, what the current config is, which shard lives where, which nodes are members. If you're writing per-user or per-request records into etcd, you've picked the wrong tool with unusual confidence.
 
 </Note>
 
-The other thing to internalise is that the coordination store becomes a dependency of everything that uses it, which makes it a single point of failure with unusually broad blast radius. When etcd is unhealthy, Kubernetes cannot schedule, scale, or reconcile anything. Design so that a coordination outage degrades you to "cannot change" rather than "cannot serve" — running workloads should keep running on their last-known-good configuration, exactly as a service should keep serving from a stale config cache rather than crash-looping.
+### It becomes everyone's dependency
+
+Everything that uses the coordination store now depends on it, so it's a single point of failure with an unusually wide blast radius. When etcd is unhealthy, Kubernetes can't schedule, scale or fix anything.
+
+Design so that a coordination outage leaves you unable to *change* things, not unable to *serve*. Running workloads should keep running on their last known good configuration, the same way a service should keep serving from a cached config instead of crash-looping.
 
 </Collapse>
 
-<Collapse id="patterns" title="2. Patterns built on top">
+<Collapse id="patterns" title="2. Building election, discovery and config on three tools">
 
-Given compare-and-swap, leases and watches, the standard patterns fall out.
+Back to the six servers and the billing job. With compare-and-swap and leases, picking one is a race that exactly one server can win:
+
+<Race a="Server A" b="Server B" result="Result: exactly one runs the job, and a crash hands it over automatically" tone="good" steps={[
+  { a: "Creates /billing-leader = A, only if absent, with a 15 s lease", tone: "good" },
+  { b: "Same create. The key exists, so it fails. Watches the key instead", note: true },
+  { a: "Renews the lease every few seconds and runs the job" },
+  { a: "Crashes. Stops renewing", tone: "bad" },
+  { b: "Lease expires, key disappears, watch fires. B creates the key", tone: "good" }
+]} />
+
+That's leader election. The other standard patterns fall out of the same three tools:
 
 <Stack>
-  <Layer idx="A">**Leader election.** Everyone tries to create the same key with a lease, using create-if-absent. Exactly one succeeds and renews it; the rest watch the key and retry when it disappears. Kubernetes controllers do precisely this.</Layer>
-  <Layer idx="B">**Service discovery.** Each instance registers itself under a prefix with a lease and heartbeats. Consumers watch the prefix and get the live membership. A crashed instance's lease expires and it vanishes from the set without anyone deregistering it.</Layer>
-  <Layer idx="C">**Dynamic configuration.** Config lives in a key; services watch it and reload on change. Add a version number and you get instant, ordered, auditable rollouts — with the Cloudflare lesson from [CDNs & the Edge](/guides/cdn-edge/) firmly in mind, roll changes out gradually rather than to everyone at once.</Layer>
-  <Layer idx="D">**Membership and sharding.** The current member list lives in the store; a leader assigns shards to members and writes the assignment back. When membership changes, the leader recomputes and everyone watches for their new assignment — combine with consistent hashing from [Load Balancing](/guides/load-balancing/) so a membership change moves 1/*n* of the keys rather than all of them.</Layer>
-  <Layer idx="E">**Barriers and queues.** Ordered keys under a prefix give you a fair queue; a counter plus a watch gives you a barrier that releases when the last participant arrives. Useful for batch coordination, rarely worth it for anything on a request path.</Layer>
+  <Layer idx="A">**Leader election.** Everyone tries to create the same key with a lease, using create-if-absent. Exactly one succeeds and keeps renewing it; the rest watch the key and try again when it disappears. Kubernetes controllers do precisely this.</Layer>
+  <Layer idx="B">**Service discovery.** Each instance registers itself under a shared prefix, with a lease it keeps renewing. Callers watch the prefix and always see the live set. A crashed instance's lease expires and it drops out of the set without anyone removing it.</Layer>
+  <Layer idx="C">**Dynamic configuration.** Config lives in a key; services watch it and reload when it changes. Add a version number and you get instant, ordered, auditable rollouts. Keep the Cloudflare lesson from [CDNs & the Edge](/guides/cdn-edge/) in mind: roll changes out gradually, not to everyone at once.</Layer>
+  <Layer idx="D">**Membership and sharding.** The member list lives in the store; a leader assigns shards to members and writes the assignment back. When membership changes, the leader recomputes and everyone watches for their new assignment. Combine with consistent hashing from [Load Balancing](/guides/load-balancing/), so a change moves 1/*n* of the keys, not all of them.</Layer>
+  <Layer idx="E">**Barriers and queues.** Ordered keys under a prefix make a fair queue; a counter plus a watch makes a barrier that opens when the last participant arrives. Useful for coordinating batch jobs, rarely worth it on a request path.</Layer>
 </Stack>
 
-Notice what these have in common: the store holds a small amount of slowly-changing truth, and everything else *watches*. The data plane never asks the store a question per request. If your request path contains a synchronous call to etcd, you have made a 2,000-writes-per-second component into the ceiling for your entire system.
+### What they have in common
+
+The store holds a small amount of slowly changing truth, and everything else *watches* it. Normal request handling never asks the store a question. Put a call to etcd on every request, and a cluster with one fixed throughput limit, which you can't raise by adding nodes, becomes the ceiling for your entire system.
 
 </Collapse>
 
-<Collapse id="avoid" title="3. How to need less of this">
+<Collapse id="avoid" title="3. How to need less coordination">
 
-Every technique here has a cost in latency, operational complexity, and new failure modes. The best coordination is the coordination you designed away, and there are four reliable ways to do it.
+Every technique in this guide costs latency, operational work and new ways to fail. The cheapest coordination is the coordination you designed out. Four reliable ways to do it:
 
 <CardGrid>
   <Card pill="Partition the problem" tone="good">
-    If each key is owned by exactly one shard and each shard by one process, there is nothing to agree about. Consistent hashing plus stable ownership eliminates most locks outright. Coordination is only needed at the boundary — when ownership changes.
+    If each key belongs to exactly one shard, and each shard to one process, there's nothing to agree about. Consistent hashing plus stable ownership removes most locks outright. You only need coordination when ownership changes.
   </Card>
   <Card pill="Make operations idempotent" tone="good">
-    If running twice is the same as running once, you no longer need to guarantee it runs once. Idempotency keys, upserts, and conditional writes convert an exclusion problem into a deduplication problem, which is far easier — see [Message Queues & Async](/guides/message-queues/).
+    If running something twice has the same effect as once (**idempotent**), you no longer need to guarantee it runs once. Idempotency keys, upserts and conditional writes turn "keep others out" into "ignore duplicates", which is far easier; see [Message Queues & Async](/guides/message-queues/).
   </Card>
   <Card pill="Push it into the database" tone="good">
-    A single-row conditional update, a unique constraint, or a `SELECT … FOR UPDATE` gives you real mutual exclusion using a transaction manager you already run and already monitor. One less system to lose quorum.
+    A single-row conditional update, a unique constraint, or `SELECT … FOR UPDATE` gives you real mutual exclusion from a database you already run and monitor. One less system that can lose its majority.
   </Card>
-  <Card pill="Use commutative operations" tone="good">
-    If the operations commute, order stops mattering and so does agreement about it. Counters, sets and CRDTs from [Consistency & the CAP Theorem](/guides/consistency-cap/) converge without any coordination at all.
+  <Card pill="Use operations whose order doesn't matter" tone="good">
+    If operations give the same result in any order (they **commute**), nobody needs to agree on the order. Counters, sets and CRDTs from [Consistency & the CAP Theorem](/guides/consistency-cap/) converge with no coordination at all.
   </Card>
 </CardGrid>
 
-The general principle is worth stating plainly: coordination is a *tax on every operation that requires it*, so make the set of such operations as small as you can. Most systems need strong agreement about a handful of things — who owns what, what the config is, who is primary — and need nothing at all about the millions of operations that follow from those answers. Keep the two categories separate and the expensive one small.
+The principle: coordination is a *tax on every operation that needs it*, so keep the set of such operations as small as you can. Most systems need firm agreement on a handful of things (who owns what, what the config is, who's primary) and none at all on the millions of operations that follow from those answers. Keep the two apart, and keep the expensive group small.
+
+<Note type="key" label="What to remember">
+
+- etcd, ZooKeeper and Consul give you compare-and-swap, leases and watches. That's enough for leader election, service discovery and live config.
+- Store decisions, not data. Watch and cache them; never call the store on every request.
+- Design so a coordination outage stops changes, not serving, and design out coordination wherever you can.
+
+</Note>
 
 </Collapse>
 
 <Collapse id="gotchas" title="4. The gotchas that actually bite">
 
 <Note label="1 · Two-node clusters">
-A two-node cluster tolerates zero failures and has twice the hardware to fail. It is strictly worse than one node. This mistake is usually made by a team that thinks "redundancy" and hears "two".
+A two-node cluster survives zero failures and has twice the hardware to fail. It's strictly worse than one node. Usually made by a team that thinks "redundancy" and hears "two".
 </Note>
 
 <Note label="2 · Locks without fencing tokens">
-The GC-pause trace in [Part 2](/guides/coordination-consensus/safety/#split) is not exotic; it is a Tuesday on an oversubscribed host. If a lock protects correctness and the resource does not reject stale tokens, you have a corruption waiting for a slow enough garbage collection.
+The paused-client race in [Part 2](/guides/coordination-consensus/safety/#split) isn't exotic; it's a Tuesday on an overloaded host. If a lock protects correctness and the storage doesn't reject stale tokens, you have corruption waiting for a slow enough garbage collection.
 </Note>
 
 <Note label="3 · Wall-clock leases">
-NTP corrections, leap-second smearing, and VM snapshot restores all move wall clocks. A clock that jumps backwards silently extends every lease it times. Use monotonic clocks for durations, always.
+NTP corrections, leap-second smearing and VM snapshot restores all move time-of-day clocks. A clock that jumps backwards silently extends every lease it times. Use monotonic clocks for durations, always.
 </Note>
 
 <Note label="4 · The store on the request path">
-A consensus store does low thousands of writes per second, cluster-wide. Reading it once per request makes it your throughput ceiling and your availability floor. Watch and cache; never poll per request.
+A consensus store has one throughput limit for the whole cluster, and adding nodes doesn't raise it. Calling it once per request makes it your throughput ceiling and your availability floor. Watch and cache; never ask per request.
 </Note>
 
 <Note label="5 · Stretching the cluster across regions">
-Every write waits for a majority. Spread the majority across oceans and every write pays 150 ms+ forever. Keep the quorum local; replicate its decisions outward asynchronously.
+Every write waits for a majority. Spread the majority across oceans and every write pays 150 ms or more, forever. Keep the quorum in one region; send its decisions outward asynchronously.
 </Note>
 
-<Note label="6 · Automatic failover with no witness">
-Automatic promotion on a partition is what produced GitHub's 24-hour incident. Either give the decision to a majority that spans the partition boundary (an odd number of sites, or a lightweight witness in a third), or require a human. Two sites and automatic promotion is a split brain generator.
+<Note label="6 · Automatic failover with no tie-breaker">
+Automatic promotion during a partition is what produced GitHub's 24-hour incident. Either give the decision to a majority that spans the partition (an odd number of sites, or a small tie-breaking "witness" node in a third), or require a human. Two sites plus automatic promotion is a split-brain generator.
 </Note>
 
 <Note label="7 · Watches you assume are reliable">
-Watch streams disconnect. ZooKeeper watches fire once and must be re-registered, and events between disconnect and re-registration are simply missed. Always reconcile against the full current state after reconnecting rather than trusting that you saw every event.
+Watch streams disconnect. A standard ZooKeeper watch fires once and must be set again, and changes between the disconnect and re-registering are simply missed. After reconnecting, always re-read the full current state rather than trusting you saw every event.
 </Note>
 
 </Collapse>
@@ -126,11 +158,19 @@ Watch streams disconnect. ZooKeeper watches fire once and must be re-registered,
 
 <Quiz q="Your service reads its feature flags from etcd on every request. What's wrong and how do you fix it?" options={["etcd's linearizable reads are slow; switch those reads to serializable mode and keep reading per request", "etcd becomes your throughput ceiling and availability floor; load the flags once, watch for changes, and serve from memory", "Nothing, as long as the cluster has five nodes; add nodes if read latency grows"]} answer={1}>
 
-You have coupled your request throughput and availability to a component designed for neither. etcd handles low thousands of operations per second cluster-wide, so it becomes your ceiling; and when it is unavailable — during a rolling upgrade, a leader election, a partition — your service stops serving rather than merely stopping updating.
+You've tied your request throughput and availability to a component designed for neither. etcd has one throughput limit for the whole cluster, so it becomes your ceiling. And when it's unavailable, during a rolling upgrade, a leader election or a partition, your service stops serving, not just stops updating.
 
-The fix is to invert it: read the flags once at startup, hold them in memory, and register a *watch* so etcd pushes changes to you. Request handling then touches only local memory. Keep serving the last known values if the watch disconnects, reconcile against the full current state on reconnect (watches miss events across disconnects), and persist a copy to local disk so a restart during an etcd outage still comes up with sane configuration.
+Turn it around: read the flags once at startup, keep them in memory, and register a *watch* so etcd pushes changes to you. Handling a request then touches only local memory. Keep serving the last known values if the watch disconnects, re-read the full state when it reconnects (watches can miss changes during a disconnect), and save a copy to local disk so a restart during an etcd outage still comes up with sane settings.
 
-The general rule: a coordination outage should degrade you to "cannot change" rather than "cannot serve".
+The general rule: a coordination outage should leave you unable to change, not unable to serve.
+
+</Quiz>
+
+<Quiz q="Two app servers both try to become the leader for a nightly job by creating the same etcd key, only if it's absent, with a lease. The current leader crashes. What happens next?" options={["The other server must notice the crash with a health check and delete the key before it can take over", "The leader's lease stops being renewed and expires, the key disappears, and the watching server's create now succeeds", "Both servers become leader until an operator removes one"]} answer={1}>
+
+Nobody has to detect the crash. The crashed leader stops renewing its lease, the store expires it and deletes the key, and the server watching that key is notified and creates it, becoming leader.
+
+The lease turns "is the leader dead?", which can't be answered reliably, into "has the lease run out?", which can. The cost is that the job has no leader for up to one lease length. And because a slow-but-alive old leader might still be running, anything it writes should carry a fencing token, as in [Part 2](/guides/coordination-consensus/safety/#split).
 
 </Quiz>
 

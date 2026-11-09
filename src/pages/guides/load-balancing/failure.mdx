@@ -6,110 +6,205 @@ chapter: "3"
 current: "3. Load Balancing"
 sections:
   - id: "gotchas"
-    title: "The gotchas nobody diagrams"
+    title: "The failures nobody diagrams"
   - id: "cascade"
-    title: "Anatomy of a cascade"
+    title: "One cascade, minute by minute"
+  - id: "check"
+    title: "Check your understanding"
   - id: "reading"
     title: "Related reading"
 ---
 
-import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Quiz, Reading, Recap, Stack, Table } from '../../../components';
+import { Collapse, Layer, Note, Quiz, Race, Reading, Stack } from '../../../components';
 
-<Collapse id="gotchas" title="1. The gotchas nobody diagrams">
+<Collapse id="gotchas" title="1. The failures nobody diagrams">
 
-Everything above is the version that fits on a slide. What follows is the version that pages you. Each of these is a real production failure mode with a specific setting attached to it.
+Parts 1 and 2 are the version that fits on a slide. This part is the version that pages you. Each failure below happens in real production systems, and each has a specific setting attached to it.
 
-<h3 id="draining">Connection draining, or: why every deploy has an error spike</h3>
+<h3 id="draining">Why every deploy has an error spike: connection draining</h3>
 
-You remove an instance — a rolling deploy, a scale-in, a health check that flipped. The naive implementation cuts it out of rotation and stops the process. Every request that was *already in flight* on that box dies mid-sentence. The client gets a reset or a 502, and because a rolling deploy does this to each instance in turn, the spike is proportional to your fleet size and it happens on every single release. Teams live with this for years and call it "deploy noise."
+You deploy. For thirty seconds your error graph shows a burst of 502s, then it settles. It happens on every release, so the team calls it "deploy noise" and stops looking. Here's what's actually happening to one user:
 
-The correct sequence has three steps, in order. The instance starts **failing its readiness check** (or is explicitly marked draining), so the load balancer stops sending it *new* requests. It keeps serving the connections it already has. Only when those finish — or a **drain timeout** expires — does the process exit.
+<Race a="Deploy script" b="A user's checkout request" result="Result: the user gets a 502 for a request that was working" steps={[
+  { b: "Arrives at instance 4. Processing takes 2 s" },
+  { a: "Removes instance 4 from rotation" },
+  { a: "Stops the process straight away", tone: "bad" },
+  { b: "Connection cut mid-request. The client sees a reset or a 502", tone: "bad" }
+]} />
 
-The knob has a different name everywhere: *deregistration delay* on an AWS target group (default 300s), *drain timeout* in HAProxy and Envoy, `terminationGracePeriodSeconds` plus a `preStop` hook in Kubernetes. Set it longer than your slowest normal request and shorter than your patience for a deploy. And note the ordering trap: the pod must fail readiness *before* it gets SIGTERM, or the load balancer is still sending it traffic while it's shutting down — which is the same error spike with more steps.
+Every request that was *already in progress* on the removed instance dies mid-sentence. A rolling deploy does this to each instance in turn, so the spike grows with the size of your fleet.
 
-<h3 id="liveness-readiness">Liveness and readiness are different questions</h3>
+The fix is to let an instance finish what it started. This is called **connection draining**, and it has three steps, in order:
 
-Liveness asks: *should I be restarted?* Readiness asks: *should I get traffic right now?* These are not the same question and wiring them to the same handler produces two distinct outages.
+<Race a="Deploy script" b="A user's checkout request" result="Result: no errors; the instance leaves once it's empty" tone="good" steps={[
+  { b: "Arrives at instance 4. Processing takes 2 s" },
+  { a: "Marks instance 4 as draining: the load balancer sends it no new requests" },
+  { b: "Keeps running on the same connection", note: true },
+  { b: "Finishes and gets its response", tone: "good" },
+  { a: "Once nothing is in progress, or a drain timeout expires, stops the process", tone: "good" }
+]} />
 
-Conflate them one way and an instance that is merely **warming up** — filling a connection pool, loading a model, JIT-compiling — gets killed by the liveness probe before it ever serves a request. Deploy, crash-loop, repeat. Conflate them the other way and a **saturated** instance keeps receiving requests because the process is technically alive, which is exactly the failure the cascade below is built on.
+The setting has a different name everywhere: *deregistration delay* on an AWS target group (default 300 s), *drain timeout* in HAProxy and Envoy, `terminationGracePeriodSeconds` plus a `preStop` hook in Kubernetes. Set it longer than your slowest normal request and shorter than your patience for a deploy.
 
-A readiness handler that returns a static `200` from a constant string tells you the process is running and the port is open. That's it. It cannot tell you whether a request would succeed, because it doesn't do anything a request does. A useful readiness check touches what the request path touches: can I take a connection from the pool, is config loaded, is the cache client connected, is my in-flight count below the line where I stop being useful.
+Watch the order. The load balancer must have stopped sending new requests *before* the process starts shutting down, or it's still sending traffic to a server that's leaving, which is the same error spike with more steps. In Kubernetes, removing the pod from the Service's endpoints and telling it to shut down start at the same moment, so a short wait in the `preStop` hook is what gives the load balancer time to notice.
+
+<h3 id="liveness-readiness">"Restart me?" and "send me traffic?" are different questions</h3>
+
+Kubernetes, like many platforms, asks every instance two questions with two separate checks, called probes. The **liveness** probe asks: *is this broken badly enough that it should be restarted?* The **readiness** probe asks: *should it get traffic right now?* Point both at the same handler and you get one of two outages.
+
+Point both at a deep check, and an instance that is merely **warming up**, filling a connection pool, loading a model or warming its just-in-time compiler, fails liveness and gets killed before it ever serves a request. Deploy, crash, restart, repeat: a **crash loop**.
+
+Point both at a shallow check, and an instance that is **overloaded** keeps receiving requests because the process is technically alive. That's the failure the cascade in section 2 is built on.
+
+A readiness handler that returns a fixed `200` tells you the process is running and the port is open, and nothing else. It can't tell you whether a request would succeed, because it doesn't do anything a request does. A useful readiness check touches what the request path touches: can I take a connection from the pool, is config loaded, is the cache client connected, is my count of requests in progress below the point where I stop being useful.
 
 <Note type="warn" label="…but not too deep">
 
-If every instance's readiness check queries the same database, and that database has a bad ten seconds, every instance fails readiness at the same moment and the load balancer has nothing left to send traffic to. A shared dependency turns a dependency blip into a total outage. Check the dependency, cache the result for a few seconds so you're not hammering it, and don't fail readiness for anything you can serve degraded.
+If every instance's readiness check queries the same database, and that database has a bad ten seconds, every instance fails readiness at the same moment and the load balancer has nothing left to send traffic to. A blip in one shared dependency becomes a total outage. Check the dependency, cache the result for a few seconds so you're not hammering it, and don't fail readiness for anything you can still serve in a degraded way.
 
 </Note>
 
-<h3 id="fail-open">Fail-open and the panic threshold</h3>
+<h3 id="fail-open">When every server looks dead: fail-open and the panic threshold</h3>
 
-If health checks are the only thing standing between you and an outage, then a bug in the health check *is* an outage. A config push that changes the health path. A certificate that expires on the health port. A probe timeout tuned for an idle box, now being evaluated on a busy one. Any of these can mark one hundred percent of your fleet unhealthy inside a single check interval, and a strictly correct load balancer will then dutifully send traffic to nobody.
+A config push changes the health check path. Within one check interval, every server in the fleet fails its check. Nothing is wrong with the servers, but a strictly correct load balancer now has zero healthy backends and sends traffic to nobody. The same can happen when a certificate on the health port expires, or a probe timeout set on an idle box meets a busy one.
 
-Real proxies refuse to be that correct. Envoy has a **panic threshold**, default 50%: once fewer than half the hosts in a cluster are healthy, it stops honouring health status and load balances across *all* hosts, sick ones included. The reasoning is blunt and right — if most of your fleet appears dead, the likelier explanation is that your health checking is broken, and a degraded backend beats no backend.
+If health checks are the only thing between you and an outage, a bug in the health check *is* an outage. So real proxies refuse to be that strict. When too much of the fleet looks unhealthy, they ignore the health checks and send traffic to every server, sick ones included. This is called **failing open**.
 
-Whatever proxy you run, find out what it does when zero hosts are healthy, and find out before the day it matters.
+Envoy calls the cutoff the **panic threshold**, and its default is 50%: once fewer than half the hosts in a cluster are healthy, it balances across all of them. The reasoning is blunt and right. If most of your fleet appears dead at once, the likelier explanation is that the health checking is broken, and a degraded backend beats no backend.
 
-<h3 id="slow-start">Slow start: don't hand a cold instance the firehose</h3>
+Whatever proxy you run, find out what it does when zero hosts are healthy, before the day it matters.
 
-A freshly added instance has empty caches, empty connection pools, and a JIT that hasn't compiled anything hot. It is the slowest machine in your fleet and it is also, to a least-connections balancer, the emptiest one. So the balancer points the firehose at it. It falls over, fails its health check, restarts, comes back cold, and does it again — a loop you can watch on a graph for hours.
+<h3 id="slow-start">Don't give a cold instance a full share: slow start</h3>
 
-The fix is **slow start**: ramp the new instance's share from near-zero to full over a window — thirty seconds to a couple of minutes is the usual range. Nginx Plus, Envoy, and AWS ALB target groups all have a setting for it. The complementary fix is on the instance itself: warm your caches and pools *before* you report ready. Readiness is a promise. Don't make it early.
+A new instance joins the pool. Its caches are empty, its connection pools are empty, and its just-in-time compiler hasn't optimised anything yet, so it's the slowest machine in the fleet. To a least-connections balancer it's also the *emptiest*, so it gets the most new requests. You can watch the loop on a graph for hours:
 
-<h3 id="keepalive-l4">Keepalive and HTTP/2 quietly defeat L4 round robin</h3>
+1. The cold instance joins with zero connections and is sent a flood of requests.
+2. It's too slow to keep up, so it fails its health check and is removed.
+3. It restarts, comes back cold, and the balancer floods it again.
 
-An L4 balancer distributes *connections*, not requests. It makes one decision, at connection setup, and every byte on that connection goes to the same backend for as long as it lives.
+The fix is **slow start**: raise the new instance's share of traffic gradually, from near zero to full, over a window of thirty seconds to a couple of minutes. NGINX Plus, Envoy and AWS ALB target groups all have a setting for it.
 
-With HTTP/1.1 keepalive that's already thousands of requests riding a single decision. With **HTTP/2 or gRPC** it's far worse: one connection multiplexes many concurrent streams, so a client that connected at 03:00 keeps hammering the one backend it was assigned, indefinitely. Add capacity and the new instance gets nothing at all — nobody is opening new connections, so there is nothing to balance.
+The other half of the fix is on the instance: warm your caches and pools *before* you report ready. Readiness is a promise. Don't make it early.
 
-The tell is a dashboard that lies to you in a very specific way: connections per backend are beautifully even, and CPU is 90% on one box and 8% on the others.
+<h3 id="keepalive-l4">Why long-lived connections defeat L4 balancing</h3>
 
-Three fixes, roughly in order of preference. Balance at **L7**, so the decision is made per request (or per HTTP/2 stream) rather than per connection. Set a **maximum connection age or max requests per connection**, so clients are periodically forced to reconnect and get re-balanced. Or move the decision to the client — a service mesh sidecar or a client-side balancer that knows about streams.
+You add three servers to a busy gRPC service. An hour later, the new servers have received almost nothing. The old ones are as busy as before.
+
+Recall from [Part 1](/guides/load-balancing/layers/#l4l7) that an L4 balancer distributes *connections*, not requests. It decides once, when a connection opens, and every byte on that connection goes to the same backend for as long as the connection lives.
+
+Clients rarely open a fresh connection per request. With HTTP/1.1 **keepalive**, one connection is reused for request after request, so thousands of requests ride on a single decision. With **HTTP/2 or gRPC** it's worse: one connection carries many requests at the same time. A client that connected at 03:00 keeps hitting the one backend it was given, indefinitely. Nobody is opening new connections, so the new servers have nothing to be given.
+
+The tell is a dashboard that lies in a very specific way: connections per backend are beautifully even, and CPU is 90% on one box and 8% on the others.
+
+Three fixes, roughly in order of preference:
+
+- **Balance at L7**, so the decision is made per request (or per HTTP/2 stream) rather than per connection.
+- **Cap connection age or requests per connection**, so clients are regularly forced to reconnect and get re-balanced.
+- **Move the decision to the client**: a service-mesh sidecar or a client-side balancer that understands streams.
 
 <h3 id="client-ip">The client's IP disappears at L7</h3>
 
-Once an L7 proxy terminates the client connection, your backend's socket shows the *proxy's* address. Every access log, every rate limit, every geo-block is now pointed at your own load balancer. The standard fix is `X-Forwarded-For`: the proxy appends the client's address to the header as the request passes through.
+You add a rate limit of 100 requests per minute per IP. The next day, every user is blocked at once. Every request seems to come from the same IP address: your own load balancer's.
 
-Now the trap. `X-Forwarded-For` is a header, and headers are whatever the sender says they are. If you read it naively on a request that arrived from the internet, anyone can send `X-Forwarded-For: 203.0.113.9` and your rate limiter, your geo-block, and your audit log all believe them — which is to say your rate limiting is now optional.
+An L7 proxy ends the client's connection and opens its own to the backend, so the backend's socket shows the *proxy's* address. Every access log, rate limit and geo-block is now looking at your load balancer. The standard fix is the `X-Forwarded-For` header: each proxy adds the address it received the request from to the end of the header as the request passes through.
 
-Your edge proxy must overwrite or normalise the header, and everything behind it must count from the trusted end and trust only the number of hops you actually operate. Nginx expresses this as `set_real_ip_from` plus `real_ip_recursive`; Envoy as `xff_num_trusted_hops`. Get the hop count wrong and you are trusting an attacker-supplied value again, just with more configuration.
+Now the trap. A header contains whatever the sender puts in it. An attacker can send `X-Forwarded-For: 203.0.113.9` themselves, and your edge proxy will append the real address after it:
 
-At L4 the equivalent is the **PROXY protocol**: the balancer prepends a small fixed header to the TCP stream carrying the original source and destination addresses, before any application bytes. Because it sits underneath the application protocol it works for anything — SMTP, Postgres, raw TCP — but the backend must be configured to expect it, and must accept it *only* from the proxy, for exactly the same spoofing reason.
+```text
+X-Forwarded-For: 203.0.113.9, 198.51.100.7
+                 ^ typed by the attacker  ^ added by your proxy
+```
 
-<h3 id="retry-amplification">Retry amplification</h3>
+Read the leftmost value and your rate limiter, geo-block and audit log all believe the attacker. Your rate limiting is now optional.
 
-Retries are individually reasonable and collectively catastrophic. The mobile SDK retries. The CDN retries. The API gateway retries. The service client retries. The database driver retries. Three layers that each make three attempts is 3³ = **27 requests for one user action** — and they arrive during precisely the window when the system is already failing, which is when a 27× multiplier is least survivable.
+The fix is to count from the right-hand end, the end your own proxies wrote, and trust only as many entries as you have proxies. The edge proxy should also overwrite or clean up the header it receives. In NGINX that's the realip module:
 
-They're also *correlated*. Everyone's timeout fires at roughly the same moment, so the retries land as a synchronised wave rather than a smear. That's a retry storm, and it is how a five-second dependency blip becomes a twenty-minute outage.
+```nginx
+set_real_ip_from  10.0.0.0/8;       # addresses of your own proxies
+real_ip_header    X-Forwarded-For;
+real_ip_recursive on;               # skip trusted hops from the right
+```
 
-Three fixes, and you want all of them. **Retry at exactly one layer** and make every other layer fail fast — pick the layer with the most context, usually the one closest to the caller who can actually do something about it.
+Envoy has the same idea as `xff_num_trusted_hops`. Get the count wrong and you're trusting an attacker's value again, just with more configuration.
 
-Put a **retry budget** on that layer: cap retries as a fraction of successful traffic, so a total outage multiplies load by nothing at all rather than by three (Envoy's default budget is 20% of active requests; Finagle popularised the idea). And add **jitter** to your backoff so the wave spreads out instead of arriving as a spike. The full treatment — circuit breakers, budgets, shedding — is in [the Reliability guide](/guides/reliability-toolkit/).
+At L4, the equivalent is the **PROXY protocol**: the balancer puts a small header carrying the original source and destination addresses at the very start of the TCP connection, before any application data. Because it sits underneath the application protocol, it works for anything: SMTP, Postgres, raw TCP. The backend must be configured to expect it, and must accept it *only* from the balancer, for exactly the same spoofing reason.
 
-<h3 id="p2c">Least connections doesn't scale — use the power of two choices</h3>
+<h3 id="retry-amplification">How retries turn one click into 27 requests</h3>
 
-True least-connections needs to know every backend's current load at the instant of the decision. That's easy with one load balancer and impossible with a tier of them: each has only its own view, and if they all independently spot the same emptiest server, they all stampede it simultaneously. It's the same mechanism that makes least-connections dogpile a just-restarted instance, only now with a multiplier.
+A dependency is slow for five seconds. The outage lasts twenty minutes. The cause is a series of settings that each looked sensible.
 
-**Power of two random choices** is the fix, and it is almost insultingly simple: pick two backends uniformly at random, compare only those two, send the request to whichever has fewer outstanding requests. No global state, no coordination, no single "best" server for everyone to converge on.
+The mobile SDK retries. The CDN retries. The API gateway retries. The service client retries. The database driver retries. Each layer only sees its own attempt fail, so each tries again, and the attempts multiply. Three layers that each make three attempts:
 
-The theoretical result (Azar, Broder, Karlin and Upfal, 1994) is that this is not a small improvement over pure random — it's an exponential one. Throwing *n* requests at *n* servers uniformly at random leaves the worst-loaded server with roughly log *n* / log log *n* of them; sampling two and taking the lighter drops that to roughly log log *n*. A second sample buys you most of the distance to perfect balance. A third buys almost nothing.
+$$
+3 \times 3 \times 3 = 27 \text{ requests for one user action}
+$$
 
-This is what large systems actually run: Nginx (`random two least_conn`), HAProxy (`balance random`), Envoy (its `LEAST_REQUEST` policy samples two hosts by default), and most client-side balancers in a service mesh. If you're picking an algorithm and you don't have a specific reason for something else, pick this one.
+And they arrive exactly when the system is already failing, which is when a 27× multiplier is least survivable. This is called **retry amplification**.
 
-<h3 id="death-spiral">The capacity death spiral</h3>
+Worse, the retries are *synchronised*. Everyone's timeout fires at about the same moment, so the retries land as a wave rather than spread out. That's a **retry storm**, and it's how a five-second blip becomes a twenty-minute outage. You want all three fixes:
 
-Ten instances, each at 70% CPU. One dies. The other nine now carry its share and sit at 78%. Latency rises; requests queue; queued requests hold memory, connections, and thread slots, so the next instance saturates and drops out too. Now eight are at 87%. Then seven, at 100% — and there is no seven-instance configuration that serves this traffic.
+- **Retry at exactly one layer.** Every other layer fails fast. Pick the layer with the most context, usually the one closest to the caller who can actually do something about it.
+- **Give that layer a retry budget.** Cap retries as a fraction of normal traffic, so during a total outage retries add a little load instead of tripling it. Envoy's retry budget defaults to 20% of active requests; Finagle popularised the idea.
+- **Add jitter to the backoff.** Wait a random amount before retrying, so the retries spread out instead of arriving as one spike.
 
-Every removal makes the next removal more likely, and sooner. The load balancer's failover, which is genuinely the right behaviour when one box dies in a healthy fleet, becomes the transmission mechanism.
+The full treatment, with circuit breakers and load shedding, is in [the Reliability guide](/guides/reliability-toolkit/).
 
-Autoscaling cannot save you here and it's worth being precise about why. A scale-up needs a metric window (tens of seconds), then an instance boot, then application start, then cache warm, then enough consecutive passing health checks to be added. Minutes, at best. The collapse runs in seconds. By the time the new capacity is ready there's nothing left to relieve.
+<h3 id="p2c">Least connections with many balancers: the power of two choices</h3>
 
-The only thing that operates on the right timescale is **refusing work**. Load shedding: when the queue is longer than you can serve inside your latency budget, return `503` to the excess immediately rather than accepting everything and serving none of it. Per-instance concurrency limits: a hard cap on in-flight requests, so an instance degrades predictably instead of falling over. Both trade visible errors for a surviving fleet, which is a trade people resist right up until the first time they watch the alternative. Details in [the Reliability guide](/guides/reliability-toolkit/).
+Least connections needs to know every backend's current load at the moment it decides. With one load balancer, that's easy: it knows what it sent. With a tier of balancers, each one only knows about the requests *it* sent. Here's what happens when a server comes back from a restart:
+
+<Race a="Load balancer A" b="Load balancer B" result="Result: the restarted server gets every new request from both balancers at once" steps={[
+  { a: "Server 7 is back with 0 of my requests. Lowest, so it gets my next ones" },
+  { b: "Server 7 has 0 of my requests too. It gets my next ones" },
+  { a: "Still my lowest count. Keeps sending to server 7", tone: "bad" },
+  { b: "Still my lowest count. Keeps sending to server 7", tone: "bad" }
+]} />
+
+Each balancer independently found the same emptiest server and they all stampeded it. It's the slow-start problem again, multiplied by the number of balancers.
+
+The fix is almost insultingly simple. Pick two backends at random, compare only those two, and send the request to whichever has fewer requests in progress. This is called the **power of two random choices**. There's no shared state and no coordination, and there is no single "best" server for every balancer to converge on, because each request compares a different random pair.
+
+Why it's worth it: the theory (Azar, Broder, Karlin and Upfal, 1994) shows the improvement over pure random is not small but exponential. Send *n* requests to *n* servers at random and the busiest server ends up with roughly the first number below; sample two and take the lighter, and it drops to the second:
+
+$$
+\text{random: } \approx \frac{\log n}{\log \log n}
+\qquad
+\text{best of two: } \approx \log \log n
+$$
+
+A second sample gets you most of the way to perfect balance. A third adds almost nothing.
+
+This is what large systems actually run: NGINX (`random two least_conn`), HAProxy (`balance random`, which compares two by default), Envoy (its `LEAST_REQUEST` policy samples two hosts by default), and most client-side balancers in a service mesh. If you're choosing an algorithm and have no specific reason for another, choose this one.
+
+<h3 id="death-spiral">When failover makes it worse: the capacity death spiral</h3>
+
+You have ten instances, each at 70% CPU. One dies. That's what failover is for, so the load balancer spreads its traffic over the other nine. Follow the numbers:
+
+<Stack>
+  <Layer idx="1" title="10 instances" speed="70% each">Healthy, with 30% headroom on each.</Layer>
+  <Layer idx="2" title="9 instances" speed="78% each">One dies. Latency rises and requests start to queue. Queued requests hold memory, connections and threads.</Layer>
+  <Layer idx="3" title="8 instances" speed="87.5% each">The queueing pushes the next instance over. It drops out and its share moves too.</Layer>
+  <Layer idx="4" title="7 instances" speed="100% each">There is no seven-instance setup that serves this traffic. Each removal now arrives sooner than the last.</Layer>
+</Stack>
+
+Every removal makes the next one more likely, and sooner. Failover, which is exactly right when one box dies in a healthy fleet, has become the thing passing the failure along.
+
+**Autoscaling can't save you here.** A scale-up needs a metric window (tens of seconds), then an instance boot, then app start, then cache warm-up, then enough passing health checks to join. Minutes, at best. The collapse runs in seconds. By the time the new capacity is ready there's nothing left to relieve.
+
+The only thing that works on the right timescale is **refusing work**, because a refusal takes milliseconds:
+
+- **Load shedding.** When the queue is longer than you can serve within your latency budget, answer the excess with an immediate `503` instead of accepting everything and serving none of it.
+- **Per-instance concurrency limits.** A hard cap on requests in progress, so an instance slows down predictably instead of falling over.
+
+Both trade visible errors for a fleet that survives. People resist that trade right up until the first time they watch the alternative. Details in [the Reliability guide](/guides/reliability-toolkit/).
 
 </Collapse>
 
 <Collapse id="cascade" title="2. Anatomy of a cascade: 03:14 to 03:19">
 
-Back to the launch that worked too well. Here is what actually happened between the moment the graph went vertical and the moment it came back — every step of it a mechanism from the sections above. Six instances, round robin, health check every 10 seconds with an unhealthy threshold of 3. Each instance tops out around 2,800 requests per second.
+Back to the launch that worked too well. Here's what happened between the moment the graph went vertical and the moment it came back, and every step is a mechanism from section 1.
+
+The setup: six instances, round robin, a health check every 10 seconds, removed after 3 failures. Each instance tops out at about 2,800 requests per second (rps). "Offered" load means everything clients send, retries included.
 
 ```trace
 **03:14:02**  6 instances · round robin · all green
@@ -178,29 +273,57 @@ Back to the launch that worked too well. Here is what actually happened between 
 
 <h3 id="cascade-mechanisms">What you just watched</h3>
 
-Nine minutes, and almost none of it was a capacity problem. Naming the parts:
+Five and a half minutes, and almost none of it was a capacity problem. Here's each step in plain words:
 
-- **03:14:38 — a health check that measured the wrong thing.** web-03 was answering `/health` in 3ms while answering real requests in 2.1 seconds, because the health handler returns a constant and a constant is always fast. See [health checks](/guides/load-balancing/health/#health) and [liveness vs readiness](#liveness-readiness).
+- **03:14:38: the health check measured the wrong thing.** web-03 answered `/health` in 3 ms while taking 2.1 seconds on real requests, because the health handler returns a constant, and a constant is always fast. See [health checks](/guides/load-balancing/health/#health) and [liveness vs readiness](#liveness-readiness).
 
-- **03:15:05 — round robin is blind to work.** It counts requests handed out, not time spent. A backend taking 2.1 seconds per request receives exactly as many as one taking 20ms. Least-connections or [power of two choices](#p2c) would have starved web-03 automatically, because its in-flight count was screaming. See [the algorithms](/guides/load-balancing/layers/#algos).
+- **03:15:05: round robin couldn't see the slowdown.** It counts requests handed out, not time spent, so a backend taking 2.1 seconds per request got exactly as many as one taking 20 ms. Least connections or the [power of two choices](#p2c) would have starved web-03 automatically, because its count of requests in progress was climbing fast. See [the algorithms](/guides/load-balancing/layers/#algos).
 
-- **03:15:31 and 03:17:04 — retry amplification.** Offered load went from 12,400 to 18,600 rps without one extra user showing up. Half the "spike" was the system talking to itself. See [retry amplification](#retry-amplification).
+- **03:15:31 and 03:17:04: retries amplified the load.** Offered load went from 12,400 to 18,600 rps without one extra user showing up. Much of the "spike" was the system talking to itself. See [retry amplification](#retry-amplification).
 
-- **03:16:32 — no connection draining.** 900 in-flight requests were terminated at the instant of removal instead of being allowed to finish. Every one became a visible 502. See [connection draining](#draining).
+- **03:16:32: nothing was drained.** 900 requests in progress were cut off at the instant of removal instead of being allowed to finish. Every one became a visible 502. See [connection draining](#draining).
 
-- **03:16:33 to 03:17:58 — the death spiral.** Removing the sick instance moved its traffic onto five survivors who were already at 90%. Failover is correct behaviour in a healthy fleet and a detonator in a saturated one. See [the capacity death spiral](#death-spiral).
+- **03:16:33 to 03:17:58: the death spiral.** Removing the sick instance moved its traffic onto five survivors already at 90%. Failover is right in a healthy fleet and makes things worse in a saturated one. See [the capacity death spiral](#death-spiral).
 
-- **03:18:10 — autoscaling on the wrong timescale.** Four minutes of provisioning against an 86-second collapse. It arrived after the incident was over and cost money for a day. See [autoscaling](/guides/load-balancing/health/#auto).
+- **03:18:10: autoscaling on the wrong timescale.** Four minutes to provision against an 86-second collapse. It arrived after the incident was over and cost money for a day. See [autoscaling](/guides/load-balancing/health/#auto).
 
-- **03:18:24 — what actually stopped it.** A concurrency cap and load shedding, both of which act in milliseconds because they are just refusals. The instant clients stopped timing out, they stopped retrying, and the offered load fell by a third on its own. See [shedding](#death-spiral) and [the Reliability guide](/guides/reliability-toolkit/).
+- **03:18:24: what actually stopped it.** A concurrency cap and load shedding, both of which act in milliseconds because they're just refusals. Once clients stopped timing out, they stopped retrying, and offered load fell by a third on its own. See [shedding](#death-spiral) and [the Reliability guide](/guides/reliability-toolkit/).
 
-- **03:19:05 — the two changes that make it not happen again.** A readiness check that fails while the instance is *degrading* rather than after it's unusable, so the balancer stops feeding a box that can't keep up; and [slow start](#slow-start), so a cold instance isn't handed a full share the second it comes back.
+- **03:19:05: the two changes that stop it happening again.** A readiness check that fails while the instance is *getting worse*, not after it's unusable, so the balancer stops feeding a box that can't keep up; and [slow start](#slow-start), so a cold instance isn't handed a full share the second it comes back.
 
-<Note type="key" label="The uncomfortable part">
+<Note type="warn" label="The uncomfortable part">
 
-Every single default in that timeline was a reasonable default. Round robin, a fast health endpoint, remove-on-unhealthy, retry-on-failure, scale-up-on-CPU. Nothing was misconfigured in the sense of being obviously wrong. Cascades are what reasonable defaults do when they compose.
+Every default in that timeline was a reasonable default: round robin, a fast health endpoint, remove-on-unhealthy, retry-on-failure, scale-up-on-CPU. Nothing was misconfigured in the sense of being obviously wrong. Cascades are what reasonable defaults do when they combine.
 
 </Note>
+
+<Note type="key" label="What to remember">
+
+- Removing an instance is not free: drain it first, and remember its traffic lands on instances that may not have room.
+- Retries multiply across layers. Retry at one layer, with a budget and jitter.
+- Under overload, only refusing work is fast enough. Autoscaling takes minutes; a cascade takes seconds.
+
+</Note>
+
+</Collapse>
+
+<Collapse id="check" title="Check your understanding">
+
+<Quiz q="The mobile app, the API gateway and the service client each make up to three attempts at a failed call. A dependency goes down. How many requests can one user tap now send to it?" options={["9", "27", "3"]} answer={1}>
+
+Each layer only sees its own attempt fail, so each makes its full three attempts, and every one of those attempts triggers the next layer's three. That's 3 × 3 × 3 = 27 requests for one tap, all arriving while the dependency is already failing.
+
+Retry at one layer only and let the others fail fast, cap that layer with a retry budget, and add jitter so the retries don't arrive as one wave.
+
+</Quiz>
+
+<Quiz q="Every rolling deploy produces a short burst of 502s, then everything settles. What's the most likely cause?" options={["The new version is briefly buggy until its caches warm", "Instances are stopped while requests are still running on them, instead of being drained first", "The load balancer's health check interval is too long"]} answer={1}>
+
+When an instance is removed and stopped straight away, every request already in progress on it is cut off, and each one becomes a 502. A rolling deploy does this to every instance in turn.
+
+Drain instead: stop sending the instance new requests, let the ones in progress finish (or a drain timeout expire), and only then stop the process. Make sure the load balancer has stopped sending traffic before shutdown begins.
+
+</Quiz>
 
 </Collapse>
 

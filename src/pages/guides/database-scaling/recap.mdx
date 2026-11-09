@@ -16,17 +16,17 @@ import { Arrow, Card, CardGrid, ColdOpen, Collapse, Footer, Layer, Note, Pill, Q
 
 <Recap>
 
-- **Measure first.** Read/write mix, which p99 moved, rows examined per row returned. The answer decides which rung you need.
-- **Index and fix queries.** Most "slow database" is one missing or unusable index. `EXPLAIN (ANALYZE, BUFFERS)` on production-shaped data is the arbiter.
-- **Scale up and right-size the pool.** More RAM fixes a falling cache hit ratio; pools are tens, not hundreds.
-- **Correctness is not free at the default isolation level.** Read-then-write in code is a race. Push the check into the write, back it with a constraint, lock or go `SERIALIZABLE` only when you must — and retry.
-- **Every migration must work with the code before and after it.** Short `lock_timeout`, concurrent index builds, expand and contract.
-- **Cache, then replicas.** Replicas scale reads and bring lag that's worst at peak.
-- **Partition, then shard — on the boundary your product already draws.** The costs are permanent: N backups, N migrations, resharding as a project.
+- **Measure before you fix.** Check how many reads there are per write, which query type got slower, and how many rows each query reads for every row it returns. The answers tell you which rung you need.
+- **Most slow databases are one missing index.** An index lets the database jump to the rows it needs instead of reading the whole table. Check what it actually does with `EXPLAIN (ANALYZE, BUFFERS)` on production-sized data.
+- **Then a bigger box and a smaller pool.** More RAM fixes data that no longer fits in memory. Connection pools need tens of connections, not hundreds.
+- **A transaction doesn't stop two requests reading the same row at once.** Read-then-decide-then-write in your code is a race. Put the check inside the write, back it with a constraint, and lock or use `SERIALIZABLE` only when you must, with retries.
+- **Every migration must work with both the old and the new code,** because both run during a deploy. Set a short `lock_timeout`, build indexes concurrently, and split breaking changes with expand and contract.
+- **Cache first, then replicas.** Replicas answer reads, but they trail the primary, and the gap is widest at peak.
+- **Split by table, then by row, on the boundary your product already draws.** Sharding's costs are permanent: N backups, N migrations, and resharding as a project.
 
 </Recap>
 
-Numbers worth carrying in your head. These are **order-of-magnitude reference points, not benchmarks** — each moves 10× with hardware, row width and workload. Use them to know when a number is *surprising*.
+Numbers worth carrying in your head. They are **order-of-magnitude reference points, not benchmarks** — each moves 10× with hardware, row width and workload. Use them to know when a number is *surprising*.
 
 <Table numeric>
 
