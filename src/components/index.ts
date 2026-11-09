@@ -18,3 +18,4 @@ export { default as Statement } from './Statement.astro';
 export { default as Table } from './Table.astro';
 export { default as Quiz } from './Quiz.astro';
 export { default as Reading } from './Reading.astro';
+export { default as Race } from './Race.astro';
