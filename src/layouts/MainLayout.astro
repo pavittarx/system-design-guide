@@ -13,6 +13,8 @@ interface Props {
   title: string;
   description?: string;
   current?: string;
+  /** Non-guide pages only: use the wide container (the homepage). */
+  wide?: boolean;
   frontmatter?: {
     title: string;
     description: string;
@@ -144,6 +146,7 @@ const legacyBase = guide ? guideHref(guide) : '';
 
     /* Pages that aren't a guide (hub, complete edition): one centred column. */
     .wrap { max-width: var(--maxw); margin: 0 auto; padding: 32px 20px 80px; }
+    .wrap.wide { max-width: 1120px; }
 
     /* Guide pages: sidebar + a white lesson on the grey canvas. */
     .shell { display: grid; grid-template-columns: 290px minmax(0, 1fr); }
@@ -522,7 +525,7 @@ const legacyBase = guide ? guideHref(guide) : '';
       </main>
     </div>
   ) : (
-    <div class="wrap" id="top">
+    <div class:list={['wrap', { wide: Astro.props.wide }]} id="top">
       {chapter && (
         <header class="hero">
           <h1>{pageTitle}</h1>
